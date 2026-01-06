@@ -3,9 +3,11 @@
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "scripts": {
-    "dev": "pnpm -r dev",
-    "dev:docker": "docker compose up --build",
-    "db:migrate": "pnpm --filter @acme/db prisma migrate dev",
-    "db:studio": "pnpm --filter @acme/db prisma studio"
-  }
+  "dev:api": "pnpm --filter @acme/api dev",
+  "dev:worker": "pnpm --filter @acme/worker dev",
+  "dev:stop:api": "node scripts/kill-port.mjs 8080",
+  "dev:stop:worker": "node scripts/kill-worker.mjs",
+  "dev:stop": "pnpm dev:stop:api && pnpm dev:stop:worker"
+}
+
 }
