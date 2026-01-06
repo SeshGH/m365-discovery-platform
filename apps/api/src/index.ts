@@ -1,17 +1,14 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { CreateRunSchema } from "@acme/core/src/contracts";
+import { prisma } from "@acme/db";
 
 const app = Fastify({ logger: true });
 
-// Allow calls from the browser during local dev (React on 5173 etc.)
 await app.register(cors, { origin: true });
 
-app.get("/health", async () => {
-  return { ok: true };
-});
+app.get("/health", async () => ({ ok: true }));
 
-// Create run (stub for now)
 app.post("/runs", async (request, reply) => {
   const parsed = CreateRunSchema.safeParse(request.body);
 
@@ -22,9 +19,38 @@ app.post("/runs", async (request, reply) => {
     });
   }
 
+  const input = parsed.data;
+
+  // 1) Upsert tenant
+  const tenant = await prisma.tenant.upsert({
+    where: { tenantGuid: input.tenantGuid },
+    update: {
+      primaryDomain: input.primaryDomain,
+      displayName: input.displayName ?? undefined
+    },
+    create: {
+      tenantGuid: input.tenantGuid,
+      primaryDomain: input.primaryDomain,
+      displayName: input.displayName
+    }
+  });
+
+  // 2) Create run + 3) create queued job
+  const run = await prisma.run.create({
+    data: {
+      tenantId: tenant.id,
+      status: "queued",
+      triggeredBy: input.triggeredBy,
+      modulesEnabled: input.modulesEnabled,
+      job: { create: { status: "queued" } }
+    },
+    include: { job: true, tenant: true }
+  });
+
   return reply.status(201).send({
-    message: "Run accepted (stub)",
-    received: parsed.data
+    runId: run.id,
+    jobId: run.job?.id,
+    tenantId: tenant.id
   });
 });
 
