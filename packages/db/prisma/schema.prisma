@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunStatus {
+  queued
+  running
+  succeeded
+  failed
+}
+
+enum JobStatus {
+  queued
+  running
+  succeeded
+  failed
+}
+
+enum Severity {
+  critical
+  high
+  medium
+  low
+  info
+  unknown
+}
+
+enum ArtefactType {
+  zip
+  state
+  raw
+  log
+}
+
+model Tenant {
+  id            String   @id @default(cuid())
+  tenantGuid    String   @unique
+  primaryDomain String
+  displayName   String?
+  tags          String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  runs Run[]
+}
+
+model Run {
+  id             String    @id @default(cuid())
+  tenantId       String
+  status         RunStatus @default(queued)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  toolVersion    String    @default("0.1.0")
+  triggeredBy    String?
+  modulesEnabled Json      @default("{}")
+  createdAt      DateTime  @default(now())
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  job       Job?
+  findings  Finding[]
+  artefacts Artefact[]
+}
+
+model Job {
+  id        String    @id @default(cuid())
+  runId     String    @unique
+  status    JobStatus @default(queued)
+  attempts  Int       @default(0)
+  lockedAt  DateTime?
+  lockedBy  String?
+  lastError String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  run Run @relation(fields: [runId], references: [id])
+}
+
+model Finding {
+  id             String   @id @default(cuid())
+  runId          String
+  checkId        String
+  severity       Severity
+  title          String
+  description    String
+  recommendation String?
+  evidence       Json     @default("{}")
+  references     Json     @default("[]")
+  createdAt      DateTime @default(now())
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([severity])
+  @@index([checkId])
+}
+
+model Artefact {
+  id        String       @id @default(cuid())
+  runId     String
+  type      ArtefactType
+  uri       String
+  hash      String?
+  sizeBytes Int?
+  createdAt DateTime @default(now())
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+}
