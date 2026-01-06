@@ -1,4 +1,5 @@
 import { prisma } from "@acme/db";
+import { runHelloCollector } from "@acme/collectors";
 
 const WORKER_ID = `worker-${process.pid}`;
 const POLL_MS = Number(process.env.POLL_MS ?? 2000);
@@ -35,16 +36,48 @@ async function pollOnce() {
     return;
   }
 
+  // Re-read the job from the DB after locking
+  const currentJob = await prisma.job.findUnique({
+    where: { id: job.id }
+  });
+
+  if (!currentJob || currentJob.status !== "running" || currentJob.lockedBy !== WORKER_ID) {
+    console.log(`[${WORKER_ID}] Job ${job.id} is no longer runnable`);
+    return;
+  }
+
   console.log(`[${WORKER_ID}] Picked up job ${job.id} (runId=${job.runId})`);
 
   try {
-    // TODO: plug in real discovery here
-    await new Promise((r) => setTimeout(r, 1000));
+    // Run a stub collector (we'll replace this with Cloud Geezer later)
+    const result = await runHelloCollector();
+    console.log(`[${WORKER_ID}] Collector result: ${JSON.stringify(result)}`);
 
-    await prisma.job.update({
-      where: { id: job.id },
-      data: { status: "succeeded" }
+    // Create a stub "Finding" to prove the findings pipeline end-to-end
+    await prisma.finding.create({
+      data: {
+        runId: job.runId,
+        checkId: "HELLO_001",
+        severity: "info",
+        title: "Hello collector ran",
+        description: "Stub finding created by worker to prove findings pipeline.",
+        recommendation: "Replace this stub with real checks (Graph / Entra config).",
+        evidence: result as any,
+        references: [{ name: "Internal stub", url: "https://example.com" }] as any
+      }
     });
+
+    // Mark job succeeded + persist the job result JSON
+    await prisma.job.update({
+  where: { id: job.id },
+  data: {
+    status: result.status === "error" ? "failed" : "succeeded",
+    result: result as any,
+    lastError: result.status === "error"
+      ? (Array.isArray((result as any).errors) ? (result as any).errors.join("\n") : "collector returned error")
+      : null
+  }
+});
 
     console.log(`[${WORKER_ID}] Job ${job.id} succeeded`);
   } catch (err: any) {

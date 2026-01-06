@@ -32,6 +32,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@acme/collectors':
+        specifier: workspace:*
+        version: link:../../packages/collectors
       '@acme/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -42,6 +45,12 @@ importers:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
+
+  packages/collectors:
+    dependencies:
+      '@acme/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core:
     dependencies:

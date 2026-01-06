@@ -74,6 +74,7 @@ model Job {
   lockedAt  DateTime?
   lockedBy  String?
   lastError String?
+  result Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
