@@ -1,0 +1,11 @@
+{
+  "name": "m365-discovery-platform",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "dev:docker": "docker compose up --build",
+    "db:migrate": "pnpm --filter @acme/db prisma migrate dev",
+    "db:studio": "pnpm --filter @acme/db prisma studio"
+  }
+}

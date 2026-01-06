@@ -1,0 +1,9 @@
+{
+  "name": "@acme/core",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}
