@@ -33,7 +33,7 @@ const S3 = new S3Client({
   forcePathStyle: S3_FORCE_PATH_STYLE
 });
 
-async function uploadArtefactToMinio(params: {
+async function uploadArtefactToObjectStore(params: {
   runId: string;
   jobId: string;
   filename: string;
@@ -46,7 +46,7 @@ async function uploadArtefactToMinio(params: {
 
   const hash = crypto.createHash("sha256").update(bytes).digest("hex");
 
-  // Keep it predictable + partitioned by run
+  // Predictable, partitioned object key
   const key = `runs/${params.runId}/jobs/${params.jobId}/${params.filename}`;
 
   await S3.send(
@@ -61,7 +61,6 @@ async function uploadArtefactToMinio(params: {
   return {
     bucket: S3_BUCKET,
     key,
-    // Keep uri as a convenience / debugging string (optional but nice)
     uri: `s3://${S3_BUCKET}/${key}`,
     hash,
     sizeBytes: bytes.length
@@ -129,14 +128,16 @@ async function pollOnce() {
     };
 
     const result = await entraUsersCollector(ctx);
-    console.log(`[${WORKER_ID}] Collector result: ${JSON.stringify(result)}`);
+    console.log(
+      `[${WORKER_ID}] Collector ${result.id} completed with status=${result.status}`
+    );
 
     // --- Upload artefacts (Option B) + persist metadata ---
     if (Array.isArray(result.artefacts)) {
       for (const artefact of result.artefacts) {
         if (!artefact.content) continue;
 
-        const uploaded = await uploadArtefactToMinio({
+        const uploaded = await uploadArtefactToObjectStore({
           runId: job.runId,
           jobId: job.id,
           filename: artefact.filename,
