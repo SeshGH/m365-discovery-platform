@@ -3,11 +3,15 @@
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "scripts": {
-  "dev:api": "pnpm --filter @acme/api dev",
-  "dev:worker": "pnpm --filter @acme/worker dev",
-  "dev:stop:api": "node scripts/kill-port.mjs 8080",
-  "dev:stop:worker": "node scripts/kill-worker.mjs",
-  "dev:stop": "pnpm dev:stop:api && pnpm dev:stop:worker"
-}
-
+    "dev:api": "pnpm --filter @acme/api dev",
+    "dev:worker": "pnpm --filter @acme/worker dev",
+    "dev:stop:api": "node scripts/kill-port.mjs 8080",
+    "dev:stop:worker": "node scripts/kill-worker.mjs",
+    "dev:stop": "pnpm dev:stop:api && pnpm dev:stop:worker"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0",
+    "typescript": "^5.6.3"
+  }
 }

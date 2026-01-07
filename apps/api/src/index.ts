@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { CreateRunSchema } from "@acme/core/src/contracts";
+import { CreateRunSchema } from "@acme/core";
 import { prisma } from "@acme/db";
 
 const app = Fastify({ logger: true });
