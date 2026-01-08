@@ -183,3 +183,7 @@ Thumbs.db
 # pnpm
 # --------------------------------------------------
 .pnpm-debug.log*
+
+# Local downloaded artefacts (dev only)
+*.csv
+
