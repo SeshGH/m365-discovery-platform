@@ -141,3 +141,45 @@ vite.config.ts.timestamp-*
 # env files
 .env
 **/.env
+
+# --------------------------------------------------
+# Local artefacts / test outputs (DO NOT COMMIT)
+# --------------------------------------------------
+*.csv
+*.ndjson
+*.jsonl
+*.zip
+*.tar
+*.gz
+
+# Downloaded artefacts during testing
+/entra-users.csv
+/artefacts/
+tmp/
+tmp/**
+
+# --------------------------------------------------
+# Docker / local infra state
+# --------------------------------------------------
+docker-data/
+docker-volumes/
+**/data/
+**/volumes/
+
+# --------------------------------------------------
+# Prisma
+# --------------------------------------------------
+prisma/dev.db
+prisma/*.db
+prisma/*.db-journal
+
+# --------------------------------------------------
+# OS / editor noise
+# --------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# --------------------------------------------------
+# pnpm
+# --------------------------------------------------
+.pnpm-debug.log*
