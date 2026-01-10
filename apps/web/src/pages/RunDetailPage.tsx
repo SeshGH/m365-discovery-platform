@@ -135,7 +135,7 @@ function getUsersInventoryCountFromJobs(jobs: Job[]): number | null {
   const summaryCount = j.result?.summary?.userCount;
   if (typeof summaryCount === "number") return summaryCount;
 
-  // Fallback: sometimes result may carry data.users
+  // Fallback: older historical runs may have carried data.users
   const users = j.result?.data?.users;
   if (Array.isArray(users)) return users.length;
 
@@ -144,7 +144,7 @@ function getUsersInventoryCountFromJobs(jobs: Job[]): number | null {
 
 function hasUsersInventoryArtefact(artefacts: Artefact[]): boolean {
   // We don’t have a filename field from the API, but MinIO keys typically contain it.
-  // This is a best-effort detection for UI messaging only.
+  // This is best-effort detection for UI messaging only.
   return artefacts.some((a) => (a.key ?? "").toLowerCase().includes("users-inventory.json"));
 }
 
@@ -262,18 +262,26 @@ export default function RunDetailPage() {
     const failedCollectors = jobs.filter((j) => j.status === "failed").map((j) => j.collectorId);
 
     // Inventory signals:
-    // Prefer job.result.summary.userCount (derived from explicit inventory artefact work),
-    // fallback to old behaviour for historical runs.
+    // Prefer job.result.summary.userCount (explicit inventory work),
+    // fallback ONLY for historical runs that emitted users as findings.
     const usersFromJob = getUsersInventoryCountFromJobs(jobs);
-    const usersFromFindings = findings.filter((f) => f.checkId === "ENTRA_USERS_001").length;
-    const usersCount = typeof usersFromJob === "number" ? usersFromJob : usersFromFindings;
+    const usersFromLegacyFindings = findings.filter((f) => f.checkId === "ENTRA_USERS_001").length;
 
-    const usersCountSource =
+    const usersCount: number | null =
+      typeof usersFromJob === "number" ? usersFromJob : usersFromLegacyFindings > 0 ? usersFromLegacyFindings : null;
+
+    const usersCountSource:
+      | "inventory-artefact"
+      | "collector-summary"
+      | "legacy-findings-fallback"
+      | "unknown" =
       typeof usersFromJob === "number"
         ? hasUsersInventoryArtefact(artefacts)
           ? "inventory-artefact"
           : "collector-summary"
-        : "findings-fallback";
+        : usersFromLegacyFindings > 0
+          ? "legacy-findings-fallback"
+          : "unknown";
 
     // "ENTRA_EAP_001" is currently used for high-privilege app permissions
     const enterpriseAppHighPrivCount = findings.filter((f) => f.checkId === "ENTRA_EAP_001").length;
@@ -358,6 +366,15 @@ export default function RunDetailPage() {
       setDownloading((prev) => ({ ...prev, [artefactId]: false }));
     }
   }
+
+  const usersInventoryLabel =
+    scoping.usersCountSource === "inventory-artefact"
+      ? "users-inventory artefact"
+      : scoping.usersCountSource === "collector-summary"
+        ? "collector job summary"
+        : scoping.usersCountSource === "legacy-findings-fallback"
+          ? "legacy findings-derived (old runs only)"
+          : "unknown";
 
   return (
     <div>
@@ -462,19 +479,23 @@ export default function RunDetailPage() {
 
               <div style={{ border: "1px solid #efefef", borderRadius: 10, padding: 10 }}>
                 <div style={{ fontSize: 12, opacity: 0.7 }}>Inventory signals (current coverage)</div>
-                <div style={{ marginTop: 6, fontSize: 13 }}>
-                  Users discovered: <span style={{ fontWeight: 700 }}>{scoping.usersCount.toLocaleString()}</span>
-                </div>
-                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
-                  Source:{" "}
-                  {scoping.usersCountSource === "inventory-artefact"
-                    ? "users-inventory artefact"
-                    : scoping.usersCountSource === "collector-summary"
-                    ? "collector job summary"
-                    : "legacy findings-derived (fallback)"}
-                </div>
 
                 <div style={{ marginTop: 6, fontSize: 13 }}>
+                  Users (inventory):{" "}
+                  <span style={{ fontWeight: 700 }}>
+                    {typeof scoping.usersCount === "number" ? scoping.usersCount.toLocaleString() : "—"}
+                  </span>
+                </div>
+
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>Source: {usersInventoryLabel}</div>
+
+                {scoping.usersCountSource === "legacy-findings-fallback" && (
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                    Legacy run: older versions emitted one finding per user. New runs store user inventory as an artefact and reserve findings for signals.
+                  </div>
+                )}
+
+                <div style={{ marginTop: 10, fontSize: 13 }}>
                   High-privilege app permission signals:{" "}
                   <span style={{ fontWeight: 700 }}>{scoping.enterpriseAppHighPrivCount.toLocaleString()}</span>
                 </div>
