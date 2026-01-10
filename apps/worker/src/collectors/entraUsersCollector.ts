@@ -1,5 +1,5 @@
 import type { Collector } from "./types";
-import { getGraphAccessToken, graphGetAllPages } from "./graph";
+import { getGraphAccessToken, graphGetAllPages, graphGet } from "./graph";
 
 type SignInActivity = {
   lastSignInDateTime?: string | null;
@@ -26,6 +26,15 @@ function clampPct(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+function isGraphPermissionMissingError(err: any, permissionName: string): boolean {
+  const msg = String(err?.message ?? "");
+  // Our graphGet() wraps Graph error JSON into the message string
+  return (
+    msg.includes("Authentication_MSGraphPermissionMissing") &&
+    msg.includes(permissionName)
+  );
+}
+
 export const entraUsersCollector: Collector = {
   id: "entra.users",
   displayName: "Entra ID Users",
@@ -40,30 +49,114 @@ export const entraUsersCollector: Collector = {
     );
     const MIN_ENABLED_USERS = Number(process.env.ENTRA_USERS_MIN_ENABLED ?? 10);
 
-    // We intentionally avoid PII fields (displayName/UPN). Inventory is counts-only.
-    // NOTE: selecting signInActivity can require extra directory/audit permissions and premium licensing.
-    const users = await graphGetAllPages<GraphUser>(
+    // --- Phase 1: always-get inventory (no special perms) ---
+    const inventoryUsers = await graphGetAllPages<GraphUser>(
       token,
-      "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled,signInActivity"
+      "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled"
     );
 
-    const enabledUsers = users.filter((u) => u.accountEnabled === true);
-    const disabledUsers = users.filter((u) => u.accountEnabled === false);
+    const enabledUsers = inventoryUsers.filter((u) => u.accountEnabled === true);
+    const disabledUsers = inventoryUsers.filter((u) => u.accountEnabled === false);
 
     const enabledCount = enabledUsers.length;
     const disabledCount = disabledUsers.length;
 
-    // Inactivity heuristic (successful sign-in is the best “real usage” indicator)
-    const enabledNoSuccessfulSignIn = enabledUsers.filter((u) => {
-      const days = toDaysSince(u.signInActivity?.lastSuccessfulSignInDateTime);
-      // Treat "never" or "unknown" as inactive for the purposes of this signal
-      if (days === null) return true;
-      return days >= INACTIVE_DAYS;
-    });
+    // --- Phase 2: optional enrichment (signInActivity) ---
+    // If missing permission, we still succeed the job and emit a coverage-gap finding.
+    let signInActivityAvailable = true;
+    let inactiveEnabledCount: number | null = null;
+    let inactiveEnabledPct: number | null = null;
 
-    const inactiveEnabledCount = enabledNoSuccessfulSignIn.length;
-    const inactiveEnabledPct =
-      enabledCount > 0 ? clampPct(inactiveEnabledCount / enabledCount) : 0;
+    try {
+      // If this call works, we can compute inactivity signal.
+      const enrichedUsers = await graphGetAllPages<GraphUser>(
+        token,
+        "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled,signInActivity"
+      );
+
+      const enrichedEnabled = enrichedUsers.filter((u) => u.accountEnabled === true);
+
+      const enabledNoSuccessfulSignIn = enrichedEnabled.filter((u) => {
+        const days = toDaysSince(u.signInActivity?.lastSuccessfulSignInDateTime);
+        // Treat "never" or "unknown" as inactive for this signal
+        if (days === null) return true;
+        return days >= INACTIVE_DAYS;
+      });
+
+      inactiveEnabledCount = enabledNoSuccessfulSignIn.length;
+      inactiveEnabledPct =
+        enrichedEnabled.length > 0
+          ? clampPct(inactiveEnabledCount / enrichedEnabled.length)
+          : 0;
+
+      const shouldEmitInactiveFinding =
+        enrichedEnabled.length >= MIN_ENABLED_USERS &&
+        (inactiveEnabledPct ?? 0) >= HIGH_INACTIVE_PCT;
+
+      if (shouldEmitInactiveFinding) {
+        const severity = (inactiveEnabledPct ?? 0) >= 0.8 ? "high" : "medium";
+        const score = severity === "high" ? 80 : 50;
+
+        await ctx.prisma.finding.create({
+          data: {
+            runId: ctx.run.id,
+            jobId: ctx.job.id,
+            checkId: "ENTRA_USERS_002",
+            category: "identity",
+            severity: severity as any,
+            confidence: "high",
+            status: "open",
+            score,
+            title: `High proportion of enabled users have no successful sign-in in the last ${INACTIVE_DAYS} days`,
+            description:
+              "A large share of enabled user accounts show no successful sign-in activity within the configured window. This can indicate stale accounts, incomplete offboarding, shared/legacy identities, or gaps in lifecycle governance.",
+            recommendation:
+              "Review inactive enabled accounts. Validate owners, disable or remove stale accounts, and implement lifecycle controls (joiner/mover/leaver). Consider Conditional Access and periodic access reviews for privileged or sensitive accounts.",
+            evidence: {
+              inactiveDaysThreshold: INACTIVE_DAYS,
+              enabledUsers: enrichedEnabled.length,
+              enabledUsersNoSuccessfulSignInSinceThreshold: inactiveEnabledCount,
+              enabledUsersNoSuccessfulSignInSinceThresholdPct: inactiveEnabledPct,
+              minEnabledUsersForSignal: MIN_ENABLED_USERS,
+              highInactivePctThreshold: HIGH_INACTIVE_PCT
+            } as any,
+            references: [] as any
+          }
+        });
+      }
+    } catch (err: any) {
+      // Expected in many tenants unless the app is consented for AuditLog.Read.All
+      if (isGraphPermissionMissingError(err, "AuditLog.Read.All")) {
+        signInActivityAvailable = false;
+
+        await ctx.prisma.finding.create({
+          data: {
+            runId: ctx.run.id,
+            jobId: ctx.job.id,
+            checkId: "ENTRA_USERS_003",
+            category: "audit_and_logging",
+            severity: "info",
+            confidence: "high",
+            status: "open",
+            score: 0,
+            title: "Sign-in activity unavailable for users (permission missing)",
+            description:
+              "The discovery app is not consented for AuditLog.Read.All, so user sign-in activity cannot be queried. Inactivity-based scoping and lifecycle signals were skipped for this run.",
+            recommendation:
+              "If you want inactivity and lifecycle insights, consent the discovery app for AuditLog.Read.All (application permission) with admin approval. If not, this can be left unconsented and the platform will treat sign-in activity as an explicit scoping unknown.",
+            evidence: {
+              missingPermission: "AuditLog.Read.All",
+              skippedAnalysis: "users signInActivity / inactivity signal",
+              inactiveDaysThreshold: INACTIVE_DAYS
+            } as any,
+            references: [] as any
+          }
+        });
+      } else {
+        // Anything else is a real failure: bubble up so the job fails.
+        throw err;
+      }
+    }
 
     // Counts-only inventory artefact (safe-by-design: no PII list)
     const inventoryArtefact = JSON.stringify(
@@ -75,11 +168,12 @@ export const entraUsersCollector: Collector = {
           displayName: ctx.tenant.displayName
         },
         summary: {
-          totalUsers: users.length,
+          totalUsers: inventoryUsers.length,
           enabledUsers: enabledCount,
           disabledUsers: disabledCount
         },
         signInActivity: {
+          available: signInActivityAvailable,
           inactiveDaysThreshold: INACTIVE_DAYS,
           enabledUsersNoSuccessfulSignInSinceThreshold: inactiveEnabledCount,
           enabledUsersNoSuccessfulSignInSinceThresholdPct: inactiveEnabledPct
@@ -89,68 +183,27 @@ export const entraUsersCollector: Collector = {
       2
     );
 
-    // Step 7.1 derived finding: emit ONE signal when the proportion is “high”.
-    // Keep evidence counts-only (no lists).
-    const shouldEmitInactiveFinding =
-      enabledCount >= MIN_ENABLED_USERS && inactiveEnabledPct >= HIGH_INACTIVE_PCT;
-
-    if (shouldEmitInactiveFinding) {
-      // Severity is deliberately simple and explainable for the first derived finding.
-      // We can evolve this later (e.g. severity bands) once we have real tenant data.
-      const severity = inactiveEnabledPct >= 0.8 ? "high" : "medium";
-      const score = severity === "high" ? 80 : 50;
-
-      await ctx.prisma.finding.create({
-        data: {
-          runId: ctx.run.id,
-          jobId: ctx.job.id,
-          checkId: "ENTRA_USERS_002",
-          category: "identity",
-          severity: severity as any,
-          confidence: "high",
-          status: "open",
-          score,
-          title: `High proportion of enabled users have no successful sign-in in the last ${INACTIVE_DAYS} days`,
-          description:
-            "A large share of enabled user accounts show no successful sign-in activity within the configured window. This can indicate stale accounts, incomplete offboarding, shared/legacy identities, or gaps in lifecycle governance.",
-          recommendation:
-            "Review inactive enabled accounts. Validate owners, disable or remove stale accounts, and implement lifecycle controls (joiner/mover/leaver). Consider Conditional Access and periodic access reviews for privileged or sensitive accounts.",
-          evidence: {
-            inactiveDaysThreshold: INACTIVE_DAYS,
-            enabledUsers: enabledCount,
-            enabledUsersNoSuccessfulSignInSinceThreshold: inactiveEnabledCount,
-            enabledUsersNoSuccessfulSignInSinceThresholdPct: inactiveEnabledPct,
-            minEnabledUsersForSignal: MIN_ENABLED_USERS,
-            highInactivePctThreshold: HIGH_INACTIVE_PCT
-          } as any,
-          references: [] as any
-        }
-      });
-    }
-
-    // Step 6: inventory belongs in artefacts; findings are reserved for signals.
     return {
       id: "entra.users",
       status: "ok",
       data: {
-        // Keep the run result useful without leaking PII lists:
         summary: {
-          totalUsers: users.length,
+          totalUsers: inventoryUsers.length,
           enabledUsers: enabledCount,
           disabledUsers: disabledCount
         },
         signInActivity: {
+          available: signInActivityAvailable,
           inactiveDaysThreshold: INACTIVE_DAYS,
           enabledUsersNoSuccessfulSignInSinceThreshold: inactiveEnabledCount,
           enabledUsersNoSuccessfulSignInSinceThresholdPct: inactiveEnabledPct
         }
       },
       summary: {
-        userCount: users.length,
+        userCount: inventoryUsers.length,
         enabledCount,
         disabledCount,
-        inactiveEnabledCount,
-        inactiveDaysThreshold: INACTIVE_DAYS
+        signInActivityAvailable
       },
       artefacts: [
         {
