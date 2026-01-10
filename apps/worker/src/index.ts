@@ -1,9 +1,19 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Always load apps/worker/.env, regardless of where pnpm was run from
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
+
+import { getCollectorOrThrow } from "./collectors";
 import { prisma } from "@acme/db";
-import { entraUsersCollector } from "@acme/collectors";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
+import type { CollectorContext, CollectorResult } from "./collectors/types";
+import { normalizeCollectorResult } from "./collectors/types";
 
 const WORKER_ID = `worker-${process.pid}`;
 const POLL_MS = Number(process.env.POLL_MS ?? 2000);
@@ -68,9 +78,39 @@ async function uploadArtefactToObjectStore(params: {
 }
 
 async function pollOnce() {
-  // Find one queued job (include run + tenant so we can build collector ctx)
+  // Requeue stale running jobs (worker crashed / hung, etc.)
+  const RUNNING_STALE_LOCK_MS = Number(
+    process.env.RUNNING_STALE_LOCK_MS ?? 10 * 60 * 1000 // 10 mins default
+  );
+
+  const staleCutoff = new Date(Date.now() - RUNNING_STALE_LOCK_MS);
+
+  const requeued = await prisma.job.updateMany({
+    where: {
+      status: "running",
+      lockedAt: { lt: staleCutoff }
+    },
+    data: {
+      status: "queued",
+      lockedAt: null,
+      lockedBy: null,
+      lastError: "Requeued stale running job (lock timeout)"
+    }
+  });
+
+  if (requeued.count > 0) {
+    console.log(
+      `[${WORKER_ID}] Requeued ${requeued.count} stale running job(s) (older than ${RUNNING_STALE_LOCK_MS}ms)`
+    );
+  }
+
+  // Find one queued job that is not locked, and whose "ready time" (lockedAt) is due
   const job = await prisma.job.findFirst({
-    where: { status: "queued" },
+    where: {
+      status: "queued",
+      lockedBy: null,
+      OR: [{ lockedAt: null }, { lockedAt: { lte: new Date() } }]
+    },
     orderBy: { createdAt: "asc" },
     include: { run: { include: { tenant: true } } }
   });
@@ -80,12 +120,13 @@ async function pollOnce() {
     return;
   }
 
-  // Attempt to "lock" it (simple approach for now)
+  // Attempt to lock it
   const locked = await prisma.job.updateMany({
     where: {
       id: job.id,
       status: "queued",
-      lockedAt: null
+      lockedBy: null,
+      OR: [{ lockedAt: null }, { lockedAt: { lte: new Date() } }]
     },
     data: {
       status: "running",
@@ -100,11 +141,23 @@ async function pollOnce() {
     return;
   }
 
-  // Re-read the job from the DB after locking
-  const currentJob = await prisma.job.findUnique({
-    where: { id: job.id }
+  // NOW is the right moment to mark the run running + set startedAt once
+  await prisma.run.updateMany({
+    where: { id: job.runId, startedAt: null },
+    data: { startedAt: new Date() }
   });
 
+  // Ensure status is running even if startedAt already exists
+  await prisma.run.updateMany({
+    where: {
+      id: job.runId,
+      status: { in: ["queued", "running"] }
+    },
+    data: { status: "running" }
+  });
+
+  // Sanity re-read
+  const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
   if (
     !currentJob ||
     currentJob.status !== "running" ||
@@ -117,22 +170,22 @@ async function pollOnce() {
   console.log(`[${WORKER_ID}] Picked up job ${job.id} (runId=${job.runId})`);
 
   try {
-    // Build collector context from the joined job/run/tenant
-    const ctx = {
-      runId: job.runId,
-      tenantId: job.run.tenantId,
-      tenantGuid: job.run.tenant.tenantGuid,
-      primaryDomain: job.run.tenant.primaryDomain,
-      triggeredBy: job.run.triggeredBy,
-      modulesEnabled: job.run.modulesEnabled as any
+    const collector = getCollectorOrThrow(job.collectorId);
+
+    const ctx: CollectorContext = {
+      prisma,
+      job,
+      run: job.run,
+      tenant: job.run.tenant
     };
 
-    const result = await entraUsersCollector(ctx);
+    const rawResult: CollectorResult = await collector.run(ctx);
+    const result = normalizeCollectorResult(collector.id, rawResult);
+
     console.log(
-      `[${WORKER_ID}] Collector ${result.id} completed with status=${result.status}`
+      `[${WORKER_ID}] Collector ${collector.id} completed with status=${result.status}`
     );
 
-    // --- Upload artefacts (Option B) + persist metadata ---
     if (Array.isArray(result.artefacts)) {
       for (const artefact of result.artefacts) {
         if (!artefact.content) continue;
@@ -148,10 +201,11 @@ async function pollOnce() {
         await prisma.artefact.create({
           data: {
             runId: job.runId,
+            jobId: job.id,
             type: artefact.type,
             bucket: uploaded.bucket,
             key: uploaded.key,
-            uri: uploaded.uri, // optional but handy
+            uri: uploaded.uri,
             hash: uploaded.hash,
             sizeBytes: uploaded.sizeBytes
           }
@@ -163,15 +217,14 @@ async function pollOnce() {
       }
     }
 
-    // If this collector returned users, write them as Findings so the UI can show them nicely
-    if (result.id === "entra.users" && result.status === "ok") {
+    // Keep your existing special-case findings for entra.users for now
+    if (collector.id === "entra.users" && result.status === "ok") {
       const users = (result.data as any)?.users ?? [];
-
       if (Array.isArray(users) && users.length > 0) {
-        // Write one "info" finding per user (simple + UI-friendly)
         await prisma.finding.createMany({
           data: users.map((u: any) => ({
             runId: job.runId,
+            jobId: job.id,
             checkId: "ENTRA_USERS_001",
             severity: "info",
             title: `User: ${
@@ -192,7 +245,7 @@ async function pollOnce() {
       }
     }
 
-    // Mark job succeeded + persist the job result JSON
+    // keep lockedAt as the "job started" timestamp; clear lockedBy only.
     await prisma.job.update({
       where: { id: job.id },
       data: {
@@ -200,19 +253,71 @@ async function pollOnce() {
         result: result as any,
         lastError:
           result.status === "error"
-            ? Array.isArray((result as any).errors)
-              ? (result as any).errors.join("\n")
-              : "collector returned error"
-            : null
+            ? (result.errors ?? ["Collector returned error"]).join("\n")
+            : null,
+        lockedBy: null
+      }
+    });
+
+    // Recompute run status from all jobs (succeed only when all jobs finished successfully)
+    const jobCounts = await prisma.job.groupBy({
+      by: ["status"],
+      where: { runId: job.runId },
+      _count: { status: true }
+    });
+
+    const counts = Object.fromEntries(
+      jobCounts.map((r) => [r.status, r._count.status])
+    ) as Record<string, number>;
+
+    const queued = counts["queued"] ?? 0;
+    const running = counts["running"] ?? 0;
+    const failed = counts["failed"] ?? 0;
+
+    const anyPending = queued + running > 0;
+
+    await prisma.run.update({
+      where: { id: job.runId },
+      data: {
+        status: failed > 0 ? "failed" : anyPending ? "running" : "succeeded",
+        endedAt: anyPending ? null : new Date()
       }
     });
 
     console.log(`[${WORKER_ID}] Job ${job.id} succeeded`);
   } catch (err: any) {
+    const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS ?? 3);
+    const attemptsSoFar = job.attempts ?? 0;
+    const shouldRetry = attemptsSoFar < MAX_ATTEMPTS;
+
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "failed", lastError: String(err?.message ?? err) }
+      data: shouldRetry
+        ? {
+            status: "queued",
+            lockedBy: null,
+            lockedAt: new Date(
+              Date.now() +
+                Math.min(60_000, 2_000 * Math.pow(2, attemptsSoFar))
+            ),
+            lastError: String(err?.message ?? err)
+          }
+        : {
+            status: "failed",
+            lockedBy: null,
+            lastError: String(err?.message ?? err)
+          }
     });
+
+    if (!shouldRetry) {
+      await prisma.run.update({
+        where: { id: job.runId },
+        data: {
+          status: "failed",
+          endedAt: new Date()
+        }
+      });
+    }
 
     console.log(
       `[${WORKER_ID}] Job ${job.id} failed: ${String(err?.message ?? err)}`

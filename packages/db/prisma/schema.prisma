@@ -30,22 +30,52 @@ enum Severity {
   unknown
 }
 
+enum FindingCategory {
+  identity
+  access
+  application_permissions
+  tenant_configuration
+  audit_and_logging
+  data_protection
+  device_management
+  other
+}
+
+enum Confidence {
+  low
+  medium
+  high
+}
+
+enum FindingStatus {
+  open
+  acknowledged
+  resolved
+  false_positive
+}
+
 enum ArtefactType {
   zip
   state
   raw
   log
   csv
+  json
+}
+
+enum TenantAuthMode {
+  MULTI_TENANT_APP
 }
 
 model Tenant {
-  id            String   @id @default(cuid())
-  tenantGuid    String   @unique
+  id            String      @id @default(cuid())
+  tenantGuid    String      @unique
   primaryDomain String
   displayName   String?
-  tags          String[] @default([])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  auth          TenantAuth? @relation("TenantToAuth")
+  tags          String[]    @default([])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   runs Run[]
 }
@@ -60,50 +90,81 @@ model Run {
   triggeredBy    String?
   modulesEnabled Json      @default("{}")
   createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id])
-  job       Job?
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobs      Job[]
   findings  Finding[]
   artefacts Artefact[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Job {
   id        String    @id @default(cuid())
-  runId     String    @unique
+  runId     String
   status    JobStatus @default(queued)
   attempts  Int       @default(0)
   lockedAt  DateTime?
   lockedBy  String?
   lastError String?
-  result Json?
+  result    Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  findings  Finding[]
+  artefacts Artefact[]
 
-  run Run @relation(fields: [runId], references: [id])
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  collectorId String @default("entra.users")
+  payload     Json?
+
+  @@index([runId, status])
+  @@index([collectorId, status])
+  @@index([lockedAt])
+  @@index([createdAt])
 }
 
 model Finding {
-  id             String   @id @default(cuid())
+  id             String          @id @default(cuid())
   runId          String
+  jobId          String?
   checkId        String
-  severity       Severity
+  ruleId         String?
+  category       FindingCategory @default(other)
+  severity       Severity        @default(info)
+  confidence     Confidence      @default(medium)
+  status         FindingStatus   @default(open)
+  score          Int?
   title          String
   description    String
   recommendation String?
-  evidence       Json     @default("{}")
-  references     Json     @default("[]")
-  createdAt      DateTime @default(now())
+  evidence       Json            @default("{}")
+  references     Json            @default("[]")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @default(now()) @updatedAt
 
-  run Run @relation(fields: [runId], references: [id])
+  run Run  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([runId])
+  @@index([jobId])
   @@index([severity])
+  @@index([category])
+  @@index([confidence])
+  @@index([status])
+  @@index([score])
   @@index([checkId])
+  @@index([ruleId])
+  @@index([createdAt])
 }
 
 model Artefact {
   id        String       @id @default(cuid())
   runId     String
+  jobId     String?
   type      ArtefactType
   uri       String
   bucket    String
@@ -112,10 +173,29 @@ model Artefact {
   sizeBytes Int?
   createdAt DateTime @default(now())
 
-  run Run @relation(fields: [runId], references: [id])
+  run Run  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([runId])
+  @@index([jobId])
   @@index([bucket, key])
+  @@index([type])
+  @@index([createdAt])
 }
 
+model TenantAuth {
+  id       String         @id @default(cuid())
+  tenantId String         @unique
+  mode     TenantAuthMode @default(MULTI_TENANT_APP)
 
+  consentedAt DateTime?
+  status      String  @default("not_connected")
+  lastError   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation("TenantToAuth", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
