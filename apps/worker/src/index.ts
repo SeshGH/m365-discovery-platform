@@ -217,33 +217,8 @@ async function pollOnce() {
       }
     }
 
-    // Keep your existing special-case findings for entra.users for now
-    if (collector.id === "entra.users" && result.status === "ok") {
-      const users = (result.data as any)?.users ?? [];
-      if (Array.isArray(users) && users.length > 0) {
-        await prisma.finding.createMany({
-          data: users.map((u: any) => ({
-            runId: job.runId,
-            jobId: job.id,
-            checkId: "ENTRA_USERS_001",
-            severity: "info",
-            title: `User: ${
-              u.displayName ?? u.userPrincipalName ?? u.id ?? "Unknown"
-            }`,
-            description: "User returned by Entra users collector.",
-            recommendation: null,
-            evidence: u,
-            references: []
-          }))
-        });
-
-        console.log(
-          `[${WORKER_ID}] Wrote ${users.length} Findings for entra.users`
-        );
-      } else {
-        console.log(`[${WORKER_ID}] entra.users returned no users`);
-      }
-    }
+    // Step 6: Inventory lives in artefacts; findings are reserved for signals.
+    // We intentionally do NOT create per-object inventory findings here.
 
     // keep lockedAt as the "job started" timestamp; clear lockedBy only.
     await prisma.job.update({
@@ -339,3 +314,4 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+

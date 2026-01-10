@@ -43,12 +43,19 @@ export const entraUsersCollector: Collector = {
       2
     );
 
-    // IMPORTANT: return data.users so the existing worker logic
-    // can create findings (your worker currently does this special-case).
+    // Step 6: inventory belongs in artefacts; findings are reserved for signals.
+    // So we intentionally do NOT return data.users (PII list).
     return {
       id: "entra.users",
       status: "ok",
-      data: { users },
+      data: {
+        // Keep the run result useful without leaking PII lists:
+        summary: {
+          totalUsers: users.length,
+          enabledUsers: enabledCount,
+          disabledUsers: disabledCount
+        }
+      },
       summary: {
         userCount: users.length,
         enabledCount,
@@ -65,3 +72,4 @@ export const entraUsersCollector: Collector = {
     };
   }
 };
+
