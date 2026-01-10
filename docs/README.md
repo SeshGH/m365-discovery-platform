@@ -26,8 +26,9 @@ Documentation here is **engineering-focused**, not marketing or sales material.
   Canonical definition of how discovery results are classified and prioritised, including taxonomy, severity, confidence, lifecycle status, and numeric scoring.  
   This document is the **source of truth** for how findings should be interpreted by humans and downstream systems.
 
-- **[Scoping Model](./scoping-model.md)**  
-  Definition of the “scoping lens” used to reduce manual effort for migrations/take-ons: coverage awareness, inventory signals, complexity drivers, and how the summary is derived from runs/jobs/findings/artefacts.
+- **[Developer Workflow](./dev-workflow.md)**  
+  How development is performed on this platform: command hygiene, documentation-first habits, incremental change discipline, and version-control expectations.  
+  This document defines *how we work*, not just *what we build*.
 
 ---
 
@@ -44,13 +45,23 @@ Documentation here is **engineering-focused**, not marketing or sales material.
 
 ---
 
-## Planned (as the platform evolves)
+## Planning & Coverage
 
-These will be added incrementally when the related functionality exists:
+- **[Discovery Coverage Roadmap](./discovery-coverage-roadmap.md)**  
+  What the platform currently discovers, what is planned, and how coverage evolves over time.
 
-- **Collectors**
-  - contract, registration, findings vs artefacts
-- **Local Development**
-  - running API, worker, Postgres, MinIO
-- **Security**
-  - threat model, design decisions, least-privilege rationale
+- **[Scoping Model](./scoping-model.md)**  
+  How raw discovery data is interpreted through a scoping lens for migrations, take-ons, and tenant-to-tenant work.
+
+- **[Scoping Lens](./scoping-lens.md)**  
+  Conceptual views used to translate findings into commercial and delivery-relevant insights.
+
+---
+
+## Platform Foundations
+
+- **[Local Development](./local-development.md)**  
+  How to run the API, worker, Postgres, and artefact storage locally.
+
+- **[Security](./security.md)**  
+  Threat model, trust boundaries, and security-by-design decisions.
