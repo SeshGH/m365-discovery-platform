@@ -117,7 +117,6 @@ A single collector may:
 4. **Avoid findings spam**
    - Inventory collectors should not emit hundreds of `info` findings long-term
    - Prefer artefacts + summary rollups
-   - Early-stage inventory-as-findings is acceptable but temporary
 
 5. **Artefacts are the source of truth**
    - Findings should reference artefacts, not duplicate large datasets
@@ -126,8 +125,10 @@ A single collector may:
 ## Current collectors
 
 - `entra.users`
-  - Inventory: users (artefact)
-  - Current behaviour: emits `info` findings per user (early-stage)
+  - Inventory: users (counts-only artefact + summary)
+  - Signal: inactive enabled users proportion (`ENTRA_USERS_002`)
+    - A derived finding emitted when a high share of enabled users show no successful sign-in within a configured window.
+    - Evidence is counts/percent only (no user list).
 
 - `entra.enterpriseApps.permissions`
   - Inventory/report: enterprise app permissions (artefact)
@@ -141,4 +142,3 @@ As the platform evolves:
 - Inventory lives in artefacts
 - Findings are reserved for decision-making signals
 - UI can reliably derive coverage and scoping confidence from collector success
-
