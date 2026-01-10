@@ -1,3 +1,4 @@
+===== START findings-model.md =====
 # Findings Model (Taxonomy, Severity, Confidence, Status, Score)
 
 This page defines the **standard model** used to describe Findings produced by collectors in the M365 Discovery Platform.
@@ -25,6 +26,28 @@ To support those audiences we classify each finding using:
 - **Confidence** (how sure we are)
 - **Status** (lifecycle state)
 - **Score** (numeric prioritisation / trending)
+
+
+## Findings are signals, not inventory
+
+A Finding is an **interpreted signal** (risk, gap, misconfiguration, governance issue, or meaningful complexity driver).
+
+Inventory should not be encoded as Findings.
+
+Examples of **inventory (not findings)**:
+- “User exists”
+- “Mailbox exists”
+- “100 SharePoint sites exist”
+
+Those belong in **artefacts** as inventories/reports, with **summary** counts used by scoping lenses.
+
+Examples of **signals (good findings)**:
+- “Enterprise app has high-privilege Graph permissions”
+- “High proportion of enabled users have no sign-in activity (if log coverage supports it)”
+- “Privileged roles assigned to daily-use accounts”
+- “Guest users present with no lifecycle controls”
+
+This rule keeps the Findings tab decision-ready and reduces noise as coverage grows.
 
 
 ## Core fields
@@ -78,7 +101,7 @@ Severity is **impact-based**, not “how confident are we”.
 - **Critical:** Enterprise app has tenant-wide write permissions (e.g., directory write) without appropriate governance
 - **Medium:** Audit retention too low to support investigation
 - **Low:** Minor configuration hardening opportunity with limited exposure
-- **Info:** Inventory-only observations, no risk implied
+- **Info:** Small observations where a signal exists but impact is limited (not raw inventory)
 
 
 ### Confidence
@@ -192,3 +215,4 @@ This model enables:
 - Safe handling of low-confidence findings (e.g., review queues, muted by default)
 
 This document is a contract: collectors and the API/worker should remain consistent with these definitions.
+===== END findings-model.md =====

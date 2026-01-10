@@ -1,4 +1,3 @@
-===== START collectors.md =====
 # Collectors (Contract, Behaviour, and Design Rules)
 
 Collectors are worker-executed modules that gather Microsoft 365 / Entra telemetry and produce:
@@ -142,4 +141,4 @@ As the platform evolves:
 - Inventory lives in artefacts
 - Findings are reserved for decision-making signals
 - UI can reliably derive coverage and scoping confidence from collector success
-===== END collectors.md =====
+
