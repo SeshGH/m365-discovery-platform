@@ -128,11 +128,14 @@ export const enterpriseAppPermissionsCollector: Collector = {
       (sp) => (sp.servicePrincipalType ?? "").toLowerCase() === "application"
     );
 
+    const totalEnterpriseApps = enterpriseApps.length;
+
     // 3) For each app: fetch appRoleAssignments + oauth2PermissionGrants
     const MAX_APPS = Number(process.env.ENTAPP_MAX_APPS ?? 50);
     const CONCURRENCY = Number(process.env.ENTAPP_CONCURRENCY ?? 5);
 
     const targetApps = enterpriseApps.slice(0, MAX_APPS);
+    const wasTruncated = totalEnterpriseApps > targetApps.length;
 
     type AppPermissionReport = {
       id: string;
@@ -198,7 +201,11 @@ export const enterpriseAppPermissionsCollector: Collector = {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_001",
+          category: "application_permissions",
           severity: "high",
+          confidence: "high",
+          status: "open",
+          score: 80,
           title: `Enterprise App has high-privilege permissions: ${
             app.displayName ?? app.appId ?? app.id
           }`,
@@ -219,6 +226,34 @@ export const enterpriseAppPermissionsCollector: Collector = {
       });
     }
 
+    // 4b) Derived scoping finding: scan was truncated
+    if (wasTruncated) {
+      await ctx.prisma.finding.create({
+        data: {
+          runId: ctx.run.id,
+          jobId: ctx.job.id,
+          checkId: "ENTRA_EAP_002",
+          category: "application_permissions",
+          severity: "info",
+          confidence: "high",
+          status: "open",
+          score: 0,
+          title: "Enterprise app permission scan was truncated (results may be incomplete)",
+          description:
+            "This run scanned only a subset of enterprise applications due to the configured ENTAPP_MAX_APPS limit. Risk findings and the permissions report may not reflect the full tenant footprint.",
+          recommendation:
+            "Increase ENTAPP_MAX_APPS (and/or ENTAPP_CONCURRENCY) and re-run discovery if you need complete enterprise app coverage for scoping or security review.",
+          evidence: {
+            totalEnterpriseApps,
+            scannedApps: reports.length,
+            maxApps: MAX_APPS,
+            concurrency: CONCURRENCY
+          } as any,
+          references: [] as any
+        }
+      });
+    }
+
     // 5) Return a JSON artefact for the report
     const artefactContent = JSON.stringify(
       {
@@ -229,8 +264,12 @@ export const enterpriseAppPermissionsCollector: Collector = {
           displayName: ctx.tenant.displayName
         },
         summary: {
+          totalEnterpriseApps,
           scannedApps: reports.length,
-          riskyApps: riskyApps.length
+          riskyApps: riskyApps.length,
+          truncated: wasTruncated,
+          maxApps: MAX_APPS,
+          concurrency: CONCURRENCY
         },
         apps: reports
       },
@@ -242,8 +281,10 @@ export const enterpriseAppPermissionsCollector: Collector = {
       id: "entra.enterpriseApps.permissions",
       status: "ok",
       summary: {
+        totalEnterpriseApps,
         scannedApps: reports.length,
         riskyApps: riskyApps.length,
+        truncated: wasTruncated,
         maxApps: MAX_APPS
       },
       artefacts: [
