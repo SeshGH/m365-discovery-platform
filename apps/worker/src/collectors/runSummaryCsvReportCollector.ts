@@ -12,6 +12,14 @@ function toCsvLine(values: unknown[]): string {
   return values.map(csvEscape).join(",");
 }
 
+function isTerminalJobStatus(status: string): boolean {
+  return status === "succeeded" || status === "failed";
+}
+
+function isReportCollectorId(collectorId: string): boolean {
+  return collectorId.startsWith("report.");
+}
+
 function deriveRunStatus(
   jobs: { status: string }[]
 ): "queued" | "running" | "succeeded" | "failed" {
@@ -45,6 +53,25 @@ export const runSummaryCsvReportCollector: Collector = {
     }
 
     const jobs = run.jobs ?? [];
+
+    // Gate report generation until all NON-report jobs are terminal.
+    // This prevents misleading "running" summaries if the report job is picked up early.
+    const nonReportJobs = jobs.filter((j) => !isReportCollectorId(j.collectorId));
+    const pendingNonReportJobs = nonReportJobs.filter((j) => !isTerminalJobStatus(j.status));
+
+    if (pendingNonReportJobs.length > 0) {
+      const counts = pendingNonReportJobs.reduce<Record<string, number>>((acc, j) => {
+        acc[j.status] = (acc[j.status] ?? 0) + 1;
+        return acc;
+      }, {});
+      const summary = Object.entries(counts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ");
+      throw new Error(
+        `Report not ready: ${pendingNonReportJobs.length} non-report job(s) still pending (${summary}).`
+      );
+    }
+
     const findings = run.findings ?? [];
     const artefacts = run.artefacts ?? [];
 
