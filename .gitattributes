@@ -1,8 +1,11 @@
+﻿# Normalise line endings
 * text=auto
+
+# Docs: always LF (prevents CRLF/LF churn) and keeps markdown consistent
+*.md text eol=lf
+
+# If you keep any scripts in repo, enforce sensible defaults
 *.ts text eol=lf
-*.tsx text eol=lf
-*.js text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
-*.md text eol=lf
