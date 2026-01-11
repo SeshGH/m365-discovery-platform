@@ -1,6 +1,6 @@
 # Runs & Jobs
 
-The platform uses a **Run â†’ Jobs (1:N)** model to execute discovery modules asynchronously and capture traceable outputs.
+The platform uses a **Run → Jobs (1:N)** model to execute discovery modules asynchronously and capture traceable outputs.
 
 A **Run** represents a single execution request for a tenant.  
 A **Job** represents one unit of work within a run (typically one collector).
@@ -20,13 +20,30 @@ This design supports:
 
 ---
 
+## Canonical state vs derived views (important)
+
+The platform deliberately distinguishes **canonical stored state** from **derived views**.
+
+| Concept | Source of truth |
+|------|----------------|
+| Run lifecycle | `Run` table (`status`, `startedAt`, `endedAt`) |
+| Job execution | `Job` table |
+| Findings | `Finding` table |
+| Artefacts | `Artefact` table + object storage |
+| Reports (CSV/XLSX) | **Derived artefacts** |
+
+Reports are **never** treated as primary state.  
+They are generated views over existing findings, artefacts, and jobs.
+
+---
+
 ## Data model overview
 
 ### Run
 
 A Run records:
 - `tenantId` (internal tenant FK)
-- `status` (`queued` â†’ `running` â†’ `succeeded` / `failed`)
+- `status` (`queued` → `running` → `succeeded` / `failed`)
 - `triggeredBy` (audit metadata)
 - `modulesEnabled` (requested modules)
 - `startedAt` / `endedAt` (execution window)
@@ -37,8 +54,11 @@ A Run is considered:
 - **succeeded**: all jobs completed successfully
 - **failed**: at least one job failed (even if others succeeded)
 
-> Note: For demo/reporting we often derive an â€œoverall statusâ€ from job states.  
-> `run.status` remains the canonical DB state.
+> Note  
+> UIs may present an “overall status” derived from jobs,  
+> but `Run.status` remains the canonical database state.
+
+---
 
 ### Job
 
@@ -46,7 +66,7 @@ A Job records:
 - `runId`
 - `collectorId` (stable identifier, e.g. `entra.users`)
 - `payload` (JSON; includes tenant context and module key)
-- `status` (`queued` â†’ `running` â†’ `succeeded` / `failed`)
+- `status` (`queued` → `running` → `succeeded` / `failed`)
 - `attempts` (incremented per pickup)
 - `lastError` (latest error, if any)
 - `lockedBy` / `lockedAt` (worker coordination)
@@ -70,17 +90,21 @@ Each Job payload includes:
 - `tenantGuid` (Entra tenant GUID)
 - `module` (module key from request)
 
-The API does not execute collectors and does not call Microsoft Graph.
+The API:
+- does **not** execute collectors
+- does **not** call Microsoft Graph
 
-#### Report jobs are enqueued last
+#### Report jobs are enqueued last (ordering hint only)
 
-In the current iteration, the API also enqueues one or more **report jobs** after the module collectors. This ensures reports naturally run after collectors have produced findings and artefacts.
+In the current iteration, the API enqueues **report jobs** after discovery collectors.
 
 Current report collector IDs:
 - `report.runSummary.csv`
 - `report.runSummary.xlsx`
 
-These are implemented as normal worker collectors and produce report artefacts (CSV/XLSX).
+This improves demo UX, but **does not guarantee execution order**.
+
+Execution order is always nondeterministic in a concurrent worker model.
 
 ---
 
@@ -89,7 +113,8 @@ These are implemented as normal worker collectors and produce report artefacts (
 The worker finds an eligible job:
 - `status = queued`
 - `lockedBy = null`
-- `lockedAt is null OR lockedAt <= now` (used as â€œready timeâ€ when backoff is applied)
+- `lockedAt is null OR lockedAt <= now`  
+  (used as a “ready time” when backoff is applied)
 
 The worker attempts to lock the job via an atomic update:
 - sets `status = running`
@@ -99,22 +124,28 @@ The worker attempts to lock the job via an atomic update:
 
 Only the worker that successfully updates the row proceeds.
 
+---
+
 ### 3) Worker marks Run running
 
 When a job is picked up, the worker:
 - sets `Run.startedAt` if null
 - ensures `Run.status = running`
 
+---
+
 ### 4) Worker executes the collector
 
 The worker resolves the collector via the registry by `collectorId` and invokes:
 
-- `collector.run({ prisma, job, run, tenant, â€¦ })`
+- `collector.run({ prisma, job, run, tenant, … })`
 
 Collectors can:
 - write findings (classified per the Findings Model)
 - return artefacts for upload (worker persists them)
-- return a structured result summary (persisted to the job result, if used)
+- return a structured summary (where implemented)
+
+---
 
 ### 5) Worker finalises Job
 
@@ -124,16 +155,19 @@ On completion:
 - sets `lastError` on failure
 - clears `lockedBy`
 
-`lockedAt` is retained as the â€œjob startedâ€ timestamp for observability.
+`lockedAt` is retained as the “job started” timestamp for observability.
+
+---
 
 ### 6) Worker recomputes Run status
 
 After a job finishes, the worker recomputes run status from all jobs:
-- if any job is `failed` â†’ `Run.status = failed`
-- else if any job is `queued` or `running` â†’ `Run.status = running`
-- else â†’ `Run.status = succeeded`
 
-When the run becomes terminal (`failed` or `succeeded`), the worker sets `Run.endedAt`.
+- if any job is `failed` → `Run.status = failed`
+- else if any job is `queued` or `running` → `Run.status = running`
+- else → `Run.status = succeeded`
+
+When the run becomes terminal, the worker sets `Run.endedAt`.
 
 ---
 
@@ -143,113 +177,49 @@ When the run becomes terminal (`failed` or `succeeded`), the worker sets `Run.en
 
 The platform supports **multiple worker processes running concurrently**.
 
-Key points:
+Key properties:
 - Job execution order is **not guaranteed**
-- Multiple jobs from the same run may execute in parallel
-- Report jobs may be picked up before other jobs *attempt* to run
-- Correctness is enforced by job locking and collector-level safeguards
+- Jobs from the same run may execute in parallel
+- Report jobs may be picked up early
+- Correctness is enforced by locking and collector-level safeguards
 
-The system must always be correct regardless of worker count or execution order.
+The system must remain correct regardless of worker count.
+
+---
 
 ### Worker identification (`lockedBy`)
 
 Each running job records:
-- `lockedBy`: the worker identifier that currently owns the job
-- `lockedAt`: when the job was started
+- `lockedBy`: worker identifier
+- `lockedAt`: when execution started
 
-For local development and demos, workers may optionally set a human-readable name via `WORKER_NAME`.
+For local demos, workers may set `WORKER_NAME` to improve observability.
 
-Example worker IDs:
-- `worker-A-48444`
-- `worker-B-49328`
-
-This improves observability only â€” it has **no effect on job behaviour or correctness**.
+This has **no effect on behaviour or correctness**.
 
 ---
 
-## Local demo: running multiple workers (PowerShell)
+## Retries, backoff, and stale recovery
 
-### Start two workers with names
-
-Open **two terminals**.
-
-**Terminal A:**
-
-```powershell
-$env:WORKER_NAME = "A"
-pnpm -C apps/worker dev
-```
-
-**Terminal B:**
-
-```powershell
-$env:WORKER_NAME = "B"
-pnpm -C apps/worker dev
-```
-
-You should see logs like:
-- `[worker-A-12345] Worker started. Polling every 2000ms...`
-- `[worker-B-67890] Worker started. Polling every 2000ms...`
-
-The numeric suffix is the process ID and will differ per run.
-
----
-
-## Inspect jobs and see worker ownership (PowerShell-safe)
-
-```powershell
-# Set explicitly to avoid stale values in the current session
-$runId = "<PASTE_RUN_ID_HERE>"
-$jobs = $null
-
-$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
-
-($jobs | ForEach-Object { $_ } |
-  Select-Object collectorId, status, lockedBy |
-  ConvertTo-Json -Depth 4) | Out-String -Width 300
-```
-
-Example output:
-
-```json
-[
-  { "collectorId": "entra.users", "status": "running", "lockedBy": "worker-A-48444" },
-  { "collectorId": "entra.enterpriseApps.permissions", "status": "running", "lockedBy": "worker-B-49328" }
-]
-```
-
-This confirms:
-- multiple workers are active
-- each job is owned by exactly one worker
-- concurrency is observable via `lockedBy`
-
----
-
-## Retries and backoff
+### Retries
 
 If a collector throws:
+- attempts are incremented
+- retryable errors requeue the job
+- `lockedAt` is set to a future timestamp
+- exponential backoff is applied
 
-- the worker compares `attempts` against `MAX_ATTEMPTS` (default `3`)
-- if retryable:
-  - the job returns to `queued`
-  - `lockedAt` is set to a future timestamp (used as a ready time)
-  - exponential backoff is applied
-- if not retryable:
-  - the job becomes `failed`
-  - the run becomes `failed`
-  - `Run.endedAt` is set
-
-This ensures transient failures do not immediately fail a run.
+Non-retryable errors fail the job and the run.
 
 ---
 
-## Stale job requeue
+### Stale job requeue
 
-To handle crashed or hung workers, each worker requeues stale running jobs.
+If a worker crashes or hangs:
 
 A job is considered stale when:
 - `status = running`
-- `lockedAt < now - RUNNING_STALE_LOCK_MS` (default: 10 minutes)
+- `lockedAt < now - RUNNING_STALE_LOCK_MS`
 
 Stale jobs are reset to:
 - `status = queued`
@@ -257,98 +227,62 @@ Stale jobs are reset to:
 - `lockedAt = null`
 - `lastError = "Requeued stale running job (lock timeout)"`
 
-This guarantees forward progress even if a worker exits unexpectedly.
+This guarantees forward progress.
 
 ---
 
-## API endpoints
+## Report collectors: retry-until-complete semantics (important)
 
-### Create run
-- `POST /runs`
+**Current iteration (demo-safe behaviour)**
 
-Returns:
-- `runId`
-- `jobIds[]`
-- `tenantId`
+Report collectors are implemented as normal worker jobs, but they must only run when **all non-report jobs in the run are terminal**.
 
-### Read-only run endpoints
+Because:
+- workers are concurrent
+- execution order is nondeterministic
+
+report jobs may be picked up **before** discovery jobs finish.
+
+To prevent partial or misleading output, report collectors:
+
+- explicitly check run completeness at execution time
+- if non-report jobs are still pending:
+  - throw a controlled error (e.g.  
+    `Report not ready: X non-report job(s) still pending`)
+  - the error is **retryable**
+  - the job is requeued with backoff
+- once the run is complete, the next retry succeeds
+
+This behaviour:
+- does **not** represent a new execution phase
+- does **not** introduce new state
+- exists to ensure correctness under concurrency
+- is safe and intentional for demos and early UX
+
+**Long-term direction**  
+Reports remain derived views. In the future, they may be generated without worker jobs at all.
+
+---
+
+## API endpoints (read-only views)
+
 - `GET /runs`
 - `GET /runs/:runId`
 - `GET /runs/:runId/jobs`
 - `GET /runs/:runId/findings`
 - `GET /runs/:runId/artefacts`
 
-The findings returned by these endpoints are classified according to the **Findings Model**.
-
-The jobs endpoint includes:
-- `startedAt` (derived from `lockedAt`)
-- `endedAt` (derived from `updatedAt` once terminal)
+These endpoints expose **stored state only**.  
+They do not trigger execution.
 
 ---
 
 ## Security-by-design notes
 
-- The API creates records and returns views; it does not execute collectors.
-- The worker performs privileged operations (Graph access, artefact uploads).
-- Job locking prevents concurrent execution of the same job by multiple workers.
-- Outputs (findings and artefacts) are traceable to a run and optionally a job.
-- Classification logic is documented centrally to avoid inconsistent or ad-hoc interpretation.
+- The API never executes collectors
+- The worker performs privileged operations
+- Job locking prevents double execution
+- Outputs are traceable to run and job
+- Report artefacts never become sources of truth
 
-## Demo: prove report gating under concurrency
-
-This demo intentionally creates a race where report jobs are picked up before all collectors finish.
-
-### 1) Enable demo delay (local only)
-
-Edit `apps/worker/.env` and add:
-
-`DEMO_DELAY_EAP_MS=15000`
-
-Restart workers after changing `.env`.
-
-### 2) Start two workers (PowerShell)
-
-Terminal A:
-$env:WORKER_NAME = "A"
-pnpm -C apps/worker dev
-
-Terminal B:
-$env:WORKER_NAME = "B"
-pnpm -C apps/worker dev
-
-### 3) Trigger a run and poll job state
-
-$body = @{
-  tenantGuid     = "<TENANT_GUID>"
-  primaryDomain  = "<PRIMARY_DOMAIN>"
-  triggeredBy    = "manual"
-  modulesEnabled = @{
-    entraUsers               = $true
-    enterpriseAppPermissions = $true
-  }
-} | ConvertTo-Json -Depth 10
-
-$r = Invoke-RestMethod "http://localhost:8080/runs" -Method POST -ContentType "application/json" -Body $body
-$runId = $r.runId
-
-1..60 | ForEach-Object {
-  $jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
-
-  ($jobs | ForEach-Object { $_ } |
-    Select-Object collectorId, status, attempts, lockedBy, lockedAt, lastError |
-    ConvertTo-Json -Depth 4) | Out-String -Width 300
-
-  Start-Sleep -Milliseconds 500
-}
-
-### Expected outcome
-
-While `entra.enterpriseApps.permissions` is still running, report jobs may be picked up early.
-
-In that case, report collectors should:
-- fail fast with a message like `Report not ready: ... pending ...`
-- requeue themselves (`status=queued`, `lockedBy=null`)
-- set `lockedAt` into the future (used as a “ready time” for retry/backoff)
-- increment `attempts`
-
-Once all non-report jobs succeed, the next retry should allow the report jobs to complete successfully.
+This model ensures correctness, auditability, and safe concurrency.
