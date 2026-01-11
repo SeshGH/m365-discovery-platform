@@ -2,12 +2,12 @@
 
 The platform uses a **Run → Jobs (1:N)** model to execute discovery modules asynchronously and capture traceable outputs.
 
-A **Run** represents a single execution request for a tenant.
+A **Run** represents a single execution request for a tenant.  
 A **Job** represents one unit of work within a run (typically one collector).
 
 Runs exist to produce:
-- **classified Findings** (the primary decision-making output)
-- supporting **Artefacts** (evidence, raw data, reports)
+- **Findings** (decision-ready signals)
+- **Artefacts** (evidence, raw data exports, reports)
 
 How findings are classified and prioritised is defined in the platform **Findings Model**:
 - **[`docs/findings-model.md`](./findings-model.md)**
@@ -15,7 +15,7 @@ How findings are classified and prioritised is defined in the platform **Finding
 This design supports:
 - parallelism (multiple jobs per run)
 - retries (job-level attempts)
-- traceability (findings/artefacts can link back to the job)
+- traceability (findings/artefacts link back to job and run)
 - separation of concerns (API enqueues; worker executes)
 
 ---
@@ -23,6 +23,7 @@ This design supports:
 ## Data model overview
 
 ### Run
+
 A Run records:
 - `tenantId` (internal tenant FK)
 - `status` (`queued` → `running` → `succeeded` / `failed`)
@@ -36,7 +37,10 @@ A Run is considered:
 - **succeeded**: all jobs completed successfully
 - **failed**: at least one job failed (even if others succeeded)
 
+> Note: For demo/reporting we often derive an “overall status” from job states. `run.status` remains the canonical DB state.
+
 ### Job
+
 A Job records:
 - `runId`
 - `collectorId` (stable identifier, e.g. `entra.users`)
@@ -46,7 +50,7 @@ A Job records:
 - `lastError` (latest error, if any)
 - `lockedBy` / `lockedAt` (worker coordination)
 
-Jobs can optionally link outputs:
+Jobs can link outputs:
 - Findings include `jobId` for traceability
 - Artefacts include `jobId` for traceability
 
@@ -55,6 +59,7 @@ Jobs can optionally link outputs:
 ## Execution lifecycle
 
 ### 1) API enqueues a Run + Jobs
+
 The API creates:
 - a `Run` (status `queued`)
 - one or more `Job` rows (status `queued`)
@@ -66,13 +71,26 @@ Each Job payload includes:
 
 The API does not execute collectors and does not call Microsoft Graph.
 
+#### Report jobs are enqueued last
+
+In the current iteration, the API also enqueues one or more **report jobs** after the module collectors. This ensures reports naturally run after collectors have produced findings and artefacts.
+
+Current report collector IDs:
+- `report.runSummary.csv`
+- `report.runSummary.xlsx`
+
+These are implemented as normal worker collectors and produce report artefacts (CSV/XLSX).
+
+---
+
 ### 2) Worker polls and locks one Job at a time
+
 The worker finds an eligible job:
 - `status = queued`
 - `lockedBy = null`
-- `lockedAt is null OR lockedAt <= now`
+- `lockedAt is null OR lockedAt <= now` (used as “ready time” when backoff is applied)
 
-The worker then attempts to lock the job via an atomic update:
+The worker attempts to lock the job via an atomic update:
 - sets `status = running`
 - sets `lockedBy = <worker-id>`
 - sets `lockedAt = now`
@@ -81,30 +99,34 @@ The worker then attempts to lock the job via an atomic update:
 Only the worker that successfully updates the row proceeds.
 
 ### 3) Worker marks Run running
-When a job is picked up:
+
+When a job is picked up, the worker:
 - sets `Run.startedAt` if null
 - ensures `Run.status = running`
 
 ### 4) Worker executes the collector
+
 The worker resolves the collector via the registry by `collectorId` and invokes:
 
-- `collector.run({ prisma, job, run, tenant })`
+- `collector.run({ prisma, job, run, tenant, … })`
 
 Collectors can:
 - write findings (classified per the Findings Model)
 - return artefacts for upload (worker persists them)
-- return a structured result (saved to `job.result`)
+- return a structured result summary (persisted to the job result, if used)
 
 ### 5) Worker finalises Job
+
 On completion:
 - sets `status = succeeded` or `failed`
-- sets `job.result`
+- sets `job.result` (where implemented)
 - sets `lastError` on failure
 - clears `lockedBy`
 
 `lockedAt` is retained as the “job started” timestamp for observability.
 
 ### 6) Worker recomputes Run status
+
 After a job finishes, the worker recomputes run status from all jobs:
 - if any job is `failed` → `Run.status = failed`
 - else if any job is `queued` or `running` → `Run.status = running`

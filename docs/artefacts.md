@@ -1,6 +1,6 @@
 # Artefacts
 
-Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports) that are too large or awkward to store inline as Findings.
+Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports, XLSX workbooks) that are too large or awkward to store inline as Findings.
 
 Artefacts are:
 - uploaded by the **worker** to object storage (MinIO/S3)
@@ -17,7 +17,7 @@ An Artefact row records:
 
 - `runId` (required)
 - `jobId` (optional; preferred for traceability)
-- `type` (enum; includes `json`)
+- `type` (enum; e.g. `json`, `csv`, `raw`)
 - `bucket` / `key` (object storage address)
 - `uri` (`s3://bucket/key` convenience)
 - `hash` (sha256 of uploaded content)
@@ -34,7 +34,8 @@ Artefacts are stored using predictable, partitioned keys:
 
 Example:
 
-- `runs/cmk7.../jobs/cmk7.../enterprise-app-permissions.json`
+- `runs/cmk9.../jobs/cmk9.../enterprise-app-permissions.json`
+- `runs/cmk9.../jobs/cmk9.../run-summary.xlsx`
 
 Benefits:
 - easy per-run and per-job grouping
@@ -50,7 +51,7 @@ Benefits:
 - `filename`
 - `contentType`
 - `content` (Buffer or string)
-- `type` (should align with Prisma enum; default `json`)
+- `type` (should align with Prisma enum)
 
 2) Worker uploads the content to object storage.
 
@@ -79,6 +80,7 @@ Looks up the artefact and returns a presigned URL.
 Same behaviour, additionally enforces the artefact belongs to the specified run.
 
 ### TTL
+
 Presigned URLs use a short TTL, controlled by:
 
 - `ARTEFACT_URL_TTL_SECONDS` (defaults to 300 seconds)
@@ -86,11 +88,15 @@ Presigned URLs use a short TTL, controlled by:
 
 The response also includes an `expiresAt` timestamp for UI convenience.
 
+Operational note:
+- Presigned URLs are intentionally short-lived; clients should request a fresh presign URL immediately before downloading.
+
 ---
 
 ## Integrity and traceability
 
 ### Hashing
+
 Artefacts are hashed (sha256) during upload.
 
 This provides:
@@ -98,7 +104,9 @@ This provides:
 - stable change detection (future de-duplication if desired)
 
 ### Job linkage
+
 If an artefact is produced by a specific job, it should include `jobId`.
+
 This enables:
 - “job output” views in the portal
 - auditing what produced a file
@@ -109,11 +117,14 @@ This enables:
 ## Conventions
 
 ### Artefact types
+
 Prefer explicit types matching the Prisma enum:
 - `json` for structured exports
-- other types only when added intentionally (via migration + doc update)
+- `csv` for CSV exports
+- `raw` for binary payloads (e.g. XLSX) unless a dedicated enum is introduced
 
 ### Filenames
+
 Filenames should:
 - be deterministic (avoid timestamps unless required)
 - use kebab-case
@@ -121,25 +132,27 @@ Filenames should:
 
 Good:
 - `enterprise-app-permissions.json`
-- `users.json`
+- `users-inventory.json`
+- `run-summary.csv`
+- `run-summary.xlsx`
 
 Avoid:
 - `540186da-...-export.json`
 - `permissions-2026-01-09T...json`
 
 ### Content types
+
 Use accurate content types:
 - `application/json`
 - `text/csv`
+- `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 
 ---
 
 ## Security-by-design notes
 
 - The worker is the only process that uploads to object storage.
-- The API never streams artefact bodies.
+- The API never streams artefact bodies; it only issues presigned URLs.
 - Presigned URL TTLs are short and bounded.
 - Download responses set `Content-Disposition: attachment` with filename sanitisation.
 - Object storage credentials are held by the API and worker via environment variables; scope should be restricted to the artefacts bucket only (future hardening: dedicated users/policies per component).
-
----
