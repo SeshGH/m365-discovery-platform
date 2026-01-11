@@ -1,6 +1,6 @@
 # Runs & Jobs
 
-The platform uses a **Run → Jobs (1:N)** model to execute discovery modules asynchronously and capture traceable outputs.
+The platform uses a **Run â†’ Jobs (1:N)** model to execute discovery modules asynchronously and capture traceable outputs.
 
 A **Run** represents a single execution request for a tenant.  
 A **Job** represents one unit of work within a run (typically one collector).
@@ -26,7 +26,7 @@ This design supports:
 
 A Run records:
 - `tenantId` (internal tenant FK)
-- `status` (`queued` → `running` → `succeeded` / `failed`)
+- `status` (`queued` â†’ `running` â†’ `succeeded` / `failed`)
 - `triggeredBy` (audit metadata)
 - `modulesEnabled` (requested modules)
 - `startedAt` / `endedAt` (execution window)
@@ -37,7 +37,7 @@ A Run is considered:
 - **succeeded**: all jobs completed successfully
 - **failed**: at least one job failed (even if others succeeded)
 
-> Note: For demo/reporting we often derive an “overall status” from job states.  
+> Note: For demo/reporting we often derive an â€œoverall statusâ€ from job states.  
 > `run.status` remains the canonical DB state.
 
 ### Job
@@ -46,7 +46,7 @@ A Job records:
 - `runId`
 - `collectorId` (stable identifier, e.g. `entra.users`)
 - `payload` (JSON; includes tenant context and module key)
-- `status` (`queued` → `running` → `succeeded` / `failed`)
+- `status` (`queued` â†’ `running` â†’ `succeeded` / `failed`)
 - `attempts` (incremented per pickup)
 - `lastError` (latest error, if any)
 - `lockedBy` / `lockedAt` (worker coordination)
@@ -89,7 +89,7 @@ These are implemented as normal worker collectors and produce report artefacts (
 The worker finds an eligible job:
 - `status = queued`
 - `lockedBy = null`
-- `lockedAt is null OR lockedAt <= now` (used as “ready time” when backoff is applied)
+- `lockedAt is null OR lockedAt <= now` (used as â€œready timeâ€ when backoff is applied)
 
 The worker attempts to lock the job via an atomic update:
 - sets `status = running`
@@ -109,7 +109,7 @@ When a job is picked up, the worker:
 
 The worker resolves the collector via the registry by `collectorId` and invokes:
 
-- `collector.run({ prisma, job, run, tenant, … })`
+- `collector.run({ prisma, job, run, tenant, â€¦ })`
 
 Collectors can:
 - write findings (classified per the Findings Model)
@@ -124,14 +124,14 @@ On completion:
 - sets `lastError` on failure
 - clears `lockedBy`
 
-`lockedAt` is retained as the “job started” timestamp for observability.
+`lockedAt` is retained as the â€œjob startedâ€ timestamp for observability.
 
 ### 6) Worker recomputes Run status
 
 After a job finishes, the worker recomputes run status from all jobs:
-- if any job is `failed` → `Run.status = failed`
-- else if any job is `queued` or `running` → `Run.status = running`
-- else → `Run.status = succeeded`
+- if any job is `failed` â†’ `Run.status = failed`
+- else if any job is `queued` or `running` â†’ `Run.status = running`
+- else â†’ `Run.status = succeeded`
 
 When the run becomes terminal (`failed` or `succeeded`), the worker sets `Run.endedAt`.
 
@@ -163,7 +163,7 @@ Example worker IDs:
 - `worker-A-48444`
 - `worker-B-49328`
 
-This improves observability only — it has **no effect on job behaviour or correctness**.
+This improves observability only â€” it has **no effect on job behaviour or correctness**.
 
 ---
 
@@ -173,69 +173,91 @@ This improves observability only — it has **no effect on job behaviour or corr
 
 Open **two terminals**.
 
-Terminal A:
+**Terminal A:**
 
+```powershell
 $env:WORKER_NAME = "A"
 pnpm -C apps/worker dev
+```
 
-Terminal B:
+**Terminal B:**
 
+```powershell
 $env:WORKER_NAME = "B"
 pnpm -C apps/worker dev
-
+```
 
 You should see logs like:
-- `[worker-A-12345] Worker started...`
-- `[worker-B-67890] Worker started...`
+- `[worker-A-12345] Worker started. Polling every 2000ms...`
+- `[worker-B-67890] Worker started. Polling every 2000ms...`
+
+The numeric suffix is the process ID and will differ per run.
 
 ---
 
 ## Inspect jobs and see worker ownership (PowerShell-safe)
 
+```powershell
+# Set explicitly to avoid stale values in the current session
 $runId = "<PASTE_RUN_ID_HERE>"
-$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs
-" -ErrorAction Stop
+$jobs = $null
+
+$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
 
 ($jobs | ForEach-Object { $_ } |
-Select-Object collectorId, status, lockedBy |
-ConvertTo-Json -Depth 4) | Out-String -Width 300
-
+  Select-Object collectorId, status, lockedBy |
+  ConvertTo-Json -Depth 4) | Out-String -Width 300
+```
 
 Example output:
 
+```json
 [
-{ "collectorId": "entra.users", "status": "running", "lockedBy": "worker-A-48444" },
-{ "collectorId": "entra.enterpriseApps.permissions", "status": "running", "lockedBy": "worker-B-49328" }
+  { "collectorId": "entra.users", "status": "running", "lockedBy": "worker-A-48444" },
+  { "collectorId": "entra.enterpriseApps.permissions", "status": "running", "lockedBy": "worker-B-49328" }
 ]
+```
 
+This confirms:
+- multiple workers are active
+- each job is owned by exactly one worker
+- concurrency is observable via `lockedBy`
 
 ---
 
 ## Retries and backoff
 
 If a collector throws:
-- the worker compares `attempts` against `MAX_ATTEMPTS` (default 3)
+
+- the worker compares `attempts` against `MAX_ATTEMPTS` (default `3`)
 - if retryable:
-  - job returns to `queued`
-  - `lockedAt` is set to a future timestamp (ready time) using exponential backoff
+  - the job returns to `queued`
+  - `lockedAt` is set to a future timestamp (used as a ready time)
+  - exponential backoff is applied
 - if not retryable:
-  - job becomes `failed`
-  - run becomes `failed` and `endedAt` is set
+  - the job becomes `failed`
+  - the run becomes `failed`
+  - `Run.endedAt` is set
+
+This ensures transient failures do not immediately fail a run.
 
 ---
 
 ## Stale job requeue
 
-To handle crashed/hung workers, the worker requeues stale running jobs:
+To handle crashed or hung workers, each worker requeues stale running jobs.
 
+A job is considered stale when:
 - `status = running`
-- `lockedAt < now - RUNNING_STALE_LOCK_MS` (default 10 minutes)
+- `lockedAt < now - RUNNING_STALE_LOCK_MS` (default: 10 minutes)
 
-These jobs are set back to:
+Stale jobs are reset to:
 - `status = queued`
 - `lockedBy = null`
 - `lockedAt = null`
 - `lastError = "Requeued stale running job (lock timeout)"`
+
+This guarantees forward progress even if a worker exits unexpectedly.
 
 ---
 
@@ -256,7 +278,7 @@ Returns:
 - `GET /runs/:runId/findings`
 - `GET /runs/:runId/artefacts`
 
-The findings returned by these endpoints are classified according to the **Findings Model**, ensuring consistent interpretation across runs and collectors.
+The findings returned by these endpoints are classified according to the **Findings Model**.
 
 The jobs endpoint includes:
 - `startedAt` (derived from `lockedAt`)
@@ -269,5 +291,5 @@ The jobs endpoint includes:
 - The API creates records and returns views; it does not execute collectors.
 - The worker performs privileged operations (Graph access, artefact uploads).
 - Job locking prevents concurrent execution of the same job by multiple workers.
-- Outputs (findings/artefacts) are traceable to a run and optionally a job.
-- Classification logic is documented centrally to avoid inconsistent or ad-hoc risk interpretation.
+- Outputs (findings and artefacts) are traceable to a run and optionally a job.
+- Classification logic is documented centrally to avoid inconsistent or ad-hoc interpretation.
