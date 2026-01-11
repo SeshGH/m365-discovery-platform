@@ -15,7 +15,15 @@ import crypto from "node:crypto";
 import type { CollectorContext, CollectorResult } from "./collectors/types";
 import { normalizeCollectorResult } from "./collectors/types";
 
-const WORKER_ID = `worker-${process.pid}`;
+// Optional worker name for observability (no behavioural impact).
+// If set, lockedBy/log prefix becomes: worker-<name>-<pid>
+const WORKER_NAME_RAW = String(process.env.WORKER_NAME ?? "").trim();
+const WORKER_NAME = WORKER_NAME_RAW.length > 0 ? WORKER_NAME_RAW : null;
+
+const WORKER_ID = WORKER_NAME
+  ? `worker-${WORKER_NAME}-${process.pid}`
+  : `worker-${process.pid}`;
+
 const POLL_MS = Number(process.env.POLL_MS ?? 2000);
 
 // ---- S3/MinIO config (fail fast) ----
@@ -314,4 +322,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
