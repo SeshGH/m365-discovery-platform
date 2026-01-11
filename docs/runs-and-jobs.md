@@ -37,7 +37,8 @@ A Run is considered:
 - **succeeded**: all jobs completed successfully
 - **failed**: at least one job failed (even if others succeeded)
 
-> Note: For demo/reporting we often derive an “overall status” from job states. `run.status` remains the canonical DB state.
+> Note: For demo/reporting we often derive an “overall status” from job states.  
+> `run.status` remains the canonical DB state.
 
 ### Job
 
@@ -133,6 +134,80 @@ After a job finishes, the worker recomputes run status from all jobs:
 - else → `Run.status = succeeded`
 
 When the run becomes terminal (`failed` or `succeeded`), the worker sets `Run.endedAt`.
+
+---
+
+## Worker model & concurrency (important)
+
+### Multiple workers are supported by design
+
+The platform supports **multiple worker processes running concurrently**.
+
+Key points:
+- Job execution order is **not guaranteed**
+- Multiple jobs from the same run may execute in parallel
+- Report jobs may be picked up before other jobs *attempt* to run
+- Correctness is enforced by job locking and collector-level safeguards
+
+The system must always be correct regardless of worker count or execution order.
+
+### Worker identification (`lockedBy`)
+
+Each running job records:
+- `lockedBy`: the worker identifier that currently owns the job
+- `lockedAt`: when the job was started
+
+For local development and demos, workers may optionally set a human-readable name via `WORKER_NAME`.
+
+Example worker IDs:
+- `worker-A-48444`
+- `worker-B-49328`
+
+This improves observability only — it has **no effect on job behaviour or correctness**.
+
+---
+
+## Local demo: running multiple workers (PowerShell)
+
+### Start two workers with names
+
+Open **two terminals**.
+
+Terminal A:
+
+$env:WORKER_NAME = "A"
+pnpm -C apps/worker dev
+
+Terminal B:
+
+$env:WORKER_NAME = "B"
+pnpm -C apps/worker dev
+
+
+You should see logs like:
+- `[worker-A-12345] Worker started...`
+- `[worker-B-67890] Worker started...`
+
+---
+
+## Inspect jobs and see worker ownership (PowerShell-safe)
+
+$runId = "<PASTE_RUN_ID_HERE>"
+$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs
+" -ErrorAction Stop
+
+($jobs | ForEach-Object { $_ } |
+Select-Object collectorId, status, lockedBy |
+ConvertTo-Json -Depth 4) | Out-String -Width 300
+
+
+Example output:
+
+[
+{ "collectorId": "entra.users", "status": "running", "lockedBy": "worker-A-48444" },
+{ "collectorId": "entra.enterpriseApps.permissions", "status": "running", "lockedBy": "worker-B-49328" }
+]
+
 
 ---
 
