@@ -1,4 +1,4 @@
-import type { Collector } from "./types";
+﻿import type { Collector } from "./types";
 import { getGraphAccessToken, graphGetAllPages } from "./graph";
 
 type ServicePrincipal = {
@@ -97,6 +97,13 @@ export const enterpriseAppPermissionsCollector: Collector = {
   id: "entra.enterpriseApps.permissions",
   displayName: "Enterprise App Permissions",
   async run(ctx) {
+    // Demo-only test hook: slow this collector down to force report job retry/backoff behaviour.
+    // Default is 0 (disabled). Set DEMO_DELAY_EAP_MS to e.g. 15000 to delay 15 seconds.
+    const DEMO_DELAY_EAP_MS = Number(process.env.DEMO_DELAY_EAP_MS ?? 0);
+    if (DEMO_DELAY_EAP_MS > 0) {
+      await new Promise((r) => setTimeout(r, DEMO_DELAY_EAP_MS));
+    }
+
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
