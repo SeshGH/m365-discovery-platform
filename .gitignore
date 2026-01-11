@@ -187,3 +187,5 @@ Thumbs.db
 # Local downloaded artefacts (dev only)
 *.csv
 
+enterprise-app-permissions.json
+users-inventory.json
