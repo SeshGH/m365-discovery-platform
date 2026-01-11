@@ -293,3 +293,62 @@ The jobs endpoint includes:
 - Job locking prevents concurrent execution of the same job by multiple workers.
 - Outputs (findings and artefacts) are traceable to a run and optionally a job.
 - Classification logic is documented centrally to avoid inconsistent or ad-hoc interpretation.
+
+## Demo: prove report gating under concurrency
+
+This demo intentionally creates a race where report jobs are picked up before all collectors finish.
+
+### 1) Enable demo delay (local only)
+
+Edit `apps/worker/.env` and add:
+
+`DEMO_DELAY_EAP_MS=15000`
+
+Restart workers after changing `.env`.
+
+### 2) Start two workers (PowerShell)
+
+Terminal A:
+$env:WORKER_NAME = "A"
+pnpm -C apps/worker dev
+
+Terminal B:
+$env:WORKER_NAME = "B"
+pnpm -C apps/worker dev
+
+### 3) Trigger a run and poll job state
+
+$body = @{
+  tenantGuid     = "<TENANT_GUID>"
+  primaryDomain  = "<PRIMARY_DOMAIN>"
+  triggeredBy    = "manual"
+  modulesEnabled = @{
+    entraUsers               = $true
+    enterpriseAppPermissions = $true
+  }
+} | ConvertTo-Json -Depth 10
+
+$r = Invoke-RestMethod "http://localhost:8080/runs" -Method POST -ContentType "application/json" -Body $body
+$runId = $r.runId
+
+1..60 | ForEach-Object {
+  $jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
+
+  ($jobs | ForEach-Object { $_ } |
+    Select-Object collectorId, status, attempts, lockedBy, lockedAt, lastError |
+    ConvertTo-Json -Depth 4) | Out-String -Width 300
+
+  Start-Sleep -Milliseconds 500
+}
+
+### Expected outcome
+
+While `entra.enterpriseApps.permissions` is still running, report jobs may be picked up early.
+
+In that case, report collectors should:
+- fail fast with a message like `Report not ready: ... pending ...`
+- requeue themselves (`status=queued`, `lockedBy=null`)
+- set `lockedAt` into the future (used as a “ready time” for retry/backoff)
+- increment `attempts`
+
+Once all non-report jobs succeed, the next retry should allow the report jobs to complete successfully.
