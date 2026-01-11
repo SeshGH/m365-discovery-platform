@@ -83,6 +83,10 @@ function isReportNotReadyError(err: unknown): boolean {
   return msg.startsWith("Report not ready:");
 }
 
+function isReportCollectorId(collectorId: string): boolean {
+  return collectorId.startsWith("report.");
+}
+
 async function pollOnce() {
   // Requeue stale running jobs (worker crashed / hung, etc.)
   const RUNNING_STALE_LOCK_MS = Number(
@@ -110,16 +114,27 @@ async function pollOnce() {
     );
   }
 
-  // Find one queued job that is not locked, and whose "ready time" (lockedAt) is due
-  const job = await prisma.job.findFirst({
-    where: {
-      status: "queued",
-      lockedBy: null,
-      OR: [{ lockedAt: null }, { lockedAt: { lte: new Date() } }]
-    },
-    orderBy: { createdAt: "asc" },
-    include: { run: { include: { tenant: true } } }
-  });
+  // Find one queued NON-report job first (so reports don’t run early)
+  const baseWhere = {
+    status: "queued" as const,
+    lockedBy: null as any,
+    OR: [{ lockedAt: null }, { lockedAt: { lte: new Date() } }]
+  };
+
+  let job =
+    (await prisma.job.findFirst({
+      where: {
+        ...baseWhere,
+        collectorId: { not: { startsWith: "report." } }
+      },
+      orderBy: { createdAt: "asc" },
+      include: { run: { include: { tenant: true } } }
+    })) ??
+    (await prisma.job.findFirst({
+      where: baseWhere,
+      orderBy: { createdAt: "asc" },
+      include: { run: { include: { tenant: true } } }
+    }));
 
   if (!job) {
     console.log(`[${WORKER_ID}] No queued jobs`);
@@ -127,6 +142,17 @@ async function pollOnce() {
   }
 
   // Attempt to lock it (atomic)
+  // IMPORTANT: report jobs should not increment attempts (so "not ready" never burns retries)
+  const lockData: any = {
+    status: "running",
+    lockedAt: new Date(),
+    lockedBy: WORKER_ID
+  };
+
+  if (!isReportCollectorId(job.collectorId)) {
+    lockData.attempts = { increment: 1 };
+  }
+
   const locked = await prisma.job.updateMany({
     where: {
       id: job.id,
@@ -134,12 +160,7 @@ async function pollOnce() {
       lockedBy: null,
       OR: [{ lockedAt: null }, { lockedAt: { lte: new Date() } }]
     },
-    data: {
-      status: "running",
-      lockedAt: new Date(),
-      lockedBy: WORKER_ID,
-      attempts: { increment: 1 }
-    }
+    data: lockData
   });
 
   if (locked.count !== 1) {
@@ -147,7 +168,7 @@ async function pollOnce() {
     return;
   }
 
-  // Re-read the job AFTER incrementing attempts so retry logic is accurate
+  // Re-read the job AFTER locking so retry logic is accurate
   const lockedJob = await prisma.job.findUnique({
     where: { id: job.id },
     include: { run: { include: { tenant: true } } }
@@ -174,10 +195,7 @@ async function pollOnce() {
   });
 
   // Sanity
-  if (
-    lockedJob.status !== "running" ||
-    lockedJob.lockedBy !== WORKER_ID
-  ) {
+  if (lockedJob.status !== "running" || lockedJob.lockedBy !== WORKER_ID) {
     console.log(`[${WORKER_ID}] Job ${lockedJob.id} is no longer runnable`);
     return;
   }

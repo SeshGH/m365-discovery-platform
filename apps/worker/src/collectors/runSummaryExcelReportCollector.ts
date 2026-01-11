@@ -1,5 +1,6 @@
 import type { Collector } from "./types";
 import ExcelJS from "exceljs";
+import { assertReportReadyOrThrow, deriveRunStatus } from "./reportUtils";
 
 function safeSheetName(name: string): string {
   // Excel sheet name constraints: max 31 chars; cannot contain: : \ / ? * [ ]
@@ -13,18 +14,13 @@ function iso(v: unknown): string {
   return String(v);
 }
 
-function isTerminalJobStatus(status: string): boolean {
-  return status === "succeeded" || status === "failed";
-}
-
-function isReportCollectorId(collectorId: string): boolean {
-  return collectorId.startsWith("report.");
-}
-
 export const runSummaryExcelReportCollector: Collector = {
   id: "report.runSummary.xlsx",
   displayName: "Run Summary Excel (XLSX)",
   async run(ctx) {
+    // Gate report generation until all NON-report jobs are terminal.
+    await assertReportReadyOrThrow({ prisma: ctx.prisma, runId: ctx.run.id });
+
     const run = await ctx.prisma.run.findUnique({
       where: { id: ctx.run.id },
       include: {
@@ -44,36 +40,7 @@ export const runSummaryExcelReportCollector: Collector = {
     }
 
     const jobs = run.jobs ?? [];
-
-    // Gate report generation until all NON-report jobs are terminal.
-    // This prevents misleading "running" summaries if the report job is picked up early.
-    const nonReportJobs = jobs.filter((j) => !isReportCollectorId(j.collectorId));
-    const pendingNonReportJobs = nonReportJobs.filter((j) => !isTerminalJobStatus(j.status));
-
-    if (pendingNonReportJobs.length > 0) {
-      const counts = pendingNonReportJobs.reduce<Record<string, number>>((acc, j) => {
-        acc[j.status] = (acc[j.status] ?? 0) + 1;
-        return acc;
-      }, {});
-      const summary = Object.entries(counts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      throw new Error(
-        `Report not ready: ${pendingNonReportJobs.length} non-report job(s) still pending (${summary}).`
-      );
-    }
-
-    // Derived overall run status (don’t trust run.status alone for the demo)
-    const derivedStatus =
-      jobs.some((j) => j.status === "failed")
-        ? "failed"
-        : jobs.length > 0 && jobs.every((j) => j.status === "succeeded")
-          ? "succeeded"
-          : jobs.some((j) => j.status === "running")
-            ? "running"
-            : jobs.some((j) => j.status === "queued")
-              ? "queued"
-              : "running";
+    const derivedStatus = deriveRunStatus(jobs);
 
     const findings = run.findings ?? [];
     const artefacts = run.artefacts ?? [];
