@@ -36,6 +36,12 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   enterpriseAppPermissions: "entra.enterpriseApps.permissions"
 };
 
+// Always enqueue these report jobs at the end of a run
+const RUN_REPORT_COLLECTOR_IDS = [
+  "report.runSummary.csv",
+  "report.runSummary.xlsx"
+] as const;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -470,9 +476,27 @@ app.post("/runs", async (request, reply) => {
     )
   );
 
+  // Always enqueue report jobs LAST (so they naturally run after module collectors)
+  const reportJobs = await prisma.$transaction(
+    RUN_REPORT_COLLECTOR_IDS.map((collectorId) =>
+      prisma.job.create({
+        data: {
+          runId: run.id,
+          status: "queued",
+          collectorId,
+          payload: {
+            tenantId: tenant.id,
+            tenantGuid: tenant.tenantGuid,
+            module: "runReport"
+          }
+        }
+      })
+    )
+  );
+
   return reply.status(201).send({
     runId: run.id,
-    jobIds: createdJobs.map((j) => j.id),
+    jobIds: [...createdJobs.map((j) => j.id), ...reportJobs.map((j) => j.id)],
     tenantId: tenant.id
   });
 });
