@@ -1,4 +1,4 @@
-# Discovery Coverage & Roadmap
+﻿# Discovery Coverage & Roadmap
 
 This document defines the **intended discovery coverage**, **output lenses**, and **evolution path** of the M365 Discovery Platform.
 
@@ -18,7 +18,7 @@ The platform is a **discovery engine**, not a report generator.
 
 It collects **facts** (artefacts), derives **interpretations** (findings), and presents multiple views (lenses) over the same evidence depending on the use case.
 
-Security posture is one output — not the only one.
+Security posture is one output â€” not the only one.
 
 ---
 
@@ -33,7 +33,7 @@ Artefacts are:
 - suitable for validation, debugging, audit, and downstream processing
 
 Artefacts answer:
-> “What exactly did we observe?”
+> â€œWhat exactly did we observe?â€
 
 ---
 
@@ -52,7 +52,7 @@ They are derived from artefacts and enriched with:
 - numeric score
 
 Findings answer:
-> “What does this mean, and how important is it?”
+> â€œWhat does this mean, and how important is it?â€
 
 The findings model is defined in:
 - `docs/findings-model.md` (source of truth)
@@ -63,7 +63,7 @@ The findings model is defined in:
 
 Reports are derived views over the same underlying evidence.
 
-In the current iteration, we generate report artefacts via worker “report collectors” so the portal/demo can download a single summary file per run.
+In the current iteration, we generate report artefacts via worker â€œreport collectorsâ€ so the portal/demo can download a single summary file per run.
 
 Long-term direction:
 - Reports should remain derived views (not new sources of truth).
@@ -71,8 +71,8 @@ Long-term direction:
 
 **Important behavioural note (current implementation):**
 - Report collectors may **retry automatically** until all *non-report* jobs in the run have reached a terminal state (`succeeded` or `failed`).
-- This prevents generating misleading “partial” summaries if report jobs are picked up early in an asynchronous worker model.
-- This retry behaviour is an implementation detail for safety and demo correctness — it does **not** introduce a new architectural phase or source of truth.
+- This prevents generating misleading â€œpartialâ€ summaries if report jobs are picked up early in an asynchronous worker model.
+- This retry behaviour is an implementation detail for safety and demo correctness â€” it does **not** introduce a new architectural phase or source of truth.
 
 ---
 
@@ -80,7 +80,7 @@ Long-term direction:
 
 The same discovery run can be viewed through different lenses.
 
-These lenses share collectors, artefacts, and findings — they differ only in aggregation, emphasis, and presentation.
+These lenses share collectors, artefacts, and findings â€” they differ only in aggregation, emphasis, and presentation.
 
 ---
 
@@ -138,7 +138,7 @@ Notes:
 - Report collectors therefore validate run completeness at execution time and may retry until safe to generate output.
 
 Direction for XLSX:
-- Evolve toward a “CloudGeezer-style workbook” where each module/collector has its own sheet.
+- Evolve toward a â€œCloudGeezer-style workbookâ€ where each module/collector has its own sheet.
 - Keep inventories as artefacts and/or referenced sheets; avoid duplicating huge datasets into findings.
 
 ---
@@ -162,3 +162,22 @@ Invoke-RestMethod "http://localhost:8080/runs" `
       "enterpriseAppPermissions": true
     }
   }'
+
+### Inspect jobs for a run (PowerShell-safe)
+
+    # Set explicitly to avoid stale values in the current session
+    $runId = "<PASTE_RUN_ID_HERE>"
+    $jobs = $null
+
+    $jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
+
+    ($jobs | ForEach-Object { $_ } |
+      Select-Object id, collectorId, status, attempts, lastError |
+      ConvertTo-Json -Depth 5) | Out-String -Width 300
+
+### Download report artefacts
+
+- Report artefacts are stored per run/job (e.g. run-summary.csv, run-summary.xlsx)
+- Download URLs are presigned and short-lived
+- Always request a fresh presign URL immediately before download
+
