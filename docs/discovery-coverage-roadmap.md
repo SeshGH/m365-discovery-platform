@@ -69,6 +69,11 @@ Long-term direction:
 - Reports should remain derived views (not new sources of truth).
 - The UI should be able to generate or request reports without re-running discovery.
 
+**Important behavioural note (current implementation):**
+- Report collectors may **retry automatically** until all *non-report* jobs in the run have reached a terminal state (`succeeded` or `failed`).
+- This prevents generating misleading “partial” summaries if report jobs are picked up early in an asynchronous worker model.
+- This retry behaviour is an implementation detail for safety and demo correctness — it does **not** introduce a new architectural phase or source of truth.
+
 ---
 
 ## Output lenses
@@ -120,12 +125,17 @@ Typical summary sections:
 
 ## Current reporting coverage (implemented)
 
-Report collectors are currently executed as jobs at the end of runs to produce downloadable summary artefacts:
+Report collectors are executed as standard worker jobs to produce downloadable summary artefacts:
 
 | Report | Collector ID | Artefact |
 |---|---|---|
 | Run summary (CSV) | `report.runSummary.csv` | `run-summary.csv` |
 | Run summary (XLSX) | `report.runSummary.xlsx` | `run-summary.xlsx` |
+
+Notes:
+- Report jobs are enqueued last by the API for demo/UX value.
+- Execution order is **not guaranteed** in a concurrent worker model.
+- Report collectors therefore validate run completeness at execution time and may retry until safe to generate output.
 
 Direction for XLSX:
 - Evolve toward a “CloudGeezer-style workbook” where each module/collector has its own sheet.
@@ -133,78 +143,22 @@ Direction for XLSX:
 
 ---
 
-## Planned discovery coverage (directional)
+## Local demo / validation workflow (PowerShell)
 
-These are intended areas, not commitments.
+These snippets reflect the **actual API response shape** and PowerShell enumeration behaviour.
 
-### Identity & Access
-- Conditional Access policies
-- MFA coverage and exclusions
-- Privileged role assignments
-- Guest and external user analysis
+### Create a run
 
-### Applications
-- Enterprise app ownership gaps
-- App authentication patterns (secrets vs certs)
-- Third-party SaaS risk indicators
-
-### Exchange / Collaboration
-- Mailbox inventory and sizing
-- Shared mailbox sprawl
-- Teams and SharePoint footprint
-- External sharing posture
-
-### Device & Endpoint
-- Intune enrolment coverage
-- Compliance policy gaps
-- Platform fragmentation
-
-### Operational readiness
-- Break-glass account presence
-- Audit log retention
-- Alerting and monitoring coverage
-
----
-
-## Coverage gaps and confidence
-
-Each run should be able to express:
-- which collectors ran successfully
-- which areas were not assessed
-- where confidence is reduced due to missing coverage (e.g. missing permissions, truncated scans)
-
-This allows summaries to explicitly state:
-> “This discovery did not assess Exchange Online.”
-
----
-
-## Demo-only notes
-
-For safe demonstrations, a Microsoft CDX/demo tenant may be used. The platform design still assumes:
-- no real customer credentials are stored
-- no secrets are persisted
-- least-privilege app permissions are used and documented
-
----
-
-## Non-goals (important)
-
-The platform does not aim to:
-- replace specialist migration tooling
-- perform remediation
-- present opinionated “one-size-fits-all” advice
-- generate polished reports before evidence exists
-
-Those concerns are intentionally layered above the core engine.
-
----
-
-## Why this document exists
-
-This roadmap exists to:
-- keep development aligned with intent
-- support consistent future decision-making
-- act as a reference point for new contributors
-- anchor future conversations and design discussions
-
-It should evolve slowly and deliberately.
+```powershell
+Invoke-RestMethod "http://localhost:8080/runs" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{
+    "tenantGuid": "00000000-0000-0000-0000-000000000000",
+    "primaryDomain": "example.onmicrosoft.com",
+    "triggeredBy": "manual",
+    "modulesEnabled": {
+      "entraUsers": true,
+      "enterpriseAppPermissions": true
+    }
+  }'
