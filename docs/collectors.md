@@ -26,11 +26,16 @@ Collectors must produce outputs that are:
 ## Execution model (high level)
 
 1. A **Run** is created (API) with a set of enabled modules/collectors.
-2. The API enqueues **Jobs** for those collectors (and, in the current iteration, report jobs are enqueued last).
-3. The worker dequeues jobs, executes the collector, and persists:
+2. The API enqueues **Jobs** for those collectors.
+3. The worker dequeues jobs, executes collectors, and persists:
    - Findings (via Prisma)
    - Artefacts (uploaded to object storage + recorded in DB)
    - Job status, timing, and error information
+
+Collectors do not manage orchestration, retries, or concurrency directly.
+
+Those concerns are owned by the **worker and run/job model**:
+- see **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**
 
 ---
 
@@ -68,6 +73,8 @@ Examples:
 - Enterprise app has high-privilege Graph permissions
 - Too many Global Admins
 - Audit retention below recommended minimum
+
+---
 
 ### Artefacts
 
@@ -133,15 +140,23 @@ A single collector may:
 
 ## Report collectors (current iteration)
 
-To support demos and early user value, we also run “report” collectors. These are normal worker collectors but their purpose is to export aggregated views of a run.
+Report collectors are normal worker collectors whose purpose is to export **derived views** over a run.
 
 Current report collector IDs:
 - `report.runSummary.csv` → uploads `run-summary.csv`
 - `report.runSummary.xlsx` → uploads `run-summary.xlsx`
 
-These are enqueued last so they run after discovery collectors have produced findings and artefacts.
+Important notes:
 
-> Demo vs long-term: Reports are derived views. Long-term, the platform should be able to generate report artefacts from stored findings/artefacts without needing to re-run discovery.
+- Reports are **derived artefacts**, not sources of truth.
+- Report collectors may be picked up before other jobs complete in a concurrent worker model.
+- Correctness is enforced by **retry-until-complete semantics**, not execution order.
+
+The canonical description of this behaviour lives in:
+- **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**  
+  (see *“Report collectors: retry-until-complete semantics”*)
+
+Collectors themselves do **not** coordinate with each other.
 
 ---
 
@@ -149,7 +164,7 @@ These are enqueued last so they run after discovery collectors have produced fin
 
 - `entra.users`
   - Artefact: users inventory (JSON)
-  - Findings: user/audit signals as implemented (e.g. permission gaps, inactivity signals)
+  - Findings: user/audit signals as implemented
 
 - `entra.enterpriseApps.permissions`
   - Artefact: enterprise app permissions export (JSON)
@@ -159,8 +174,8 @@ These are enqueued last so they run after discovery collectors have produced fin
 
 - `entra.auth.test`
   - Purpose: validates app-only Graph access and updates tenant auth state
-  - Artefacts: none (currently)
-  - Findings: none (currently; status is expressed via TenantAuth)
+  - Artefacts: none
+  - Findings: none (status is expressed via `TenantAuth`)
 
 ---
 
@@ -169,6 +184,6 @@ These are enqueued last so they run after discovery collectors have produced fin
 As the platform evolves:
 - collectors provide stable summaries
 - inventories live in artefacts
-- findings are reserved for decision-making signals
-- the UI can reliably derive coverage and scoping confidence from collector success
-- the Excel workbook evolves toward “one sheet per module” (CloudGeezer-like), but remains a view over evidence, not the evidence itself
+- findings remain decision-focused
+- reports remain views over stored evidence
+- orchestration stays outside collector logic
