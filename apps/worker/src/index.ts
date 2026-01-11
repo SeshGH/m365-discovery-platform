@@ -15,15 +15,8 @@ import crypto from "node:crypto";
 import type { CollectorContext, CollectorResult } from "./collectors/types";
 import { normalizeCollectorResult } from "./collectors/types";
 
-// Optional worker name for observability (no behavioural impact).
-// If set, lockedBy/log prefix becomes: worker-<name>-<pid>
-const WORKER_NAME_RAW = String(process.env.WORKER_NAME ?? "").trim();
-const WORKER_NAME = WORKER_NAME_RAW.length > 0 ? WORKER_NAME_RAW : null;
-
-const WORKER_ID = WORKER_NAME
-  ? `worker-${WORKER_NAME}-${process.pid}`
-  : `worker-${process.pid}`;
-
+const WORKER_NAME = process.env.WORKER_NAME?.trim();
+const WORKER_ID = WORKER_NAME ? `worker-${WORKER_NAME}-${process.pid}` : `worker-${process.pid}`;
 const POLL_MS = Number(process.env.POLL_MS ?? 2000);
 
 // ---- S3/MinIO config (fail fast) ----
@@ -85,6 +78,11 @@ async function uploadArtefactToObjectStore(params: {
   };
 }
 
+function isReportNotReadyError(err: unknown): boolean {
+  const msg = String((err as any)?.message ?? err ?? "");
+  return msg.startsWith("Report not ready:");
+}
+
 async function pollOnce() {
   // Requeue stale running jobs (worker crashed / hung, etc.)
   const RUNNING_STALE_LOCK_MS = Number(
@@ -128,7 +126,7 @@ async function pollOnce() {
     return;
   }
 
-  // Attempt to lock it
+  // Attempt to lock it (atomic)
   const locked = await prisma.job.updateMany({
     where: {
       id: job.id,
@@ -149,42 +147,51 @@ async function pollOnce() {
     return;
   }
 
+  // Re-read the job AFTER incrementing attempts so retry logic is accurate
+  const lockedJob = await prisma.job.findUnique({
+    where: { id: job.id },
+    include: { run: { include: { tenant: true } } }
+  });
+
+  if (!lockedJob) {
+    console.log(`[${WORKER_ID}] Job ${job.id} disappeared after locking`);
+    return;
+  }
+
   // NOW is the right moment to mark the run running + set startedAt once
   await prisma.run.updateMany({
-    where: { id: job.runId, startedAt: null },
+    where: { id: lockedJob.runId, startedAt: null },
     data: { startedAt: new Date() }
   });
 
   // Ensure status is running even if startedAt already exists
   await prisma.run.updateMany({
     where: {
-      id: job.runId,
+      id: lockedJob.runId,
       status: { in: ["queued", "running"] }
     },
     data: { status: "running" }
   });
 
-  // Sanity re-read
-  const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
+  // Sanity
   if (
-    !currentJob ||
-    currentJob.status !== "running" ||
-    currentJob.lockedBy !== WORKER_ID
+    lockedJob.status !== "running" ||
+    lockedJob.lockedBy !== WORKER_ID
   ) {
-    console.log(`[${WORKER_ID}] Job ${job.id} is no longer runnable`);
+    console.log(`[${WORKER_ID}] Job ${lockedJob.id} is no longer runnable`);
     return;
   }
 
-  console.log(`[${WORKER_ID}] Picked up job ${job.id} (runId=${job.runId})`);
+  console.log(`[${WORKER_ID}] Picked up job ${lockedJob.id} (runId=${lockedJob.runId})`);
 
   try {
-    const collector = getCollectorOrThrow(job.collectorId);
+    const collector = getCollectorOrThrow(lockedJob.collectorId);
 
     const ctx: CollectorContext = {
       prisma,
-      job,
-      run: job.run,
-      tenant: job.run.tenant
+      job: lockedJob as any,
+      run: lockedJob.run as any,
+      tenant: (lockedJob.run as any).tenant
     };
 
     const rawResult: CollectorResult = await collector.run(ctx);
@@ -199,8 +206,8 @@ async function pollOnce() {
         if (!artefact.content) continue;
 
         const uploaded = await uploadArtefactToObjectStore({
-          runId: job.runId,
-          jobId: job.id,
+          runId: lockedJob.runId,
+          jobId: lockedJob.id,
           filename: artefact.filename,
           contentType: artefact.contentType,
           body: artefact.content
@@ -208,8 +215,8 @@ async function pollOnce() {
 
         await prisma.artefact.create({
           data: {
-            runId: job.runId,
-            jobId: job.id,
+            runId: lockedJob.runId,
+            jobId: lockedJob.id,
             type: artefact.type,
             bucket: uploaded.bucket,
             key: uploaded.key,
@@ -225,12 +232,8 @@ async function pollOnce() {
       }
     }
 
-    // Step 6: Inventory lives in artefacts; findings are reserved for signals.
-    // We intentionally do NOT create per-object inventory findings here.
-
-    // keep lockedAt as the "job started" timestamp; clear lockedBy only.
     await prisma.job.update({
-      where: { id: job.id },
+      where: { id: lockedJob.id },
       data: {
         status: result.status === "error" ? "failed" : "succeeded",
         result: result as any,
@@ -242,10 +245,10 @@ async function pollOnce() {
       }
     });
 
-    // Recompute run status from all jobs (succeed only when all jobs finished successfully)
+    // Recompute run status from all jobs
     const jobCounts = await prisma.job.groupBy({
       by: ["status"],
-      where: { runId: job.runId },
+      where: { runId: lockedJob.runId },
       _count: { status: true }
     });
 
@@ -260,28 +263,33 @@ async function pollOnce() {
     const anyPending = queued + running > 0;
 
     await prisma.run.update({
-      where: { id: job.runId },
+      where: { id: lockedJob.runId },
       data: {
         status: failed > 0 ? "failed" : anyPending ? "running" : "succeeded",
         endedAt: anyPending ? null : new Date()
       }
     });
 
-    console.log(`[${WORKER_ID}] Job ${job.id} succeeded`);
+    console.log(`[${WORKER_ID}] Job ${lockedJob.id} succeeded`);
   } catch (err: any) {
+    // IMPORTANT:
+    // - "Report not ready" should never count as a real failure
+    // - attempts should be read from the DB post-lock (lockedJob.attempts)
+    const attemptsSoFar = Number(lockedJob.attempts ?? 0);
     const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS ?? 3);
-    const attemptsSoFar = job.attempts ?? 0;
-    const shouldRetry = attemptsSoFar < MAX_ATTEMPTS;
+
+    const reportNotReady = isReportNotReadyError(err);
+    const shouldRetry = reportNotReady ? true : attemptsSoFar < MAX_ATTEMPTS;
 
     await prisma.job.update({
-      where: { id: job.id },
+      where: { id: lockedJob.id },
       data: shouldRetry
         ? {
             status: "queued",
             lockedBy: null,
             lockedAt: new Date(
               Date.now() +
-                Math.min(60_000, 2_000 * Math.pow(2, attemptsSoFar))
+                Math.min(60_000, 2_000 * Math.pow(2, Math.max(0, attemptsSoFar - 1)))
             ),
             lastError: String(err?.message ?? err)
           }
@@ -294,7 +302,7 @@ async function pollOnce() {
 
     if (!shouldRetry) {
       await prisma.run.update({
-        where: { id: job.runId },
+        where: { id: lockedJob.runId },
         data: {
           status: "failed",
           endedAt: new Date()
@@ -303,7 +311,7 @@ async function pollOnce() {
     }
 
     console.log(
-      `[${WORKER_ID}] Job ${job.id} failed: ${String(err?.message ?? err)}`
+      `[${WORKER_ID}] Job ${lockedJob.id} failed: ${String(err?.message ?? err)}`
     );
   }
 }
