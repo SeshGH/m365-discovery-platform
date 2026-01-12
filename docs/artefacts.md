@@ -1,28 +1,36 @@
 # Artefacts
 
-Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports, XLSX workbooks) that are too large or awkward to store inline as Findings.
+> **Authoritative contract:** All stable rules for artefact classification, naming, storage keys, safe/full emission, and report expectations live in:
+>
+> - `docs/artefact-and-report-contracts.md`
+>
+> This document is a descriptive overview and must not redefine contract behaviour.
+
+Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports, XLSX workbooks) that are too large
+or awkward to store inline as Findings.
 
 Artefacts are:
 - uploaded by the **worker** to object storage (MinIO/S3)
 - recorded in Postgres with metadata (bucket/key/hash/size)
-- retrieved via **presigned URLs** from the API
+- downloaded via **API-issued presigned URLs** (returned as redirects)
 
 This keeps the API stateless and avoids proxying large downloads through the API process.
 
 ---
 
-## Data model
+## Data model (overview)
 
-An Artefact row records:
+An `Artefact` row records (at minimum):
 
 - `runId` (required)
-- `jobId` (optional; preferred for traceability)
-- `type` (enum; e.g. `json`, `csv`, `raw`)
+- `jobId` (required for traceability)
+- `type` (enum; e.g. `json`, `csv`, `xlsx`)
 - `bucket` / `key` (object storage address)
-- `uri` (`s3://bucket/key` convenience)
 - `hash` (sha256 of uploaded content)
 - `sizeBytes`
 - `createdAt`
+
+Note: the exact schema is defined in Prisma and is the source of truth.
 
 ---
 
@@ -32,8 +40,7 @@ Artefacts are stored using predictable, partitioned keys:
 
     runs/<runId>/jobs/<jobId>/<filename>
 
-
-Example:
+Example keys:
 
 - `runs/cmk9.../jobs/cmk9.../enterprise-app-permissions.json`
 - `runs/cmk9.../jobs/cmk9.../run-summary.xlsx`
@@ -52,15 +59,15 @@ Benefits:
 - `filename`
 - `contentType`
 - `content` (Buffer or string)
-- `type` (should align with Prisma enum)
+- `type` (must align with the Prisma enum)
 
 2) Worker uploads the content to object storage.
 
 3) Worker writes an `Artefact` row in Postgres with:
-- bucket/key/uri
-- sha256 hash
-- sizeBytes
-- runId/jobId linkage
+- `bucket` / `key`
+- `sha256` hash
+- `sizeBytes`
+- `runId` / `jobId` linkage
 
 Collectors do not talk directly to MinIO/S3.
 
@@ -73,7 +80,7 @@ The API provides two download endpoints:
 ### Global download
 - `GET /artefacts/:artefactId/download`
 
-Looks up the artefact and returns a presigned URL.
+Looks up the artefact and responds with an **HTTP 302 redirect** to a presigned object storage URL.
 
 ### Run-scoped download (backwards compatible)
 - `GET /runs/:runId/artefacts/:artefactId/download`
@@ -87,10 +94,10 @@ Presigned URLs use a short TTL, controlled by:
 - `ARTEFACT_URL_TTL_SECONDS` (defaults to 300 seconds)
 - clamped to a safe range (30–3600 seconds)
 
-The response also includes an `expiresAt` timestamp for UI convenience.
+The API includes an `X-Download-Expires-At` header to indicate expiry time for clients (optional convenience).
 
 Operational note:
-- Presigned URLs are intentionally short-lived; clients should request a fresh presign URL immediately before downloading.
+- Presigned URLs are intentionally short-lived; clients should request a fresh download immediately before retrieving the file.
 
 ---
 
@@ -106,7 +113,7 @@ This provides:
 
 ### Job linkage
 
-If an artefact is produced by a specific job, it should include `jobId`.
+Artefacts are job outputs; `jobId` provides traceability.
 
 This enables:
 - “job output” views in the portal
@@ -115,28 +122,27 @@ This enables:
 
 ---
 
-## Artefact sensitivity
+## Artefact sensitivity (overview)
 
-Artefacts may fall into two broad categories:
+Artefacts broadly fall into:
 
 ### Summary / safe artefacts
-- Aggregated or derived outputs
-- Minimal or no PII
-- Suitable for broad access and demos
+- aggregated or derived outputs
+- minimal or no PII
+- suitable for broad access and demos
 
 Examples:
 - run summary CSV/XLSX
 - count-based exports
 
 ### Sensitive artefacts (explicit)
-- May contain Personally Identifiable Information (PII)
-- Intended for detailed analysis, scoping, or migration work
-- Emitted only when explicitly enabled by run configuration
+- may contain Personally Identifiable Information (PII)
+- intended for detailed analysis, scoping, or migration work
+- emitted only when explicitly enabled by run configuration (e.g. `dataProfile: "full"`)
 
 Examples:
 - full user inventories
-- application permission listings
-- per-object exports
+- detailed app permission exports
 
 Sensitive artefacts:
 - must be clearly named
@@ -145,21 +151,13 @@ Sensitive artefacts:
 
 ---
 
-## Conventions
-
-### Artefact types
-
-Prefer explicit types matching the Prisma enum:
-- `json` for structured exports
-- `csv` for CSV exports
-- `raw` for binary payloads (e.g. XLSX) unless a dedicated enum is introduced
+## Conventions (non-authoritative)
 
 ### Filenames
-
 Filenames should:
 - be deterministic (avoid timestamps unless required)
 - use kebab-case
-- not include secrets or tenant identifiers beyond run/job structure
+- not include secrets
 
 Good:
 - `enterprise-app-permissions.json`
@@ -168,11 +166,10 @@ Good:
 - `run-summary.xlsx`
 
 Avoid:
-- `540186da-...-export.json`
-- `permissions-2026-01-09T...json`
+- random GUID-based names
+- timestamp-heavy names unless required for uniqueness
 
 ### Content types
-
 Use accurate content types:
 - `application/json`
 - `text/csv`
@@ -183,7 +180,7 @@ Use accurate content types:
 ## Security-by-design notes
 
 - The worker is the only process that uploads to object storage.
-- The API never streams artefact bodies; it only issues presigned URLs.
+- The API never streams artefact bodies; it only issues presigned URLs via redirects.
 - Presigned URL TTLs are short and bounded.
 - Download responses set `Content-Disposition: attachment` with filename sanitisation.
-- Object storage credentials are held by the API and worker via environment variables; scope should be restricted to the artefacts bucket only (future hardening: dedicated users/policies per component).
+- Object storage credentials are held by the API and worker via environment variables; scope should be restricted to the artefacts bucket only.

@@ -1,5 +1,11 @@
 # Collectors (Contract, Behaviour, and Design Rules)
 
+> **Authoritative contract:** Stable rules for artefact naming, storage keys, safe/full emission, and report expectations live in:
+>
+> - `docs/artefact-and-report-contracts.md`
+>
+> This document defines collector behaviour and design rules, but must not redefine artefact/report contracts.
+
 Collectors are worker-executed modules that gather Microsoft 365 / Entra telemetry and produce:
 
 - **Findings** (decision-ready signals: risks, gaps, misconfigurations, notable scoping complexity)
