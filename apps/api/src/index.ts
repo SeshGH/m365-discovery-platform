@@ -85,6 +85,7 @@ const S3_ENDPOINT = process.env.S3_ENDPOINT;
 const S3_REGION = process.env.S3_REGION ?? "us-east-1";
 const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY;
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY;
+const S3_BUCKET = process.env.S3_BUCKET ?? "artefacts";
 const S3_FORCE_PATH_STYLE =
   String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
 
@@ -105,412 +106,6 @@ const S3 = new S3Client({
 });
 
 app.get("/health", async () => ({ ok: true }));
-
-// --------------------
-// DEMO-ONLY: Minimal portal to create runs + watch progress
-// GET /demo
-// --------------------
-function renderDemoHtml() {
-  // Kept deliberately framework-free to avoid introducing frontend dependencies.
-  // This page is intended for demo/dev only; long-term UI belongs in a dedicated app.
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>M365 Discovery Platform — Demo</title>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif; margin: 24px; line-height: 1.4; }
-    h1 { margin: 0 0 8px 0; font-size: 22px; }
-    .muted { color: #555; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin: 14px 0; }
-    label { display: block; font-size: 12px; color: #333; margin-bottom: 4px; }
-    input[type="text"] { width: min(520px, 100%); padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; }
-    .btn { padding: 9px 12px; border: 1px solid #222; border-radius: 10px; background: #111; color: white; cursor: pointer; }
-    .btn.secondary { background: white; color: #111; }
-    .btn:disabled { opacity: .5; cursor: not-allowed; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
-    th { font-size: 12px; color: #555; }
-    code { background: #f6f6f6; padding: 2px 5px; border-radius: 6px; }
-    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; border:1px solid #ddd; font-size: 12px; }
-    .status-queued { background:#fff7ed; }
-    .status-running { background:#eff6ff; }
-    .status-succeeded { background:#ecfdf5; }
-    .status-failed { background:#fef2f2; }
-    .err { color: #b42318; white-space: pre-wrap; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .list { border: 1px solid #eee; border-radius: 10px; overflow: hidden; }
-    .listItem { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
-    .listItem:last-child { border-bottom: 0; }
-    .listItem:hover { background: #fafafa; }
-    .tag { display:inline-block; font-size: 11px; border: 1px solid #ddd; border-radius: 999px; padding: 2px 8px; margin-right: 6px; color: #333; background: #fff; }
-  </style>
-</head>
-<body>
-  <h1>M365 Discovery Platform — Demo</h1>
-  <div class="muted">
-    Demo-only run launcher and progress viewer. Long-term UI will live in a dedicated portal app.
-  </div>
-
-  <div class="card">
-    <h2 style="margin:0 0 10px 0; font-size:16px;">Create Run</h2>
-
-    <div class="card" style="margin:0 0 12px 0;">
-      <div style="font-weight:600; margin-bottom:8px;">Quick fill (from existing tenants)</div>
-      <div class="row">
-        <div style="flex:1; min-width: 280px;">
-          <label for="tenantSearch">Search tenants (domain or display name)</label>
-          <input id="tenantSearch" type="text" placeholder="e.g. contoso or onmicrosoft" />
-        </div>
-        <div style="display:flex; align-items:end; gap:8px;">
-          <button id="btnTenantSearch" class="btn secondary">Search</button>
-          <button id="btnTenantClear" class="btn secondary">Clear</button>
-        </div>
-      </div>
-      <div id="tenantSearchError" class="err" style="margin-top:10px;"></div>
-      <div id="tenantResultsWrap" style="margin-top:10px; display:none;">
-        <div class="muted" style="margin-bottom:6px;">Click a tenant to populate the form.</div>
-        <div id="tenantResults" class="list"></div>
-      </div>
-    </div>
-
-    <div class="row">
-      <div style="flex:1; min-width: 280px;">
-        <label for="tenantGuid">Tenant GUID (Directory ID)</label>
-        <input id="tenantGuid" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-      </div>
-      <div style="flex:1; min-width: 280px;">
-        <label for="primaryDomain">Primary Domain</label>
-        <input id="primaryDomain" type="text" placeholder="contoso.onmicrosoft.com" />
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:10px;">
-      <div style="flex:1; min-width: 280px;">
-        <label for="displayName">Display name (optional)</label>
-        <input id="displayName" type="text" placeholder="Contoso (Demo)" />
-      </div>
-      <div style="flex:1; min-width: 280px;">
-        <label for="triggeredBy">Triggered by</label>
-        <input id="triggeredBy" type="text" value="portal-demo" />
-      </div>
-    </div>
-
-    <div class="card" style="margin:12px 0 0 0;">
-      <div style="font-weight:600; margin-bottom:8px;">Modules enabled</div>
-      <label><input id="modEntraUsers" type="checkbox" checked /> entraUsers</label>
-      <label><input id="modEapPerms" type="checkbox" checked /> enterpriseAppPermissions</label>
-      <div class="muted" style="margin-top:8px;">
-        Report collectors are always enqueued at the end of a run.
-      </div>
-    </div>
-
-    <div style="margin-top:12px;">
-      <button id="btnCreate" class="btn">Create run</button>
-      <button id="btnClear" class="btn secondary" style="margin-left:8px;">Clear</button>
-    </div>
-
-    <div id="createError" class="err" style="margin-top:10px;"></div>
-  </div>
-
-  <div class="card" id="runCard" style="display:none;">
-    <h2 style="margin:0 0 10px 0; font-size:16px;">Run</h2>
-    <div>Run ID: <span class="mono" id="runId"></span></div>
-    <div class="muted" style="margin-top:6px;">
-      Polling <code>/runs/:runId</code>, <code>/runs/:runId/jobs</code>, and <code>/runs/:runId/artefacts</code>
-    </div>
-
-    <div style="margin-top:12px;">
-      <div>Run status: <span id="runStatus" class="pill"></span></div>
-      <div class="muted">Started: <span id="runStarted"></span> • Ended: <span id="runEnded"></span></div>
-    </div>
-
-    <h3 style="margin:16px 0 8px 0; font-size:14px;">Jobs</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>collectorId</th>
-          <th>status</th>
-          <th>attempts</th>
-          <th>lockedBy</th>
-          <th>lastError</th>
-        </tr>
-      </thead>
-      <tbody id="jobsBody"></tbody>
-    </table>
-
-    <h3 style="margin:16px 0 8px 0; font-size:14px;">Artefacts</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>type</th>
-          <th>key</th>
-          <th>size</th>
-          <th>download</th>
-        </tr>
-      </thead>
-      <tbody id="artefactsBody"></tbody>
-    </table>
-  </div>
-
-<script>
-(() => {
-  const $ = (id) => document.getElementById(id);
-
-  const state = {
-    runId: null,
-    pollTimer: null,
-    tenantSearchTimer: null
-  };
-
-  function setPill(el, status) {
-    el.textContent = status || "";
-    el.className = "pill";
-    if (status) el.classList.add("status-" + status);
-  }
-
-  function clearRun() {
-    $("createError").textContent = "";
-    $("runCard").style.display = "none";
-    $("runId").textContent = "";
-    $("jobsBody").innerHTML = "";
-    $("artefactsBody").innerHTML = "";
-    if (state.pollTimer) window.clearInterval(state.pollTimer);
-    state.pollTimer = null;
-    state.runId = null;
-  }
-
-  function clearTenantResults() {
-    $("tenantSearchError").textContent = "";
-    $("tenantResults").innerHTML = "";
-    $("tenantResultsWrap").style.display = "none";
-  }
-
-  function clearAll() {
-    clearTenantResults();
-    clearRun();
-    $("tenantGuid").value = "";
-    $("primaryDomain").value = "";
-    $("displayName").value = "";
-    // keep triggeredBy
-  }
-
-  async function api(path, opts) {
-    const res = await fetch(path, opts);
-    const text = await res.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
-    if (!res.ok) {
-      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : text;
-      throw new Error(msg || ("HTTP " + res.status));
-    }
-    return json;
-  }
-
-  function renderJobs(jobs) {
-    const body = $("jobsBody");
-    body.innerHTML = "";
-    for (const j of jobs || []) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = \`
-        <td class="mono">\${j.collectorId}</td>
-        <td><span class="pill status-\${j.status}">\${j.status}</span></td>
-        <td>\${j.attempts ?? 0}</td>
-        <td class="mono">\${j.lockedBy ?? ""}</td>
-        <td class="err">\${j.lastError ? String(j.lastError) : ""}</td>
-      \`;
-      body.appendChild(tr);
-    }
-  }
-
-  async function presignAndDownload(artefactId) {
-    const signed = await api(\`/artefacts/\${artefactId}/download\`);
-    if (!signed || !signed.url) throw new Error("No presigned URL returned");
-    window.open(signed.url, "_blank", "noopener,noreferrer");
-  }
-
-  function renderArtefacts(artefacts) {
-    const body = $("artefactsBody");
-    body.innerHTML = "";
-    for (const a of artefacts || []) {
-      const tr = document.createElement("tr");
-      const size = (a.sizeBytes != null) ? a.sizeBytes : "";
-      tr.innerHTML = \`
-        <td class="mono">\${a.type}</td>
-        <td class="mono">\${a.key}</td>
-        <td>\${size}</td>
-        <td><button class="btn secondary" data-artefact="\${a.id}">Download</button></td>
-      \`;
-      tr.querySelector("button").addEventListener("click", async (e) => {
-        const id = e.currentTarget.getAttribute("data-artefact");
-        e.currentTarget.disabled = true;
-        try {
-          await presignAndDownload(id);
-        } catch (err) {
-          alert(String(err && err.message ? err.message : err));
-        } finally {
-          e.currentTarget.disabled = false;
-        }
-      });
-      body.appendChild(tr);
-    }
-  }
-
-  function renderTenantResults(tenants) {
-    const wrap = $("tenantResultsWrap");
-    const list = $("tenantResults");
-    list.innerHTML = "";
-
-    if (!tenants || tenants.length === 0) {
-      wrap.style.display = "none";
-      return;
-    }
-
-    for (const t of tenants) {
-      const item = document.createElement("div");
-      item.className = "listItem";
-      const auth = t.auth ? String(t.auth.status ?? "") : "unknown";
-      item.innerHTML = \`
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <span class="tag">\${auth}</span>
-          <span style="font-weight:600;">\${t.primaryDomain}</span>
-          <span class="muted">\${t.displayName ? "• " + t.displayName : ""}</span>
-        </div>
-        <div class="mono muted" style="margin-top:4px;">\${t.tenantGuid}</div>
-      \`;
-
-      item.addEventListener("click", () => {
-        $("tenantGuid").value = t.tenantGuid || "";
-        $("primaryDomain").value = t.primaryDomain || "";
-        $("displayName").value = t.displayName || "";
-        clearTenantResults();
-      });
-
-      list.appendChild(item);
-    }
-
-    wrap.style.display = "block";
-  }
-
-  async function searchTenants() {
-    clearTenantResults();
-    const q = $("tenantSearch").value.trim();
-    if (!q) return;
-
-    try {
-      $("btnTenantSearch").disabled = true;
-      const tenants = await api(\`/tenants?q=\${encodeURIComponent(q)}&take=20\`);
-      renderTenantResults(tenants);
-    } catch (err) {
-      $("tenantSearchError").textContent = String(err && err.message ? err.message : err);
-    } finally {
-      $("btnTenantSearch").disabled = false;
-    }
-  }
-
-  async function poll() {
-    if (!state.runId) return;
-
-    const run = await api(\`/runs/\${state.runId}\`);
-    setPill($("runStatus"), run.status);
-    $("runStarted").textContent = run.startedAt || "";
-    $("runEnded").textContent = run.endedAt || "";
-
-    const jobs = await api(\`/runs/\${state.runId}/jobs\`);
-    renderJobs(jobs);
-
-    const artefacts = await api(\`/runs/\${state.runId}/artefacts\`);
-    renderArtefacts(artefacts);
-
-    // Stop polling once terminal
-    if (run.status === "succeeded" || run.status === "failed") {
-      if (state.pollTimer) window.clearInterval(state.pollTimer);
-      state.pollTimer = null;
-    }
-  }
-
-  $("btnClear").addEventListener("click", clearAll);
-
-  $("btnTenantClear").addEventListener("click", () => {
-    $("tenantSearch").value = "";
-    clearTenantResults();
-  });
-
-  $("btnTenantSearch").addEventListener("click", () => {
-    searchTenants().catch((err) => console.error(err));
-  });
-
-  $("tenantSearch").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      searchTenants().catch((err) => console.error(err));
-    }
-  });
-
-  // light debounce as you type
-  $("tenantSearch").addEventListener("input", () => {
-    if (state.tenantSearchTimer) window.clearTimeout(state.tenantSearchTimer);
-    state.tenantSearchTimer = window.setTimeout(() => {
-      searchTenants().catch(() => {});
-    }, 250);
-  });
-
-  $("btnCreate").addEventListener("click", async () => {
-    $("createError").textContent = "";
-
-    const tenantGuid = $("tenantGuid").value.trim();
-    const primaryDomain = $("primaryDomain").value.trim();
-    const displayName = $("displayName").value.trim();
-    const triggeredBy = $("triggeredBy").value.trim() || "portal-demo";
-
-    const modulesEnabled = {
-      entraUsers: $("modEntraUsers").checked,
-      enterpriseAppPermissions: $("modEapPerms").checked
-    };
-
-    const payload = {
-      tenantGuid,
-      primaryDomain,
-      displayName: displayName || undefined,
-      triggeredBy,
-      modulesEnabled
-    };
-
-    try {
-      $("btnCreate").disabled = true;
-      const created = await api("/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      state.runId = created.runId;
-      $("runId").textContent = state.runId;
-      $("runCard").style.display = "block";
-
-      // Start polling immediately
-      await poll();
-      if (state.pollTimer) window.clearInterval(state.pollTimer);
-      state.pollTimer = window.setInterval(() => {
-        poll().catch((err) => console.error(err));
-      }, 1000);
-    } catch (err) {
-      $("createError").textContent = String(err && err.message ? err.message : err);
-    } finally {
-      $("btnCreate").disabled = false;
-    }
-  });
-})();
-</script>
-</body>
-</html>`;
-}
-
-app.get("/demo", async (_req, reply) => {
-  reply.type("text/html; charset=utf-8").send(renderDemoHtml());
-});
 
 function safeAttachmentFilename(name: string) {
   return name.replace(/[^\w.\-() ]+/g, "_");
@@ -738,7 +333,8 @@ app.post("/tenants/:tenantId/auth/test", async (req, reply) => {
       tenantId,
       status: "queued",
       triggeredBy: "auth-test",
-      modulesEnabled: { authTest: true }
+      modulesEnabled: { authTest: true },
+      dataProfile: "safe"
     }
   });
 
@@ -803,7 +399,8 @@ app.post("/tenants/by-guid/:tenantGuid/auth/test", async (req, reply) => {
       tenantId: tenant.id,
       status: "queued",
       triggeredBy: "auth-test",
-      modulesEnabled: { authTest: true }
+      modulesEnabled: { authTest: true },
+      dataProfile: "safe"
     }
   });
 
@@ -838,6 +435,8 @@ app.post("/runs", async (request, reply) => {
 
   const input = parsed.data;
 
+  const dataProfile = input.dataProfile ?? "safe";
+
   // 1) Upsert tenant
   const tenant = await prisma.tenant.upsert({
     where: { tenantGuid: input.tenantGuid },
@@ -858,7 +457,8 @@ app.post("/runs", async (request, reply) => {
       tenantId: tenant.id,
       status: "queued",
       triggeredBy: input.triggeredBy,
-      modulesEnabled: input.modulesEnabled
+      modulesEnabled: input.modulesEnabled,
+      dataProfile
     }
   });
 
@@ -875,7 +475,8 @@ app.post("/runs", async (request, reply) => {
           payload: {
             tenantId: tenant.id,
             tenantGuid: tenant.tenantGuid,
-            module: spec.module
+            module: spec.module,
+            dataProfile
           }
         }
       })
@@ -893,7 +494,8 @@ app.post("/runs", async (request, reply) => {
           payload: {
             tenantId: tenant.id,
             tenantGuid: tenant.tenantGuid,
-            module: "runReport"
+            module: "runReport",
+            dataProfile
           }
         }
       })
@@ -903,7 +505,8 @@ app.post("/runs", async (request, reply) => {
   return reply.status(201).send({
     runId: run.id,
     jobIds: [...createdJobs.map((j) => j.id), ...reportJobs.map((j) => j.id)],
-    tenantId: tenant.id
+    tenantId: tenant.id,
+    dataProfile
   });
 });
 
@@ -925,6 +528,7 @@ app.get("/runs", async () => {
       endedAt: true,
       triggeredBy: true,
       modulesEnabled: true,
+      dataProfile: true,
       tenant: {
         select: {
           id: true,
@@ -952,6 +556,7 @@ app.get("/runs", async () => {
     endedAt: r.endedAt,
     triggeredBy: r.triggeredBy,
     modulesEnabled: r.modulesEnabled,
+    dataProfile: r.dataProfile ?? "safe",
     tenant: r.tenant,
     counts: {
       jobs: r._count.jobs,
@@ -976,6 +581,7 @@ app.get("/runs/:runId", async (req, reply) => {
       endedAt: true,
       triggeredBy: true,
       modulesEnabled: true,
+      dataProfile: true,
       tenant: {
         select: {
           id: true,
@@ -1005,6 +611,7 @@ app.get("/runs/:runId", async (req, reply) => {
     endedAt: run.endedAt,
     triggeredBy: run.triggeredBy,
     modulesEnabled: run.modulesEnabled,
+    dataProfile: run.dataProfile ?? "safe",
     tenant: run.tenant,
     counts: {
       jobs: run._count.jobs,
