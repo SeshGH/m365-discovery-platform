@@ -1,209 +1,177 @@
-# Security
+# Security Model
 
-This document describes the security model of the M365 Discovery Platform, including threat boundaries, design decisions, and least-privilege rationale.
+This document describes the **security-by-design principles**, trust boundaries, and risk controls used by the M365 Discovery Platform.
 
-Security is treated as a **first-class design constraint**, not an afterthought.
-
----
-
-## Security goals
-
-The platform is designed to:
-
-- Minimise the blast radius of credential compromise
-- Separate privileged operations from request handling
-- Avoid exposing sensitive data via the API
-- Make security boundaries explicit and auditable
-- Support incremental hardening without architectural rewrites
+This platform is intentionally designed to operate in **MSP and enterprise environments**, where delegated administrative access to customer tenants is expected, but must still be handled with care, auditability, and least privilege.
 
 ---
 
-## Trust boundaries
+## Core Principles
 
-The platform is intentionally split into multiple trust zones.
-
-### API (Fastify)
-
-The API:
-- Accepts requests from users or automation
-- Validates input and persists state (Runs, Jobs, Tenants)
-- Serves **read-only** views of findings and artefacts
-- Generates **short-lived presigned URLs** for artefact download
-
-The API:
-- **Does not** call Microsoft Graph
-- **Does not** execute discovery logic
-- **Does not** stream large artefacts
-- **Does not** hold broad Graph permissions
-
-This limits the impact of API-layer vulnerabilities.
+1. **Least privilege by default**
+2. **Explicit trust boundaries**
+3. **Worker-only execution of privileged actions**
+4. **Read-only access wherever possible**
+5. **Traceability over mutation**
+6. **Sensitive data is opt-in, explicit, and auditable**
 
 ---
 
-### Worker (background process)
+## Trust Boundaries
 
-The worker:
-- Polls jobs from the database
-- Executes collectors
-- Performs Microsoft Graph calls
-- Uploads artefacts to object storage
-- Writes findings and artefact metadata
+### API
+- The API **never** calls Microsoft Graph
+- The API **never** holds Graph credentials
+- The API exposes **read-only views** of persisted state
+- The API issues **short-lived presigned URLs** for artefact download
 
-The worker is the **only component** that:
-- Holds Microsoft Graph credentials
-- Uploads artefacts to object storage
+### Worker
+- The worker is the **only component** that:
+  - Holds Graph credentials
+  - Calls Microsoft Graph
+  - Executes discovery collectors
+- Workers operate using **application-only (client credentials)** auth
+- Workers are stateless and horizontally scalable
 
-This makes the worker the primary privileged execution boundary.
+### Database
+- Postgres stores:
+  - Runs
+  - Jobs
+  - Findings
+  - Artefact metadata
+- The database **does not store raw Graph tokens**
+- Artefact payloads are **not stored in Postgres**
 
----
+### Object Storage (MinIO / S3)
+- Raw artefacts (CSV, JSON, XLSX) are stored in object storage
+- Artefact keys are predictable and scoped by:
 
-### Database (Postgres)
+runs/{runId}/jobs/{jobId}/{filename}
 
-Postgres is used for:
-- Platform state (Tenants, Runs, Jobs)
-- Findings and artefact metadata
-- Execution traceability
-
-Sensitive secrets are **not** stored in the database.
-
----
-
-### Object storage (MinIO / S3)
-
-Object storage is used for:
-- Artefact content only (JSON, CSV, reports)
-
-The database stores:
-- bucket/key
-- size
-- hash
-
-The API never proxies artefact contents.
+- Object storage access is **indirect**, via presigned URLs only
 
 ---
 
-## Authentication and Microsoft Graph access
+## Microsoft Graph Access Model
 
-### Tenant authentication model
+### Authentication
+- Application-only (client credentials)
+- `.default` scope
+- Tenant-scoped token issuance
+- Admin consent required per tenant
 
-Tenant connectivity is validated via a **worker-executed auth test**:
+### Permission Strategy
 
-- API enqueues an `entra.auth.test` job
-- Worker performs a lightweight app-only Graph call
-- `TenantAuth` is updated with:
-  - `status` (`connected` or `error`)
-  - `lastError`
-  - `consentedAt`
+The platform uses **read-only Microsoft Graph application permissions**.
 
-The API never calls Graph directly.
+Permissions are granted **only when required by an active collector**.
 
----
+Examples:
+- `User.Read.All`
+- `Application.Read.All`
+- `Directory.Read.All`
+- `AuditLog.Read.All` (optional, for enrichment)
 
-### Least privilege rationale
+> Write permissions (e.g. `*.ReadWrite.*`) are **explicitly avoided**.
 
-Collectors are expected to:
-- Request only the Graph permissions required for their scope
-- Prefer lightweight list or metadata calls
-- Avoid exporting unnecessary tenant data
+### Permission Hygiene
 
-Auth tests intentionally use minimal endpoints to validate connectivity without broad access.
-
----
-
-## Job execution and isolation
-
-- Jobs are executed one at a time per worker
-- Jobs are locked using `lockedAt` and `lockedBy`
-- Stale locks are automatically requeued
-- Retries use exponential backoff
-- Each job records:
-  - attempts
-  - lastError
-  - result summary
-
-This ensures:
-- no double execution
-- recoverability from crashes
-- traceability of failures
+- Each collector is responsible for a **specific Graph surface**
+- Required permissions are documented per collector
+- Permission creep is treated as a defect
+- Risky or excessive permissions in *customer* apps are flagged as findings
 
 ---
 
-## Artefact security
+## Sensitive / PII Data Handling
 
-Artefacts are handled using a defence-in-depth approach:
+### Definition
 
-- Artefacts are uploaded by the worker only
-- Object storage credentials are never exposed to users
-- API issues **short-lived presigned URLs**
-- URLs are time-bounded and non-guessable
-- Downloads are served directly from object storage
+Personally Identifiable Information (PII) may include:
+- User names, UPNs, email addresses
+- Group memberships
+- Application ownership
+- Sign-in timestamps
+- Other identity-linked attributes
 
-Artefact integrity is tracked using SHA-256 hashes.
+### Platform Position
+
+PII is **expected and legitimate** in MSP discovery scenarios, but must be:
+
+- **Explicit**
+- **Minimised by default**
+- **Clearly labelled**
+- **Auditable**
+- **Easy to control and purge**
+
+### Default Behaviour (Safe Mode)
+
+By default:
+- Collectors emit **summary and aggregate data**
+- Findings avoid embedding raw PII
+- Reports focus on posture, coverage, and risk signals
+
+This mode is suitable for:
+- Early-stage discovery
+- Demos
+- Low-risk assessments
+- Broad tenant scans
+
+### Explicit Sensitive Exports (Opt-in)
+
+The platform supports (or will support) **explicit opt-in** sensitive exports, for example:
+- Full user inventories
+- Application permission listings
+- Detailed per-object breakdowns
+
+Key characteristics:
+- Enabled per run (not global)
+- Obvious in configuration and output
+- Artefacts clearly labelled as sensitive
+- Not silently enabled
+
+### Artefact Responsibilities
+
+When emitting sensitive data:
+- Artefacts must be the **primary carrier** of PII
+- Findings should reference artefacts, not duplicate raw data
+- Filenames and artefact metadata should make sensitivity obvious
 
 ---
 
-## Data minimisation
+## Retention & Hardening (Planned)
 
-The platform deliberately separates:
+The following controls are **planned and documented**, even if not yet fully enforced:
 
-- **Findings** (human-readable insights)
-- **Artefacts** (raw or structured exports)
+- Configurable artefact retention periods
+- Automated purge of expired artefacts
+- Stronger access controls in the portal UI
+- Download auditing (who accessed what, when)
+- Optional application-level encryption for sensitive artefacts
 
-Collectors should:
-- Prefer Findings for summarised insight
-- Use Artefacts only when raw data is required
-- Avoid duplicating sensitive data across both
-
----
-
-## Failure handling and visibility
-
-Security-relevant failures are surfaced explicitly:
-
-- Failed auth tests update `TenantAuth.status = error`
-- Collector failures populate `Job.lastError`
-- Run status reflects aggregate job outcomes
-- Errors are preserved for audit and troubleshooting
-
-Failures are never silently swallowed.
+These measures are intentionally staged to avoid blocking early iteration while maintaining a clear security trajectory.
 
 ---
 
-## Threat considerations
+## Concurrency & Safety
 
-The platform design mitigates common threats:
+- Jobs are locked atomically (`lockedBy`, `lockedAt`)
+- Workers cannot execute the same job concurrently
+- Stale jobs are safely re-queued
+- Report collectors are gated until all non-report jobs are terminal
 
-- API compromise does not expose Graph credentials
-- Artefact access is time-limited
-- Job execution is isolated and traceable
-- Long-running or stuck jobs are automatically recovered
-
-Remaining risks (e.g. worker host compromise) are acknowledged and can be addressed with:
-- container isolation
-- secret rotation
-- managed identity (future enhancement)
-
----
-
-## Future hardening (intentional, not required now)
-
-Planned improvements include:
-- Managed identity or workload identity for Graph access
-- Separate object storage credentials per component
-- Row-level security for multi-tenant UI access
-- Artefact retention and automatic cleanup
-- Fine-grained audit logging
-
-The current architecture supports these enhancements without major refactoring.
+These mechanisms prevent:
+- Duplicate execution
+- Partial reports
+- Race-condition artefacts
 
 ---
 
 ## Summary
 
-Security in the M365 Discovery Platform is based on:
-- clear trust boundaries
-- least-privilege execution
-- explicit job-based execution
-- minimal API responsibility
+This platform balances:
+- **Operational reality** (MSP access, tenant-wide discovery)
+- **Security best practice** (least privilege, isolation, auditability)
+- **Extensibility** (future collectors, richer reports, portal UX)
 
-This enables safe iteration, auditability, and long-term maintainability.
+Security decisions are explicit, documented, and treated as part of the core architecture — not an afterthought.
