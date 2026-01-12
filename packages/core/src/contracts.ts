@@ -1,15 +1,36 @@
 import { z } from "zod";
 
 /**
- * Shared API contract: Create a discovery run.
- * This is used by the API (to validate input) and by the web (to build correct requests).
+ * CreateRunSchema
+ *
+ * Defines the public contract for creating a discovery run.
+ * This schema is consumed by the API and is treated as a stable contract.
  */
 export const CreateRunSchema = z.object({
-  tenantGuid: z.string().min(5),
-  primaryDomain: z.string().min(3),
-  displayName: z.string().optional(),
-  triggeredBy: z.string().optional(),
-  modulesEnabled: z.record(z.any()).default({})
+  tenantGuid: z.string().uuid(),
+  primaryDomain: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+
+  /**
+   * Identifies what triggered the run (portal, auth-test, demo, etc.)
+   */
+  triggeredBy: z.string().min(1),
+
+  /**
+   * Modules enabled for this run.
+   * Keys must match API module -> collector mapping.
+   */
+  modulesEnabled: z.record(z.boolean()).optional(),
+
+  /**
+   * Data profile for this run.
+   *
+   * - "safe" (default): summary-only, no PII-heavy artefacts
+   * - "full": explicit opt-in for sensitive exports (PII)
+   *
+   * Behaviour is enforced by collectors and report generators.
+   */
+  dataProfile: z.enum(["safe", "full"]).optional()
 });
 
 export type CreateRunInput = z.infer<typeof CreateRunSchema>;
