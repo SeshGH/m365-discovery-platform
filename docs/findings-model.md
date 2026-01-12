@@ -1,7 +1,11 @@
-===== START findings-model.md =====
-# Findings Model (Taxonomy, Severity, Confidence, Status, Score)
+# Findings Model (Contract, Taxonomy Guidance, and Future Extensions)
 
 This page defines the **standard model** used to describe Findings produced by collectors in the M365 Discovery Platform.
+
+It has two parts:
+
+1. **Implemented contract (today):** the fields and severity values the platform currently persists and exposes via the API.
+2. **Taxonomy guidance (future-facing):** additional classification concepts we intend to adopt over time, without implying they exist yet.
 
 The goal is to ensure findings are:
 - **Decision-ready** (prioritised and explainable)
@@ -9,28 +13,13 @@ The goal is to ensure findings are:
 - **Future-proof** for UI, reporting, and automation
 - **Secure-by-design** (clear risk communication and defensible outputs)
 
-This document is intentionally practical: it describes *what* each field means and *how* to apply it consistently.
+This document is intentionally practical: it describes what each field means and how to apply it consistently.
 
-
-## Why we model findings this way
-
-A single discovery signal needs to be explainable to three audiences:
-
-- **Security/technical:** What is wrong and what evidence supports it?
-- **Decision maker:** How bad is it and what should we do first?
-- **Platform/automation:** How do we sort, group, trend, and workflow this finding?
-
-To support those audiences we classify each finding using:
-- **Category** (where it belongs)
-- **Severity** (how bad it is if ignored)
-- **Confidence** (how sure we are)
-- **Status** (lifecycle state)
-- **Score** (numeric prioritisation / trending)
-
+---
 
 ## Findings are signals, not inventory
 
-A Finding is an **interpreted signal** (risk, gap, misconfiguration, governance issue, or meaningful complexity driver).
+A Finding is an **interpreted signal** (risk, gap, misconfiguration, governance issue, or meaningful scoping complexity driver).
 
 Inventory should not be encoded as Findings.
 
@@ -43,24 +32,86 @@ Those belong in **artefacts** as inventories/reports, with **summary** counts us
 
 Examples of **signals (good findings)**:
 - “Enterprise app has high-privilege Graph permissions”
-- “High proportion of enabled users have no sign-in activity (if log coverage supports it)”
+- “Audit retention too low to support investigation”
 - “Privileged roles assigned to daily-use accounts”
 - “Guest users present with no lifecycle controls”
+- “Scan truncated; results may be incomplete” (data completeness signal, often demo-only)
 
-This rule keeps the Findings tab decision-ready and reduces noise as coverage grows.
+This rule keeps the Findings view decision-ready and reduces noise as coverage grows.
 
+---
 
-## Core fields
+## Implemented contract (current behaviour)
 
-### Category
+### Core finding fields (today)
+
+Findings currently persist and are exposed by the API with the following fields:
+
+- `checkId` — stable identifier for the check/signal (contract)
+- `severity` — impact rating (see ladder below)
+- `title` — short human-readable summary
+- `description` — explanation of what was detected and why it matters
+- `recommendation` — suggested remediation / next action
+- `evidence` — short supporting details (must not be a large payload)
+- `references` — optional links/notes for further reading (if present)
+- `runId` / `jobId` — traceability to run and producing job
+- `createdAt` — timestamp
+
+**Rule:** Findings must remain **small and readable**. Large inventories and raw evidence belong in artefacts.
+
+### Stable Check IDs (contract)
+
+`checkId` values are treated as stable contracts.
+
+Rules:
+- A `checkId` must never change meaning once shipped.
+- Prefer predictable, namespaced IDs.
+
+Current implemented examples:
+- `ENTRA_EAP_001` — high-privilege Graph permissions detected
+- `ENTRA_EAP_002` — scan truncated (results may be incomplete)
+
+Recommended format:
+- `{DOMAIN}_{AREA}_{NNN}` (e.g. `ENTRA_EAP_003`)
+
+### Severity (contract)
+
+Severity answers:
+> “If ignored, how bad could this realistically be?”
+
+Severity is impact-based (not confidence).
+
+**Severity ladder (supported by reporting today)**
+- `info` — worth knowing; no meaningful risk on its own
+- `low` — minor weakness / defence-in-depth improvement
+- `medium` — legitimate concern; should be planned and addressed
+- `high` — serious exposure if abused; prioritise remediation
+- `critical` — direct compromise path or tenant-wide high-impact risk
+- `unknown` — only if impact cannot be determined (should be rare)
+
+**Guidance**
+- Avoid overusing `unknown`. If you have enough evidence to raise a finding, you usually have enough to classify impact.
+- Do not encode inventory as `info` findings long-term; use artefacts + summaries instead.
+
+---
+
+## Taxonomy guidance (future-facing; not necessarily implemented yet)
+
+The concepts in this section are **intended direction**. They may be implemented later via:
+- additional persisted fields,
+- derived classification from `checkId`,
+- or UI-layer grouping rules.
+
+Until implemented, they must not be assumed to exist in API payloads.
+
+### Category (future-facing)
+
 **Purpose:** grouping, filtering, ownership, roadmap coverage.
 
 Category answers:
 > “What area of M365 does this relate to?”
 
-Categories should map to common M365 security domains and customer mental models.
-
-**Typical categories**
+Suggested category set (keep stable and not overly granular):
 - `identity`
 - `access`
 - `application_permissions`
@@ -68,151 +119,70 @@ Categories should map to common M365 security domains and customer mental models
 - `audit_and_logging`
 - `data_protection`
 - `device_management`
+- `data_completeness` (for truncation/partial coverage signals)
 
-**Notes**
-- Category is not a risk rating.
-- Category should be stable over time (avoid overly granular categories).
+Mapping guidance:
+- `ENTRA_EAP_*` generally maps to `application_permissions`
+- truncation/partial scan findings (like `ENTRA_EAP_002`) map to `data_completeness`
 
+### Confidence (future-facing)
 
-### Severity
-**Purpose:** prioritisation, escalation, risk communication.
-
-Severity answers:
-> “If ignored, how bad could this realistically be?”
-
-Severity is **impact-based**, not “how confident are we”.
-
-**Severity ladder**
-- `info` — Worth knowing; no meaningful risk on its own
-- `low` — Minor weakness / defence-in-depth improvement
-- `medium` — Legitimate security concern; should be planned and addressed
-- `high` — Serious exposure if abused; prioritise remediation
-- `critical` — Direct compromise path or tenant-wide high-impact risk
-
-**What severity is judged against**
-- Blast radius (single user vs tenant-wide)
-- Privilege level involved (admin roles, high-impact permissions)
-- Likelihood of misuse (easy to exploit vs requires chained conditions)
-- Business impact (data exposure, control, persistence)
-- Alignment with common frameworks (CIS, Zero Trust concepts, Secure Score themes)
-
-**Examples**
-- **High:** Too many Global Admins / daily-use accounts holding GA
-- **Critical:** Enterprise app has tenant-wide write permissions (e.g., directory write) without appropriate governance
-- **Medium:** Audit retention too low to support investigation
-- **Low:** Minor configuration hardening opportunity with limited exposure
-- **Info:** Small observations where a signal exists but impact is limited (not raw inventory)
-
-
-### Confidence
 **Purpose:** credibility, reducing false positives, review workflows.
 
 Confidence answers:
 > “How sure are we that this is actually a problem?”
 
-Confidence is about **signal quality**, not impact.
+Suggested levels:
+- `high` — direct, authoritative evidence
+- `medium` — reasonable inference with good evidence but some assumptions
+- `low` — heuristic / incomplete telemetry / higher false-positive risk
 
-**Typical confidence levels**
-- `high` — Based on direct, authoritative evidence (e.g., explicit permission values)
-- `medium` — Reasonable inference with good evidence but some assumptions
-- `low` — Heuristic / incomplete telemetry / higher false-positive risk
-
-**Examples**
-- **High confidence:** App permissions explicitly include high-impact scopes
-- **Medium confidence:** “Unused in 30 days” where logs are limited or sampled
-- **Low confidence:** Behavioural inference based on incomplete signals
-
-**Guidance**
+Guidance:
 - Do not inflate confidence to justify severity.
-- A `critical` finding can still be `low` confidence if evidence is incomplete (and should be handled carefully in reporting/UI).
+- A `critical` finding can be low confidence if evidence is incomplete (treat carefully in UI/reporting).
 
+### Status (future-facing)
 
-### Status
-**Purpose:** operational lifecycle tracking.
+**Purpose:** operational lifecycle tracking across repeat runs.
 
-Status answers:
-> “Where is this finding in its lifecycle?”
+Suggested statuses:
+- `open`
+- `acknowledged`
+- `resolved`
+- `false_positive`
 
-**Typical statuses**
-- `open` — newly identified or still outstanding
-- `acknowledged` — reviewed/accepted risk; remediation planned or deferred
-- `resolved` — verified remediated or no longer present
-- `false_positive` — confirmed not applicable / incorrect
+Status records human/operational decisions; it must not change the underlying evidence.
 
-**Notes**
-- Status enables repeat-run comparisons and workflow in future UI.
-- Status does not change the underlying evidence; it records human/operational decisions.
+### Numeric score (future-facing)
 
+Severity is designed for humans. A numeric score supports sorting and trending.
 
-## Numeric score
-
-Severity is designed for **humans**.
-A numeric score supports **sorting, trending, dashboards, and summaries**.
-
-Score should **co-exist** with severity, not replace it.
-
-### Recommended initial approach: derived score
-Use severity as a base score, then optionally adjust based on scope and confidence.
-
-**Base score mapping**
+Suggested initial derived mapping:
 - `info` → 0
 - `low` → 20
 - `medium` → 50
 - `high` → 80
 - `critical` → 100
 
-**Optional adjustments (examples)**
-- Confidence adjustment:
-  - `low` confidence: −10
-  - `high` confidence: +0 (or +5 if you want extra emphasis)
-- Scope adjustment:
-  - tenant-wide impact: +10
-  - privileged role involved: +10
+Optional adjustments (later):
+- confidence adjustment (e.g. low confidence −10)
+- scope adjustment (e.g. tenant-wide +10)
 
-**Examples**
-1) **Critical app permission, high confidence, tenant-wide**
-- Base: 100
-- Scope: +10
-- Score: **110**
+Guidance:
+- Keep scoring rules simple and explainable.
+- “Clever” scoring should come later once you have enough data to validate it.
 
-2) **High severity, low confidence (needs review)**
-- Base: 80
-- Confidence: −10
-- Score: **70**
+---
 
-3) **Medium severity, tenant-wide, medium confidence**
-- Base: 50
-- Scope: +10
-- Score: **60**
-
-**Guidance**
-- Keep the scoring rules simple and explainable.
-- Any “clever” scoring model should come later, once real findings data exists to validate it.
-
-
-## Using the model when writing findings
+## Writing good findings
 
 Collectors should aim to produce findings that are:
 - **Clear** (human-readable title/summary)
-- **Evidence-based** (include key supporting data)
-- **Classified** (category, severity, confidence)
-- **Actionable** (recommended remediation where appropriate)
+- **Evidence-based** (include key supporting details)
+- **Actionable** (recommend remediation where appropriate)
+- **Non-invasive** (avoid leaking sensitive data into findings)
 
 A good mental model:
-- **Category** = what cupboard the issue lives in
-- **Severity** = how much it’s on fire
-- **Confidence** = how sure we are it’s actually on fire
-- **Status** = what we’re doing about it
-- **Score** = how we sort and trend it
-
-
-## Reporting and UI implications (future-facing)
-
-This model enables:
-- Filtering by category (e.g., “show only application permissions”)
-- Sorting by severity/score (e.g., “top 10 risks”)
-- Trend reporting across runs (e.g., “risk score decreasing over time”)
-- Safe handling of low-confidence findings (e.g., review queues, muted by default)
-
-This document is a contract: collectors and the API/worker should remain consistent with these definitions.
-===== END findings-model.md =====
+- Severity = how much it’s on fire
+- Evidence = why we think it’s on fire
+- Recommendation = what to do about it
