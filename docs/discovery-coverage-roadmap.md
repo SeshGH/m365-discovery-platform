@@ -6,7 +6,7 @@ It exists to:
 - capture architectural intent
 - prevent scope drift
 - provide a shared reference for future development and discussion
-- document *why* certain collectors and outputs exist (or are planned)
+- document why certain collectors and outputs exist (or are planned)
 
 This is a **capability roadmap**, not an implementation backlog.
 
@@ -16,9 +16,9 @@ This is a **capability roadmap**, not an implementation backlog.
 
 The platform is a **discovery engine**, not a report generator.
 
-It collects **facts** (artefacts), derives **interpretations** (findings), and presents multiple views (lenses) over the same evidence depending on the use case.
+It collects **facts** (artefacts), derives **signals** (findings), and presents multiple views (lenses) over the same evidence depending on the use case.
 
-Security posture is one output â€” not the only one.
+Security posture is one output — not the only one.
 
 ---
 
@@ -33,29 +33,33 @@ Artefacts are:
 - suitable for validation, debugging, audit, and downstream processing
 
 Artefacts answer:
-> â€œWhat exactly did we observe?â€
+> “What exactly did we observe?”
+
+Authoritative contracts:
+- `docs/artefact-and-report-contracts.md`
+- `docs/artefacts.md` (overview; defers to contracts)
 
 ---
 
 ### 2) Findings (interpretation layer)
 
 Findings are:
-- normalised
-- human-readable
-- opinionated
-- scored and prioritised
+- small, decision-ready signals
+- human-readable and prioritised by severity
+- traceable to a run and producing job
 
-They are derived from artefacts and enriched with:
-- severity
-- confidence
-- lifecycle status
-- numeric score
+They answer:
+> “What does this mean, and how important is it?”
 
-Findings answer:
-> â€œWhat does this mean, and how important is it?â€
+Important:
+- The platform’s **implemented** findings contract today includes `checkId`, `severity`, and descriptive fields.
+- Additional taxonomy concepts (category/confidence/status/score) are **future-facing** and must not be assumed to exist in API payloads until implemented.
 
 The findings model is defined in:
 - `docs/findings-model.md` (source of truth)
+
+Implemented check IDs are listed in:
+- `docs/findings-registry.md`
 
 ---
 
@@ -63,16 +67,16 @@ The findings model is defined in:
 
 Reports are derived views over the same underlying evidence.
 
-In the current iteration, we generate report artefacts via worker â€œreport collectorsâ€ so the portal/demo can download a single summary file per run.
+In the current iteration, report artefacts are generated via worker “report collectors” so a portal/demo can download a small number of summary outputs per run.
 
 Long-term direction:
-- Reports should remain derived views (not new sources of truth).
-- The UI should be able to generate or request reports without re-running discovery.
+- Reports remain derived views (not new sources of truth).
+- The UI should be able to request/generate views over stored evidence without re-running discovery.
 
-**Important behavioural note (current implementation):**
-- Report collectors may **retry automatically** until all *non-report* jobs in the run have reached a terminal state (`succeeded` or `failed`).
-- This prevents generating misleading â€œpartialâ€ summaries if report jobs are picked up early in an asynchronous worker model.
-- This retry behaviour is an implementation detail for safety and demo correctness â€” it does **not** introduce a new architectural phase or source of truth.
+Implementation note (current behaviour):
+- Report collectors may **retry automatically** until all non-report jobs in the run have reached a terminal state (`succeeded` or `failed`).
+- This prevents generating misleading partial summaries if report jobs are picked up early in an asynchronous worker model.
+- This retry behaviour is a safety mechanism; it does not introduce a new architectural phase or source of truth.
 
 ---
 
@@ -80,17 +84,16 @@ Long-term direction:
 
 The same discovery run can be viewed through different lenses.
 
-These lenses share collectors, artefacts, and findings â€” they differ only in aggregation, emphasis, and presentation.
+These lenses share collectors, artefacts, and findings — they differ only in aggregation, emphasis, and presentation.
 
 ---
 
-## Lens 1: Security Posture
+## Lens 1: Security posture
 
 Focus:
 - risk, misconfiguration, hygiene
 
 Typical summary sections:
-- posture score (future)
 - findings by severity
 - top risks
 - privilege and access concerns
@@ -99,7 +102,7 @@ Typical summary sections:
 
 ---
 
-## Lens 2: Migration / Take-on / Acquisition Scoping
+## Lens 2: Migration / take-on / acquisition scoping
 
 Focus:
 - inventory, complexity, delivery effort
@@ -115,19 +118,23 @@ Typical summary sections:
 
 ## Current discovery coverage (implemented)
 
-| Area | Collector ID | Evidence (Artefacts) | Example Findings |
+| Area | Collector ID | Evidence (Artefacts) | Implemented Finding IDs |
 |---|---|---|---|
-| Entra ID users | `entra.users` | `users-inventory.json` | e.g. sign-in activity unavailable (permission missing), inactivity/other signals as implemented |
-| Enterprise app permissions | `entra.enterpriseApps.permissions` | `enterprise-app-permissions.json` | `ENTRA_EAP_001` high-privilege permissions; `ENTRA_EAP_002` scan truncated |
-| Tenant auth validation | `entra.auth.test` | none | Tenant auth status is expressed via `TenantAuth` (not via findings) |
+| Entra ID users | `entra.users` | `users-inventory.json` (safe) and profile-aware variants (see contracts) | none documented as stable IDs yet |
+| Enterprise app permissions | `entra.enterpriseApps.permissions` | `enterprise-app-permissions.json` (safe) and profile-aware variants (see contracts) | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
+| Tenant auth validation | `entra.auth.test` | none | none (tenant auth status is expressed via `TenantAuth`) |
+
+Notes:
+- Implemented finding IDs and meanings are tracked in `docs/findings-registry.md`.
+- Artefact filenames and profile behaviour are defined in `docs/artefact-and-report-contracts.md`.
 
 ---
 
 ## Current reporting coverage (implemented)
 
-Report collectors are executed as standard worker jobs to produce downloadable summary artefacts:
+Report collectors are executed as standard worker jobs to produce downloadable terminal artefacts:
 
-| Report | Collector ID | Artefact |
+| Report | Collector ID | Artefact (filename) |
 |---|---|---|
 | Run summary (CSV) | `report.runSummary.csv` | `run-summary.csv` |
 | Run summary (XLSX) | `report.runSummary.xlsx` | `run-summary.xlsx` |
@@ -135,17 +142,29 @@ Report collectors are executed as standard worker jobs to produce downloadable s
 Notes:
 - Report jobs are enqueued last by the API for demo/UX value.
 - Execution order is **not guaranteed** in a concurrent worker model.
-- Report collectors therefore validate run completeness at execution time and may retry until safe to generate output.
+- Report collectors validate run completeness at execution time and may retry until safe to generate output.
 
 Direction for XLSX:
-- Evolve toward a â€œCloudGeezer-style workbookâ€ where each module/collector has its own sheet.
-- Keep inventories as artefacts and/or referenced sheets; avoid duplicating huge datasets into findings.
+- Evolve toward a CloudGeezer-style workbook where each module/collector has its own sheet.
+- Keep inventories as artefacts and/or referenced sheets; avoid duplicating large datasets into findings.
+
+---
+
+## Demo-only constraints (must not be treated as long-term behaviour)
+
+The demo tenant and demo harness may apply limits that are explicitly not architectural guarantees.
+
+Examples:
+- Enterprise app enumeration caps (e.g. `ENTAPP_MAX_APPS`) causing truncation signals such as `ENTRA_EAP_002`.
+
+Rule:
+- Any demo-only limit must be documented as demo-only and surfaced as a data completeness signal (finding and/or report note).
 
 ---
 
 ## Local demo / validation workflow (PowerShell)
 
-These snippets reflect the **actual API response shape** and PowerShell enumeration behaviour.
+These snippets reflect the actual API response shape and PowerShell enumeration behaviour.
 
 ### Create a run
 
@@ -165,19 +184,20 @@ Invoke-RestMethod "http://localhost:8080/runs" `
 
 ### Inspect jobs for a run (PowerShell-safe)
 
-    # Set explicitly to avoid stale values in the current session
-    $runId = "<PASTE_RUN_ID_HERE>"
-    $jobs = $null
+# Set explicitly to avoid stale values in the current session
+$runId = "<PASTE_RUN_ID_HERE>"
+$jobs = $null
 
-    $jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
+$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
 
-    ($jobs | ForEach-Object { $_ } |
-      Select-Object id, collectorId, status, attempts, lastError |
-      ConvertTo-Json -Depth 5) | Out-String -Width 300
+($jobs | ForEach-Object { $_ } |
+  Select-Object id, collectorId, status, attempts, lastError |
+  ConvertTo-Json -Depth 5) | Out-String -Width 300
 
-### Download report artefacts
+Download report artefacts
 
-- Report artefacts are stored per run/job (e.g. run-summary.csv, run-summary.xlsx)
-- Download URLs are presigned and short-lived
-- Always request a fresh presign URL immediately before download
+Downloads use GET /artefacts/:artefactId/download
 
+The API responds with an HTTP 302 redirect to a short-lived presigned URL
+
+Always request the download immediately before retrieving the file
