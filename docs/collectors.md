@@ -18,7 +18,7 @@ Collectors must produce outputs that are:
 - **Consistent** (stable schema over time)
 - **Explainable** (humans can interpret results)
 - **Composable** (UI + reporting can aggregate across collectors)
-- **Secure-by-design** (least privilege; avoid sensitive leakage)
+- **Secure-by-design** (least privilege; avoid sensitive leakage by default)
 - **Scoping-friendly** (inventory + complexity signals, not just security posture)
 
 ---
@@ -90,6 +90,10 @@ Examples:
 - Users inventory
 - Run summary exports (CSV/XLSX)
 
+Artefacts may be:
+- **summary-level** (safe by default), or
+- **sensitive** (explicitly enabled, may contain PII)
+
 ---
 
 ## Scoping vs Security (two lenses)
@@ -116,9 +120,10 @@ A single collector may:
    - Request only required Microsoft Graph permissions
    - Prefer read-only scopes
 
-2. **Avoid sensitive leakage**
+2. **Avoid sensitive leakage by default**
    - Do not store secrets or tokens
-   - Keep finding evidence minimal (counts, identifiers only where required)
+   - Avoid embedding PII in findings
+   - Emit sensitive inventories only when explicitly enabled
 
 3. **Stable identifiers**
    - Use stable `collectorId` values (e.g. `entra.users`)
@@ -130,11 +135,12 @@ A single collector may:
    - Prefer artefacts + summary rollups
 
 5. **Artefacts are the evidence layer**
-   - Findings should reference the evidence conceptually and avoid duplicating large datasets
+   - Findings should reference evidence conceptually
+   - Avoid duplicating large or sensitive datasets into findings
 
 6. **Treat contracts as stable**
-   - Collector IDs, artefact keys, and exported report schema are treated as contracts.
-   - If a contract must change, document it and version it deliberately.
+   - Collector IDs, artefact keys, and exported report schema are treated as contracts
+   - If a contract must change, document it and version it deliberately
 
 ---
 
@@ -153,8 +159,7 @@ Important notes:
 - Correctness is enforced by **retry-until-complete semantics**, not execution order.
 
 The canonical description of this behaviour lives in:
-- **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**  
-  (see *“Report collectors: retry-until-complete semantics”*)
+- **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**
 
 Collectors themselves do **not** coordinate with each other.
 

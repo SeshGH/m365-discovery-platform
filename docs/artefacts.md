@@ -30,7 +30,8 @@ An Artefact row records:
 
 Artefacts are stored using predictable, partitioned keys:
 
-- `runs/<runId>/jobs/<jobId>/<filename>`
+    runs/<runId>/jobs/<jobId>/<filename>
+
 
 Example:
 
@@ -111,6 +112,36 @@ This enables:
 - “job output” views in the portal
 - auditing what produced a file
 - targeted cleanup if a job is re-run
+
+---
+
+## Artefact sensitivity
+
+Artefacts may fall into two broad categories:
+
+### Summary / safe artefacts
+- Aggregated or derived outputs
+- Minimal or no PII
+- Suitable for broad access and demos
+
+Examples:
+- run summary CSV/XLSX
+- count-based exports
+
+### Sensitive artefacts (explicit)
+- May contain Personally Identifiable Information (PII)
+- Intended for detailed analysis, scoping, or migration work
+- Emitted only when explicitly enabled by run configuration
+
+Examples:
+- full user inventories
+- application permission listings
+- per-object exports
+
+Sensitive artefacts:
+- must be clearly named
+- must not silently appear
+- should avoid duplication of PII into Findings
 
 ---
 
