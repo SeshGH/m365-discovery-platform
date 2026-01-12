@@ -4,6 +4,7 @@ import { getGraphAccessToken, graphGetAllPages } from "./graph";
 type GraphUserSafe = {
   id: string;
   accountEnabled?: boolean | null;
+  userType?: string | null; // "Member" | "Guest" (not PII)
 };
 
 type GraphUserFull = {
@@ -29,7 +30,7 @@ export const entraUsersCollector: Collector = {
     // Safe profile: minimal fields for counts (no PII-bearing per-user export).
     const inventoryUsers = await graphGetAllPages<GraphUserSafe>(
       token,
-      "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled"
+      "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled,userType"
     );
 
     // Full profile (explicit opt-in): export a PII-bearing inventory artefact.
@@ -45,6 +46,37 @@ export const entraUsersCollector: Collector = {
     const enabled = inventoryUsers.filter((u) => u.accountEnabled !== false).length;
     const disabled = total - enabled;
 
+    const guests = inventoryUsers.filter((u) => (u.userType ?? "") === "Guest").length;
+    const members = total - guests;
+
+    // Finding: Guest users present (counts only; safe-by-default)
+    // Contract: stable checkId, small evidence, no inventory/PII.
+    if (guests > 0) {
+      await ctx.prisma.finding.create({
+        data: {
+          runId: ctx.run.id,
+          jobId: ctx.job.id,
+          checkId: "ENTRA_USERS_001",
+          category: "identity",
+          severity: "info",
+          confidence: "high",
+          status: "open",
+          score: 0,
+          title: "Guest users present",
+          description:
+            "Guest accounts are present in the tenant. Guest users can increase governance and access management complexity and should be reviewed for lifecycle controls and appropriate access policies.",
+          recommendation:
+            "Review guest user governance: confirm guest access policies, ensure lifecycle/expiry controls exist, and validate conditional access coverage for external users.",
+          evidence: {
+            guestUsers: guests,
+            totalUsers: total,
+            enabledUsers: enabled,
+            disabledUsers: disabled
+          }
+        }
+      });
+    }
+
     // Counts-only inventory artefact (safe-by-design)
     const inventoryArtefact = JSON.stringify(
       {
@@ -58,7 +90,9 @@ export const entraUsersCollector: Collector = {
         summary: {
           totalUsers: total,
           enabledUsers: enabled,
-          disabledUsers: disabled
+          disabledUsers: disabled,
+          memberUsers: members,
+          guestUsers: guests
         }
       },
       null,
@@ -76,7 +110,8 @@ export const entraUsersCollector: Collector = {
               displayName: ctx.tenant.displayName
             },
             summary: {
-              totalUsers: fullUsers.length
+              totalUsers: fullUsers.length,
+              guestUsers: fullUsers.filter((u) => (u.userType ?? "") === "Guest").length
             },
             users: fullUsers.map((u) => ({
               id: u.id,
@@ -101,6 +136,7 @@ export const entraUsersCollector: Collector = {
         totalUsers: total,
         enabledUsers: enabled,
         disabledUsers: disabled,
+        guestUsers: guests,
         fullExported: includeSensitive
       },
       artefacts: [

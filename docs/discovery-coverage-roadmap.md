@@ -120,7 +120,7 @@ Typical summary sections:
 
 | Area | Collector ID | Evidence (Artefacts) | Implemented Finding IDs |
 |---|---|---|---|
-| Entra ID users | `entra.users` | `users-inventory.json` (safe) and profile-aware variants (see contracts) | none documented as stable IDs yet |
+| Entra ID users | `entra.users` | `users-inventory.json` (safe) and profile-aware variants (see contracts) | `ENTRA_USERS_001` |
 | Enterprise app permissions | `entra.enterpriseApps.permissions` | `enterprise-app-permissions.json` (safe) and profile-aware variants (see contracts) | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
 | Tenant auth validation | `entra.auth.test` | none | none (tenant auth status is expressed via `TenantAuth`) |
 

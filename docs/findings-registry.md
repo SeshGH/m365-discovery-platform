@@ -14,6 +14,17 @@ For the findings model and future taxonomy concepts, see:
 
 ---
 
+## Entra — Users (`ENTRA_USERS_*`)
+
+### `ENTRA_USERS_001` — Guest users present
+- **Collector:** `entra.users`
+- **Severity (implemented):** `info`
+- **Category (future-facing guidance):** `identity`
+- **Meaning:** One or more guest users exist in the tenant. This is not inherently “bad”, but it is a governance and access complexity signal that should be reviewed.
+- **UI note:** This is a small decision signal (counts only). Do not treat as inventory; the user inventory artefact remains the evidence layer.
+
+---
+
 ## Entra — Enterprise App Permissions (`ENTRA_EAP_*`)
 
 ### `ENTRA_EAP_001` — High-privilege Graph permissions detected
