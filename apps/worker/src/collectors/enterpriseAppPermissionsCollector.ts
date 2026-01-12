@@ -107,6 +107,9 @@ export const enterpriseAppPermissionsCollector: Collector = {
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
+    const dataProfile = (ctx.run as any).dataProfile ?? "safe";
+    const includeSensitive = dataProfile === "full";
+
     // 1) Load Microsoft Graph service principal (to resolve appRoleId -> permission value)
     const graphSpList = await graphGetAllPages<GraphSpWithRoles>(
       token,
@@ -261,33 +264,65 @@ export const enterpriseAppPermissionsCollector: Collector = {
       });
     }
 
-    // 5) Return a JSON artefact for the report
-    const artefactContent = JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        tenant: {
-          tenantGuid: ctx.tenant.tenantGuid,
-          primaryDomain: ctx.tenant.primaryDomain,
-          displayName: ctx.tenant.displayName
-        },
-        summary: {
-          totalEnterpriseApps,
-          scannedApps: reports.length,
-          riskyApps: riskyApps.length,
-          truncated: wasTruncated,
-          maxApps: MAX_APPS,
-          concurrency: CONCURRENCY
-        },
-        apps: reports
-      },
-      null,
-      2
-    );
+    // 5) Return a JSON artefact for the report (profile-aware)
+    const artefactContent = includeSensitive
+      ? JSON.stringify(
+          {
+            generatedAt: new Date().toISOString(),
+            profile: "full",
+            tenant: {
+              tenantGuid: ctx.tenant.tenantGuid,
+              primaryDomain: ctx.tenant.primaryDomain,
+              displayName: ctx.tenant.displayName
+            },
+            summary: {
+              totalEnterpriseApps,
+              scannedApps: reports.length,
+              riskyApps: riskyApps.length,
+              truncated: wasTruncated,
+              maxApps: MAX_APPS,
+              concurrency: CONCURRENCY
+            },
+            apps: reports
+          },
+          null,
+          2
+        )
+      : JSON.stringify(
+          {
+            generatedAt: new Date().toISOString(),
+            profile: "safe",
+            tenant: {
+              tenantGuid: ctx.tenant.tenantGuid,
+              primaryDomain: ctx.tenant.primaryDomain,
+              displayName: ctx.tenant.displayName
+            },
+            summary: {
+              totalEnterpriseApps,
+              scannedApps: reports.length,
+              riskyApps: riskyApps.length,
+              truncated: wasTruncated,
+              maxApps: MAX_APPS,
+              concurrency: CONCURRENCY
+            },
+            // Safe profile: only export a minimal list of risky apps (no full permission inventory).
+            riskyApps: riskyApps.map((app) => ({
+              id: app.id,
+              displayName: app.displayName,
+              appId: app.appId,
+              accountEnabled: app.accountEnabled,
+              riskyPermissions: app.risky
+            }))
+          },
+          null,
+          2
+        );
 
     return {
       id: "entra.enterpriseApps.permissions",
       status: "ok",
       summary: {
+        profile: dataProfile,
         totalEnterpriseApps,
         scannedApps: reports.length,
         riskyApps: riskyApps.length,
@@ -297,7 +332,9 @@ export const enterpriseAppPermissionsCollector: Collector = {
       artefacts: [
         {
           type: "json",
-          filename: "enterprise-app-permissions.json",
+          filename: includeSensitive
+            ? "enterprise-app-permissions.full.json"
+            : "enterprise-app-permissions.json",
           contentType: "application/json",
           content: artefactContent
         }
