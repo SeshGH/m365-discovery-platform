@@ -264,25 +264,56 @@ Reports remain derived views. In the future, they may be generated without worke
 
 ---
 
-## API endpoints (read-only views)
+## Demo script: multi-worker report gating proof (PowerShell)
 
-- `GET /runs`
-- `GET /runs/:runId`
-- `GET /runs/:runId/jobs`
-- `GET /runs/:runId/findings`
-- `GET /runs/:runId/artefacts`
+A repeatable demo harness is included in the repo:
 
-These endpoints expose **stored state only**.  
+- `scripts/demo/multi-worker-report-gating.ps1`
+
+What it does:
+- Starts the API and **two named workers** (A/B) in separate PowerShell windows
+- Applies a local-only delay (`DEMO_DELAY_EAP_MS`) to force a race
+- Triggers a run and polls jobs until terminal
+- Makes report gating retries obvious (`Report not ready: ...`)
+
+Example:
+
+```powershell
+.\scripts\demo\multi-worker-report-gating.ps1 `
+  -TenantGuid "<TENANT_GUID>" `
+  -PrimaryDomain "<PRIMARY_DOMAIN>" `
+  -DemoDelayEapMs 15000
+
+
+Tip:
+
+If you already have API/workers running, add -StopExistingFirst to stop them via pnpm dev:stop.
+
+## API endpoints (read-only views) ##
+
+GET /runs
+
+GET /runs/:runId
+
+GET /runs/:runId/jobs
+
+GET /runs/:runId/findings
+
+GET /runs/:runId/artefacts
+
+These endpoints expose stored state only.
 They do not trigger execution.
 
----
+## Security-by-design notes ## 
 
-## Security-by-design notes
+The API never executes collectors
 
-- The API never executes collectors
-- The worker performs privileged operations
-- Job locking prevents double execution
-- Outputs are traceable to run and job
-- Report artefacts never become sources of truth
+The worker performs privileged operations
+
+Job locking prevents double execution
+
+Outputs are traceable to run and job
+
+Report artefacts never become sources of truth
 
 This model ensures correctness, auditability, and safe concurrency.
