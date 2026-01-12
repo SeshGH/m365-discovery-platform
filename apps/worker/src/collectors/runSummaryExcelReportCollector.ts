@@ -229,6 +229,7 @@ export const runSummaryExcelReportCollector: Collector = {
         ["generatedAt", new Date().toISOString()],
         ["runId", run.id],
         ["runStatus", derivedStatus],
+        ["dataProfile", (run as any).dataProfile ?? "safe"],
         ["runCreatedAt", iso(run.createdAt)],
         ["runStartedAt", iso(run.startedAt)],
         ["runEndedAt", iso(run.endedAt)],
