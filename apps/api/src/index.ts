@@ -155,18 +155,22 @@ app.get("/artefacts/:artefactId/download", async (req, reply) => {
     return reply.code(404).send({ error: "Artefact not found" });
   }
 
-  return presignArtefactDownload({ bucket: artefact.bucket, key: artefact.key });
+  const { url, expiresAt } = await presignArtefactDownload({
+    bucket: artefact.bucket,
+    key: artefact.key
+  });
+
+  reply.header("X-Download-Expires-At", expiresAt); // optional
+  return reply.redirect(302, url);
 });
+
 
 // --------------------
 // Artefact download (run-scoped) — keep for backwards compatibility
 // GET /runs/:runId/artefacts/:artefactId/download
 // --------------------
 app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
-  const { runId, artefactId } = req.params as {
-    runId: string;
-    artefactId: string;
-  };
+  const { runId, artefactId } = req.params as { runId: string; artefactId: string };
 
   const artefact = await prisma.artefact.findFirst({
     where: { id: artefactId, runId }
@@ -176,7 +180,13 @@ app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
     return reply.code(404).send({ error: "Artefact not found" });
   }
 
-  return presignArtefactDownload({ bucket: artefact.bucket, key: artefact.key });
+  const { url, expiresAt } = await presignArtefactDownload({
+    bucket: artefact.bucket,
+    key: artefact.key
+  });
+
+  reply.header("X-Download-Expires-At", expiresAt); // optional
+  return reply.redirect(302, url);
 });
 
 // --------------------
@@ -435,7 +445,7 @@ app.post("/runs", async (request, reply) => {
 
   const input = parsed.data;
 
-  const dataProfile = input.dataProfile ?? "safe";
+  const dataProfile = input.dataProfile === "full" ? "full" : "safe";
 
   // 1) Upsert tenant
   const tenant = await prisma.tenant.upsert({
