@@ -89,6 +89,12 @@ model Run {
   toolVersion    String    @default("0.1.0")
   triggeredBy    String?
   modulesEnabled Json      @default("{}")
+
+  /// Data profile for the run
+  /// - "safe": summary-only, no PII-heavy artefacts (default)
+  /// - "full": explicit opt-in for sensitive exports
+  dataProfile String @default("safe")
+  
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
