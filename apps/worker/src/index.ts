@@ -51,9 +51,7 @@ async function uploadArtefactToObjectStore(params: {
   contentType: string;
   body: string | Buffer;
 }) {
-  const bytes = Buffer.isBuffer(params.body)
-    ? params.body
-    : Buffer.from(params.body, "utf8");
+  const bytes = Buffer.isBuffer(params.body) ? params.body : Buffer.from(params.body, "utf8");
 
   const hash = crypto.createHash("sha256").update(bytes).digest("hex");
 
@@ -87,12 +85,22 @@ function isReportCollectorId(collectorId: string): boolean {
   return collectorId.startsWith("report.");
 }
 
-async function pollOnce() {
-  // Requeue stale running jobs (worker crashed / hung, etc.)
-  const RUNNING_STALE_LOCK_MS = Number(
-    process.env.RUNNING_STALE_LOCK_MS ?? 10 * 60 * 1000 // 10 mins default
-  );
+function ms(n: number): string {
+  if (!Number.isFinite(n)) return `${n}ms`;
+  if (n < 1000) return `${n}ms`;
+  return `${(n / 1000).toFixed(2)}s`;
+}
 
+function computeBackoffMs(attemptsSoFar: number): number {
+  // IMPORTANT: keep this logic identical to existing behaviour
+  return Math.min(60_000, 2_000 * Math.pow(2, Math.max(0, attemptsSoFar - 1)));
+}
+
+async function pollOnce() {
+  const pollStartedAt = Date.now();
+
+  // Requeue stale running jobs (worker crashed / hung, etc.)
+  const RUNNING_STALE_LOCK_MS = Number(process.env.RUNNING_STALE_LOCK_MS ?? 10 * 60 * 1000); // 10 mins default
   const staleCutoff = new Date(Date.now() - RUNNING_STALE_LOCK_MS);
 
   const requeued = await prisma.job.updateMany({
@@ -110,7 +118,9 @@ async function pollOnce() {
 
   if (requeued.count > 0) {
     console.log(
-      `[${WORKER_ID}] Requeued ${requeued.count} stale running job(s) (older than ${RUNNING_STALE_LOCK_MS}ms)`
+      `[${WORKER_ID}] Requeued ${requeued.count} stale running job(s) (cutoff=${staleCutoff.toISOString()}, window=${ms(
+        RUNNING_STALE_LOCK_MS
+      )})`
     );
   }
 
@@ -137,9 +147,11 @@ async function pollOnce() {
     }));
 
   if (!job) {
-    console.log(`[${WORKER_ID}] No queued jobs`);
+    console.log(`[${WORKER_ID}] No queued jobs (poll=${ms(Date.now() - pollStartedAt)})`);
     return;
   }
+
+  const isReport = isReportCollectorId(job.collectorId);
 
   // Attempt to lock it (atomic)
   // IMPORTANT: report jobs should not increment attempts (so "not ready" never burns retries)
@@ -149,9 +161,13 @@ async function pollOnce() {
     lockedBy: WORKER_ID
   };
 
-  if (!isReportCollectorId(job.collectorId)) {
+  if (!isReport) {
     lockData.attempts = { increment: 1 };
   }
+
+  console.log(
+    `[${WORKER_ID}] Lock attempt: job=${job.id} run=${job.runId} collector=${job.collectorId} report=${isReport}`
+  );
 
   const locked = await prisma.job.updateMany({
     where: {
@@ -164,7 +180,9 @@ async function pollOnce() {
   });
 
   if (locked.count !== 1) {
-    console.log(`[${WORKER_ID}] Job ${job.id} was taken by another worker`);
+    console.log(
+      `[${WORKER_ID}] Lock lost: job=${job.id} (another worker took it) (poll=${ms(Date.now() - pollStartedAt)})`
+    );
     return;
   }
 
@@ -196,11 +214,18 @@ async function pollOnce() {
 
   // Sanity
   if (lockedJob.status !== "running" || lockedJob.lockedBy !== WORKER_ID) {
-    console.log(`[${WORKER_ID}] Job ${lockedJob.id} is no longer runnable`);
+    console.log(
+      `[${WORKER_ID}] Job not runnable after lock: job=${lockedJob.id} status=${lockedJob.status} lockedBy=${lockedJob.lockedBy}`
+    );
     return;
   }
 
-  console.log(`[${WORKER_ID}] Picked up job ${lockedJob.id} (runId=${lockedJob.runId})`);
+  const jobStartedAt = Date.now();
+  const attemptsSoFar = Number(lockedJob.attempts ?? 0);
+
+  console.log(
+    `[${WORKER_ID}] Picked up: job=${lockedJob.id} run=${lockedJob.runId} collector=${lockedJob.collectorId} attempts=${attemptsSoFar} report=${isReport}`
+  );
 
   try {
     const collector = getCollectorOrThrow(lockedJob.collectorId);
@@ -216,7 +241,9 @@ async function pollOnce() {
     const result = normalizeCollectorResult(collector.id, rawResult);
 
     console.log(
-      `[${WORKER_ID}] Collector ${collector.id} completed with status=${result.status}`
+      `[${WORKER_ID}] Collector complete: job=${lockedJob.id} collector=${collector.id} status=${result.status} duration=${ms(
+        Date.now() - jobStartedAt
+      )}`
     );
 
     if (Array.isArray(result.artefacts)) {
@@ -245,7 +272,7 @@ async function pollOnce() {
         });
 
         console.log(
-          `[${WORKER_ID}] Uploaded artefact ${artefact.filename} -> s3://${uploaded.bucket}/${uploaded.key}`
+          `[${WORKER_ID}] Artefact uploaded: job=${lockedJob.id} file=${artefact.filename} bytes=${uploaded.sizeBytes} key=${uploaded.key}`
         );
       }
     }
@@ -270,9 +297,10 @@ async function pollOnce() {
       _count: { status: true }
     });
 
-    const counts = Object.fromEntries(
-      jobCounts.map((r) => [r.status, r._count.status])
-    ) as Record<string, number>;
+    const counts = Object.fromEntries(jobCounts.map((r) => [r.status, r._count.status])) as Record<
+      string,
+      number
+    >;
 
     const queued = counts["queued"] ?? 0;
     const running = counts["running"] ?? 0;
@@ -280,45 +308,61 @@ async function pollOnce() {
 
     const anyPending = queued + running > 0;
 
+    const nextRunStatus = failed > 0 ? "failed" : anyPending ? "running" : "succeeded";
+
     await prisma.run.update({
       where: { id: lockedJob.runId },
       data: {
-        status: failed > 0 ? "failed" : anyPending ? "running" : "succeeded",
+        status: nextRunStatus,
         endedAt: anyPending ? null : new Date()
       }
     });
 
-    console.log(`[${WORKER_ID}] Job ${lockedJob.id} succeeded`);
+    console.log(
+      `[${WORKER_ID}] Job finalised: job=${lockedJob.id} status=succeeded run=${lockedJob.runId} runStatus=${nextRunStatus} counts=${JSON.stringify(
+        { queued, running, failed }
+      )} totalDuration=${ms(Date.now() - jobStartedAt)}`
+    );
   } catch (err: any) {
     // IMPORTANT:
     // - "Report not ready" should never count as a real failure
     // - attempts should be read from the DB post-lock (lockedJob.attempts)
-    const attemptsSoFar = Number(lockedJob.attempts ?? 0);
     const MAX_ATTEMPTS = Number(process.env.MAX_ATTEMPTS ?? 3);
 
     const reportNotReady = isReportNotReadyError(err);
     const shouldRetry = reportNotReady ? true : attemptsSoFar < MAX_ATTEMPTS;
 
-    await prisma.job.update({
-      where: { id: lockedJob.id },
-      data: shouldRetry
-        ? {
-            status: "queued",
-            lockedBy: null,
-            lockedAt: new Date(
-              Date.now() +
-                Math.min(60_000, 2_000 * Math.pow(2, Math.max(0, attemptsSoFar - 1)))
-            ),
-            lastError: String(err?.message ?? err)
-          }
-        : {
-            status: "failed",
-            lockedBy: null,
-            lastError: String(err?.message ?? err)
-          }
-    });
+    const errMsg = String(err?.message ?? err);
 
-    if (!shouldRetry) {
+    if (shouldRetry) {
+      const delayMs = computeBackoffMs(attemptsSoFar);
+      const readyAt = new Date(Date.now() + delayMs);
+
+      await prisma.job.update({
+        where: { id: lockedJob.id },
+        data: {
+          status: "queued",
+          lockedBy: null,
+          lockedAt: readyAt,
+          lastError: errMsg
+        }
+      });
+
+      console.log(
+        `[${WORKER_ID}] Job requeued: job=${lockedJob.id} run=${lockedJob.runId} collector=${lockedJob.collectorId} reason=${
+          reportNotReady ? "report-not-ready" : "retryable-error"
+        } attempts=${attemptsSoFar}/${MAX_ATTEMPTS} backoff=${ms(delayMs)} readyAt=${readyAt.toISOString()} error=${errMsg}`
+      );
+    } else {
+      await prisma.job.update({
+        where: { id: lockedJob.id },
+        data: {
+          status: "failed",
+          lockedBy: null,
+          lastError: errMsg
+        }
+      });
+
       await prisma.run.update({
         where: { id: lockedJob.runId },
         data: {
@@ -326,16 +370,20 @@ async function pollOnce() {
           endedAt: new Date()
         }
       });
-    }
 
-    console.log(
-      `[${WORKER_ID}] Job ${lockedJob.id} failed: ${String(err?.message ?? err)}`
-    );
+      console.log(
+        `[${WORKER_ID}] Job failed terminal: job=${lockedJob.id} run=${lockedJob.runId} collector=${lockedJob.collectorId} attempts=${attemptsSoFar}/${MAX_ATTEMPTS} duration=${ms(
+          Date.now() - jobStartedAt
+        )} error=${errMsg}`
+      );
+    }
   }
 }
 
 async function main() {
-  console.log(`[${WORKER_ID}] Worker started. Polling every ${POLL_MS}ms...`);
+  console.log(
+    `[${WORKER_ID}] Worker started. Polling every ${POLL_MS}ms... (bucket=${S3_BUCKET}, endpoint=${S3_ENDPOINT})`
+  );
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
