@@ -107,6 +107,11 @@ const S3 = new S3Client({
 
 app.get("/health", async () => ({ ok: true }));
 
+/**
+ * DEMO-ONLY UI
+ * This is intentionally in the API for quick local testing.
+ * Long-term UI will live in a dedicated portal app.
+ */
 app.get("/demo", async (_req, reply) => {
   reply.type("text/html").send(`<!doctype html>
 <html lang="en">
@@ -115,77 +120,272 @@ app.get("/demo", async (_req, reply) => {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>M365 Discovery Platform - Demo</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 900px; }
-    label { display:block; margin-top: 12px; font-weight: 600; }
-    input, select { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; }
-    .row { display:flex; gap: 12px; }
-    .row > div { flex: 1; }
-    button { margin-top: 16px; padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; }
-    pre { background: #0b1020; color: #d6e7ff; padding: 12px; border-radius: 10px; overflow:auto; }
-    .muted { color: #555; font-size: 0.95em; }
-    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f2f2f2; margin-left: 6px; }
-    a { color: #0b5bd3; }
+    :root {
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --chip: #f3f4f6;
+      --codebg: #0b1020;
+      --codefg: #d6e7ff;
+      --btn: #111827;
+      --btnfg: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 24px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    h1 { font-size: 24px; margin: 0 0 6px 0; }
+    .sub { color: var(--muted); margin: 0 0 18px 0; }
+    .wrap { max-width: 1100px; }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      background: var(--panel);
+    }
+    .card + .card { margin-top: 16px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 18px;
+    }
+    label { display:block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 14px;
+      background: #fff;
+    }
+    .modules {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 12px 6px 12px;
+      grid-column: 1 / -1;
+    }
+    .modules .note { color: var(--muted); font-size: 13px; margin: 6px 0 10px 0; }
+    .note { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .checkrow { display:flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+    .checkrow label { font-weight: 500; margin: 0; display:flex; gap: 10px; align-items: center; }
+    .checkrow input { width: 16px; height: 16px; padding: 0; }
+    .btnrow { display:flex; gap: 10px; margin-top: 14px; }
+    button {
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      background: #fff;
+    }
+    button.primary {
+      background: var(--btn);
+      color: var(--btnfg);
+      border-color: var(--btn);
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--chip);
+      font-size: 12px;
+      margin-left: 8px;
+      color: #374151;
+      vertical-align: middle;
+    }
+    .row { display:flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .links a { color: #0b5bd3; text-decoration: none; }
+    .links a:hover { text-decoration: underline; }
+    pre {
+      margin-top: 12px;
+      background: var(--codebg);
+      color: var(--codefg);
+      padding: 12px;
+      border-radius: 12px;
+      overflow: auto;
+      max-height: 340px;
+      font-size: 12.5px;
+      line-height: 1.35;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+    th { color: #374151; font-weight: 700; }
+    .status {
+      display:inline-block; padding: 2px 8px; border-radius: 999px;
+      border: 1px solid var(--border); background: #fff; font-size: 12px;
+    }
+    .muted { color: var(--muted); }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h2>M365 Discovery Platform <span class="pill">demo</span></h2>
-    <div class="muted">Creates a run and then lets you pull jobs/findings/artefacts via the API.</div>
+  <div class="wrap">
+    <h1>M365 Discovery Platform - Demo</h1>
+    <div class="sub">Demo-only run launcher and progress viewer. Long-term UI will live in a dedicated portal app.</div>
 
-    <div class="row">
-      <div>
-        <label>tenantGuid</label>
-        <input id="tenantGuid" value="00000000-0000-0000-0000-000000000000" />
-      </div>
-      <div>
-        <label>primaryDomain</label>
-        <input id="primaryDomain" value="example.onmicrosoft.com" />
-      </div>
-    </div>
+    <div class="card">
+      <h2 style="margin:0 0 10px 0; font-size: 16px;">Create Run</h2>
 
-    <div class="row">
-      <div>
-        <label>dataProfile</label>
-        <select id="dataProfile">
-          <option value="safe" selected>safe</option>
-          <option value="full">full</option>
-        </select>
-      </div>
-      <div>
-        <label>modulesEnabled</label>
-        <div style="margin-top: 6px;">
-          <label style="font-weight:500;"><input type="checkbox" id="entraUsers" checked /> entraUsers</label>
-          <label style="font-weight:500;"><input type="checkbox" id="enterpriseAppPermissions" checked /> enterpriseAppPermissions</label>
+      <div class="grid">
+        <div>
+          <label for="tenantGuid">Tenant GUID (Directory ID)</label>
+          <input id="tenantGuid" value="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" />
+        </div>
+        <div>
+          <label for="primaryDomain">Primary Domain</label>
+          <input id="primaryDomain" value="contoso.onmicrosoft.com" />
+        </div>
+
+        <div>
+          <label for="displayName">Display name (optional)</label>
+          <input id="displayName" value="Contoso (Demo)" />
+        </div>
+        <div>
+          <label for="triggeredBy">Triggered by</label>
+          <input id="triggeredBy" value="portal-demo" />
+        </div>
+
+        <div>
+          <label for="dataProfile">Data profile</label>
+          <select id="dataProfile">
+            <option value="safe" selected>safe</option>
+            <option value="full">full</option>
+          </select>
+          <div class="note">Use safe for low-impact discovery. Use full for deeper collection. Unknown values will be treated as safe.</div>
+        </div>
+        <div></div>
+
+        <div class="modules">
+          <label>Modules enabled</label>
+          <div class="checkrow">
+            <label><input type="checkbox" id="entraUsers" checked /> entraUsers</label>
+            <label><input type="checkbox" id="enterpriseAppPermissions" checked /> enterpriseAppPermissions</label>
+          </div>
+          <div class="note">Report collectors are always enqueued at the end of a run.</div>
         </div>
       </div>
+
+      <div class="btnrow">
+        <button class="primary" id="createRun">Create run</button>
+        <button id="clear">Clear</button>
+      </div>
     </div>
 
-    <button id="createRun">Create run</button>
+    <div class="card" id="statusCard" style="display:none;">
+      <div class="row" style="align-items: center;">
+        <div>
+          <div style="font-weight:700;">Run <span class="pill" id="runIdPill"></span></div>
+          <div class="muted">Live status below (polling).</div>
+        </div>
+        <div class="links" id="links"></div>
+      </div>
 
-    <div id="links" style="margin-top: 16px;"></div>
-    <pre id="out">{ "status": "ready" }</pre>
+      <table>
+        <thead>
+          <tr>
+            <th>collectorId</th>
+            <th>status</th>
+            <th>attempts</th>
+            <th>lockedBy</th>
+            <th>lockedAt</th>
+            <th>lastError</th>
+          </tr>
+        </thead>
+        <tbody id="jobsBody"></tbody>
+      </table>
+
+      <pre id="out">{ "status": "ready" }</pre>
+    </div>
   </div>
 
 <script>
+  const $ = (id) => document.getElementById(id);
+
+  let pollTimer = null;
+  let currentRunId = null;
+
   const out = (obj) => {
-    document.getElementById("out").textContent =
-      typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+    $("out").textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
   };
 
-  const mkLink = (href, text) => \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
+  const mkLink = (href, text) =>
+    \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
 
-  document.getElementById("createRun").addEventListener("click", async () => {
-    const tenantGuid = document.getElementById("tenantGuid").value.trim();
-    const primaryDomain = document.getElementById("primaryDomain").value.trim();
-    const dataProfile = document.getElementById("dataProfile").value;
-    const entraUsers = document.getElementById("entraUsers").checked;
-    const enterpriseAppPermissions = document.getElementById("enterpriseAppPermissions").checked;
+  const renderJobs = (jobs) => {
+    const rows = jobs.map(j => {
+      const safe = (v) => (v === null || v === undefined) ? "" : String(v);
+      return \`
+        <tr>
+          <td>\${safe(j.collectorId)}</td>
+          <td><span class="status">\${safe(j.status)}</span></td>
+          <td>\${safe(j.attempts)}</td>
+          <td>\${safe(j.lockedBy)}</td>
+          <td>\${safe(j.lockedAt)}</td>
+          <td style="max-width: 420px; white-space: pre-wrap;">\${safe(j.lastError)}</td>
+        </tr>\`;
+    }).join("");
+    $("jobsBody").innerHTML = rows || \`<tr><td colspan="6" class="muted">No jobs yet</td></tr>\`;
+  };
+
+  const stopPolling = () => {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    pollTimer = setInterval(async () => {
+      if (!currentRunId) return;
+      try {
+        const [runRes, jobsRes] = await Promise.all([
+          fetch(\`/runs/\${currentRunId}\`),
+          fetch(\`/runs/\${currentRunId}/jobs\`)
+        ]);
+        const run = await runRes.json();
+        const jobs = await jobsRes.json();
+
+        renderJobs(Array.isArray(jobs) ? jobs : []);
+        out({ run, jobs });
+
+        if (run && (run.status === "succeeded" || run.status === "failed")) {
+          stopPolling();
+        }
+      } catch (e) {
+        out({ error: String(e) });
+      }
+    }, 500);
+  };
+
+  $("clear").addEventListener("click", () => {
+    stopPolling();
+    currentRunId = null;
+    $("statusCard").style.display = "none";
+    $("runIdPill").textContent = "";
+    $("links").innerHTML = "";
+    $("jobsBody").innerHTML = "";
+    out({ status: "ready" });
+  });
+
+  $("createRun").addEventListener("click", async () => {
+    const tenantGuid = $("tenantGuid").value.trim();
+    const primaryDomain = $("primaryDomain").value.trim();
+    const displayName = $("displayName").value.trim();
+    const triggeredBy = $("triggeredBy").value.trim() || "portal-demo";
+    const dataProfile = $("dataProfile").value;
+
+    const entraUsers = $("entraUsers").checked;
+    const enterpriseAppPermissions = $("enterpriseAppPermissions").checked;
 
     const payload = {
       tenantGuid,
       primaryDomain,
-      triggeredBy: "demo",
+      displayName: displayName || null,
+      triggeredBy,
       dataProfile,
       modulesEnabled: {
         entraUsers,
@@ -204,15 +404,21 @@ app.get("/demo", async (_req, reply) => {
     const json = await res.json();
     out({ status: res.status, response: json });
 
-    const runId = json.runId;
+    const runId = json && json.runId;
     if (!runId) return;
 
-    document.getElementById("links").innerHTML = [
+    currentRunId = runId;
+    $("statusCard").style.display = "block";
+    $("runIdPill").textContent = runId;
+
+    $("links").innerHTML = [
       mkLink(\`/runs/\${runId}\`, \`GET /runs/\${runId}\`),
       mkLink(\`/runs/\${runId}/jobs\`, \`GET /runs/\${runId}/jobs\`),
       mkLink(\`/runs/\${runId}/findings\`, \`GET /runs/\${runId}/findings\`),
       mkLink(\`/runs/\${runId}/artefacts\`, \`GET /runs/\${runId}/artefacts\`)
     ].join("");
+
+    startPolling();
   });
 </script>
 </body>
@@ -275,7 +481,6 @@ app.get("/artefacts/:artefactId/download", async (req, reply) => {
   reply.header("X-Download-Expires-At", expiresAt); // optional
   return reply.redirect(302, url);
 });
-
 
 // --------------------
 // Artefact download (run-scoped) — keep for backwards compatibility

@@ -193,3 +193,10 @@ It prioritises:
 - and long-term velocity over short-term speed
 
 That trade-off is deliberate.
+
+
+---
+
+## Local-only files
+
+Some local test downloads (e.g. `downloaded-artefact`) are intentionally ignored via `.gitignore`.

@@ -190,4 +190,6 @@ Thumbs.db
 enterprise-app-permissions.json
 users-inventory.json
 
+# Local dev-only downloads
+downloaded-artefact
 

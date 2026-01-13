@@ -212,3 +212,14 @@ UI implementations may safely rely on:
 * 302 redirect download behaviour
 
 Any change to these requires explicit contract versioning.
+
+
+---
+
+## Demo-only API UI
+
+For quick local testing, the API serves a **demo-only** HTML page at `GET /demo`.
+
+- It is intentionally embedded in the API for speed during development.
+- It is **not** the long-term portal architecture.
+- It creates runs via `POST /runs` and polls `GET /runs/:runId` + `GET /runs/:runId/jobs`.

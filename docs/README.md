@@ -67,3 +67,10 @@ Other documentation provides context and roadmap guidance but must not redefine 
 ---
 
 This repository reflects **current implemented behaviour**, not aspirational design.
+
+
+---
+
+## Demo-only UI
+
+For quick local testing, the API exposes `GET /demo` which provides a minimal run launcher and live job viewer. This is **demo-only**; the long-term UI will live in a dedicated portal app.

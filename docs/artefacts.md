@@ -1,36 +1,28 @@
 # Artefacts
 
-> **Authoritative contract:** All stable rules for artefact classification, naming, storage keys, safe/full emission, and report expectations live in:
->
-> - `docs/artefact-and-report-contracts.md`
->
-> This document is a descriptive overview and must not redefine contract behaviour.
-
-Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports, XLSX workbooks) that are too large
-or awkward to store inline as Findings.
+Artefacts are binary or structured outputs produced by collectors (e.g. JSON exports, CSV reports, XLSX workbooks) that are too large or awkward to store inline as Findings.
 
 Artefacts are:
 - uploaded by the **worker** to object storage (MinIO/S3)
-- recorded in Postgres with metadata (bucket/key/hash/size)
-- downloaded via **API-issued presigned URLs** (returned as redirects)
+- recorded in Postgres with metadata (`bucket` / `key` / `hash` / `sizeBytes`)
+- retrieved via **presigned download URLs** issued by the API
 
 This keeps the API stateless and avoids proxying large downloads through the API process.
 
 ---
 
-## Data model (overview)
+## Data model
 
-An `Artefact` row records (at minimum):
+An `Artefact` row records:
 
 - `runId` (required)
-- `jobId` (required for traceability)
-- `type` (enum; e.g. `json`, `csv`, `xlsx`)
+- `jobId` (optional; preferred for traceability)
+- `type` (enum; e.g. `json`, `csv`, `raw`)
 - `bucket` / `key` (object storage address)
+- `uri` (`s3://bucket/key` convenience)
 - `hash` (sha256 of uploaded content)
 - `sizeBytes`
 - `createdAt`
-
-Note: the exact schema is defined in Prisma and is the source of truth.
 
 ---
 
@@ -38,12 +30,12 @@ Note: the exact schema is defined in Prisma and is the source of truth.
 
 Artefacts are stored using predictable, partitioned keys:
 
-    runs/<runId>/jobs/<jobId>/<filename>
+- `runs/<runId>/jobs/<jobId>/<filename>`
 
-Example keys:
+Example:
 
-- `runs/cmk9.../jobs/cmk9.../enterprise-app-permissions.json`
-- `runs/cmk9.../jobs/cmk9.../run-summary.xlsx`
+- `runs/cmk.../jobs/cmk.../enterprise-app-permissions.json`
+- `runs/cmk.../jobs/cmk.../run-summary.xlsx`
 
 Benefits:
 - easy per-run and per-job grouping
@@ -59,13 +51,13 @@ Benefits:
 - `filename`
 - `contentType`
 - `content` (Buffer or string)
-- `type` (must align with the Prisma enum)
+- `type` (should align with Prisma enum)
 
 2) Worker uploads the content to object storage.
 
 3) Worker writes an `Artefact` row in Postgres with:
-- `bucket` / `key`
-- `sha256` hash
+- `bucket` / `key` / `uri`
+- sha256 `hash`
 - `sizeBytes`
 - `runId` / `jobId` linkage
 
@@ -94,7 +86,7 @@ Presigned URLs use a short TTL, controlled by:
 - `ARTEFACT_URL_TTL_SECONDS` (defaults to 300 seconds)
 - clamped to a safe range (30–3600 seconds)
 
-The API includes an `X-Download-Expires-At` header to indicate expiry time for clients (optional convenience).
+The API also includes an `X-Download-Expires-At` header to indicate expiry time for clients (optional convenience).
 
 Operational note:
 - Presigned URLs are intentionally short-lived; clients should request a fresh download immediately before retrieving the file.
@@ -184,3 +176,13 @@ Use accurate content types:
 - Presigned URL TTLs are short and bounded.
 - Download responses set `Content-Disposition: attachment` with filename sanitisation.
 - Object storage credentials are held by the API and worker via environment variables; scope should be restricted to the artefacts bucket only.
+
+
+### PowerShell download example
+
+```powershell
+$artefactId = "<ARTEFACT_ID>"
+Invoke-WebRequest "http://localhost:8080/artefacts/$artefactId/download" `
+  -MaximumRedirection 10 `
+  -OutFile .\downloaded-artefact
+```
