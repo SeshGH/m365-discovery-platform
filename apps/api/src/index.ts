@@ -107,6 +107,118 @@ const S3 = new S3Client({
 
 app.get("/health", async () => ({ ok: true }));
 
+app.get("/demo", async (_req, reply) => {
+  reply.type("text/html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>M365 Discovery Platform - Demo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 900px; }
+    label { display:block; margin-top: 12px; font-weight: 600; }
+    input, select { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; }
+    .row { display:flex; gap: 12px; }
+    .row > div { flex: 1; }
+    button { margin-top: 16px; padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; }
+    pre { background: #0b1020; color: #d6e7ff; padding: 12px; border-radius: 10px; overflow:auto; }
+    .muted { color: #555; font-size: 0.95em; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f2f2f2; margin-left: 6px; }
+    a { color: #0b5bd3; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>M365 Discovery Platform <span class="pill">demo</span></h2>
+    <div class="muted">Creates a run and then lets you pull jobs/findings/artefacts via the API.</div>
+
+    <div class="row">
+      <div>
+        <label>tenantGuid</label>
+        <input id="tenantGuid" value="00000000-0000-0000-0000-000000000000" />
+      </div>
+      <div>
+        <label>primaryDomain</label>
+        <input id="primaryDomain" value="example.onmicrosoft.com" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>dataProfile</label>
+        <select id="dataProfile">
+          <option value="safe" selected>safe</option>
+          <option value="full">full</option>
+        </select>
+      </div>
+      <div>
+        <label>modulesEnabled</label>
+        <div style="margin-top: 6px;">
+          <label style="font-weight:500;"><input type="checkbox" id="entraUsers" checked /> entraUsers</label>
+          <label style="font-weight:500;"><input type="checkbox" id="enterpriseAppPermissions" checked /> enterpriseAppPermissions</label>
+        </div>
+      </div>
+    </div>
+
+    <button id="createRun">Create run</button>
+
+    <div id="links" style="margin-top: 16px;"></div>
+    <pre id="out">{ "status": "ready" }</pre>
+  </div>
+
+<script>
+  const out = (obj) => {
+    document.getElementById("out").textContent =
+      typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  };
+
+  const mkLink = (href, text) => \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
+
+  document.getElementById("createRun").addEventListener("click", async () => {
+    const tenantGuid = document.getElementById("tenantGuid").value.trim();
+    const primaryDomain = document.getElementById("primaryDomain").value.trim();
+    const dataProfile = document.getElementById("dataProfile").value;
+    const entraUsers = document.getElementById("entraUsers").checked;
+    const enterpriseAppPermissions = document.getElementById("enterpriseAppPermissions").checked;
+
+    const payload = {
+      tenantGuid,
+      primaryDomain,
+      triggeredBy: "demo",
+      dataProfile,
+      modulesEnabled: {
+        entraUsers,
+        enterpriseAppPermissions
+      }
+    };
+
+    out({ creating: true, payload });
+
+    const res = await fetch("/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const json = await res.json();
+    out({ status: res.status, response: json });
+
+    const runId = json.runId;
+    if (!runId) return;
+
+    document.getElementById("links").innerHTML = [
+      mkLink(\`/runs/\${runId}\`, \`GET /runs/\${runId}\`),
+      mkLink(\`/runs/\${runId}/jobs\`, \`GET /runs/\${runId}/jobs\`),
+      mkLink(\`/runs/\${runId}/findings\`, \`GET /runs/\${runId}/findings\`),
+      mkLink(\`/runs/\${runId}/artefacts\`, \`GET /runs/\${runId}/artefacts\`)
+    ].join("");
+  });
+</script>
+</body>
+</html>`);
+});
+
 function safeAttachmentFilename(name: string) {
   return name.replace(/[^\w.\-() ]+/g, "_");
 }
