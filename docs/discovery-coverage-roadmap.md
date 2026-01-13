@@ -183,6 +183,44 @@ Rule:
 
 ---
 
+## Validated behaviours (implementation-backed)
+
+The following behaviours are **implemented, validated in the CDX demo tenant, and treated as stable contracts** unless explicitly changed:
+
+### Safe vs full data profiles
+
+* `dataProfile` is a first-class property on a run (`safe` | `full`).
+* Default is `safe`.
+* **Collectors enforce this boundary locally**:
+
+  * Only an explicit `dataProfile = "full"` enables PII-bearing or inventory-heavy artefacts.
+  * Any missing or unknown value is coerced to `safe` inside the collector.
+* Artefact-producing collectors validated:
+
+  * `entra.users`
+  * `entra.enterpriseApps.permissions`
+* Collectors that do not emit artefacts (e.g. `entra.auth.test`) are intentionally safe-by-design and do not require profile gating.
+
+### Artefact download flow
+
+* The API **never streams artefacts**.
+* `GET /artefacts/:artefactId/download` returns an **HTTP 302 redirect** to a presigned object storage URL.
+* Redirect responses include a server-calculated expiry (e.g. `x-download-expires-at`).
+* Clients are expected to request downloads immediately before retrieval (PowerShell-friendly).
+
+### Report job retry behaviour
+
+* Report collectors (`report.runSummary.*`) are enqueued last for demo/UX value.
+* Execution order is not guaranteed in a concurrent worker model.
+* If a report job is picked up before all non-report jobs complete, it will:
+
+  * exit without producing an artefact
+  * be retried automatically until the run is in a safe terminal state
+
+This behaviour is a **safety mechanism**, not a separate processing phase, and does not introduce a new source of truth.
+
+---
+
 ## Local demo / validation workflow (PowerShell)
 
 These snippets reflect the actual API response shape and PowerShell enumeration behaviour.
