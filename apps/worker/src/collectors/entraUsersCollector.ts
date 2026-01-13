@@ -24,7 +24,10 @@ export const entraUsersCollector: Collector = {
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
-    const dataProfile = (ctx.run as any).dataProfile ?? "safe";
+    // Collector-level hardening: only explicit "full" enables sensitive exports.
+    // Any unknown/missing value is treated as "safe".
+    const rawProfile = (ctx.run as any)?.dataProfile;
+    const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
     // Safe profile: minimal fields for counts (no PII-bearing per-user export).
@@ -64,9 +67,9 @@ export const entraUsersCollector: Collector = {
           score: 0,
           title: "Guest users present",
           description:
-            "Guest accounts are present in the tenant. Guest users can increase governance and access management complexity and should be reviewed for lifecycle controls and appropriate access policies.",
+            "Guest accounts are present in the tenant. Guest use should be reviewed for lifecycle controls and appropriate access policies.",
           recommendation:
-            "Review guest user governance: confirm guest access policies, ensure lifecycle/expiry controls exist, and validate conditional access coverage for external users.",
+            "Review guest user governance: confirm guest access expiry, review invitation/approval controls, and validate conditional access coverage for external users.",
           evidence: {
             guestUsers: guests,
             totalUsers: total,
