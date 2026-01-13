@@ -299,7 +299,22 @@ app.get("/demo", async (_req, reply) => {
         <tbody id="jobsBody"></tbody>
       </table>
 
-      <pre id="out">{ "status": "ready" }</pre>
+      <div style="margin-top: 14px; font-weight:700;">Artefacts</div>
+      <div class="muted" style="margin-bottom: 8px;">Artefacts produced by this run. Downloads use the API redirect flow.</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>filename</th>
+            <th>type</th>
+            <th>sizeBytes</th>
+            <th>createdAt</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="artefactsBody"></tbody>
+      </table>
+
     </div>
   </div>
 
@@ -309,9 +324,11 @@ app.get("/demo", async (_req, reply) => {
   let pollTimer = null;
   let currentRunId = null;
 
-  const out = (obj) => {
-    $("out").textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
-  };
+  const normalizeList = (v) => {
+  if (Array.isArray(v)) return v;
+  if (v && Array.isArray(v.value)) return v.value;
+  return [];
+};
 
   const mkLink = (href, text) =>
     \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
@@ -332,34 +349,64 @@ app.get("/demo", async (_req, reply) => {
     $("jobsBody").innerHTML = rows || \`<tr><td colspan="6" class="muted">No jobs yet</td></tr>\`;
   };
 
+
+  const filenameFromKey = (a) => {
+    const k = (a && (a.key || a.uri)) || "";
+    const s = String(k);
+    const parts = s.split("/");
+    return parts[parts.length - 1] || s;
+  };
+
+  const renderArtefacts = (artefacts) => {
+    const safe = (v) => (v === null || v === undefined) ? "" : String(v);
+    const rows = artefacts.map(a => {
+      const filename = filenameFromKey(a);
+      const href = "/artefacts/" + a.id + "/download";
+      return (
+        "<tr>" +
+          "<td>" + safe(filename) + "</td>" +
+          "<td>" + safe(a.type) + "</td>" +
+          "<td>" + safe(a.sizeBytes) + "</td>" +
+          "<td>" + safe(a.createdAt) + "</td>" +
+          "<td><a href=\\\"" + href + "\\\" target=\\\"_blank\\\" rel=\\\"noreferrer\\\">Download</a></td>" +
+        "</tr>"
+      );
+    }).join("");
+    $("artefactsBody").innerHTML = rows || "<tr><td colspan=\\\"5\\\" class=\\\"muted\\\">No artefacts yet</td></tr>";
+  };
+
   const stopPolling = () => {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
   };
 
   const startPolling = () => {
-    stopPolling();
-    pollTimer = setInterval(async () => {
-      if (!currentRunId) return;
-      try {
-        const [runRes, jobsRes] = await Promise.all([
-          fetch(\`/runs/\${currentRunId}\`),
-          fetch(\`/runs/\${currentRunId}/jobs\`)
-        ]);
-        const run = await runRes.json();
-        const jobs = await jobsRes.json();
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    if (!currentRunId) return;
+    try {
+      const [runRes, jobsRes, artefactsRes] = await Promise.all([
+        fetch("/runs/" + currentRunId),
+        fetch("/runs/" + currentRunId + "/jobs"),
+        fetch("/runs/" + currentRunId + "/artefacts")
+      ]);
 
-        renderJobs(Array.isArray(jobs) ? jobs : []);
-        out({ run, jobs });
+      const run = await runRes.json();
+      const jobs = await jobsRes.json();
+      const artefacts = await artefactsRes.json();
 
-        if (run && (run.status === "succeeded" || run.status === "failed")) {
-          stopPolling();
-        }
-      } catch (e) {
-        out({ error: String(e) });
+      renderJobs(normalizeList(jobs));
+      renderArtefacts(normalizeList(artefacts));
+
+      if (run && (run.status === "succeeded" || run.status === "failed")) {
+        stopPolling();
       }
-    }, 500);
-  };
+    } catch (e) {
+      console.warn("poll failed", e);
+    }
+  }, 500);
+};
+
 
   $("clear").addEventListener("click", () => {
     stopPolling();
@@ -368,7 +415,7 @@ app.get("/demo", async (_req, reply) => {
     $("runIdPill").textContent = "";
     $("links").innerHTML = "";
     $("jobsBody").innerHTML = "";
-    out({ status: "ready" });
+    if ($("artefactsBody")) $("artefactsBody").innerHTML = "";
   });
 
   $("createRun").addEventListener("click", async () => {
@@ -393,7 +440,6 @@ app.get("/demo", async (_req, reply) => {
       }
     };
 
-    out({ creating: true, payload });
 
     const res = await fetch("/runs", {
       method: "POST",
@@ -402,7 +448,6 @@ app.get("/demo", async (_req, reply) => {
     });
 
     const json = await res.json();
-    out({ status: res.status, response: json });
 
     const runId = json && json.runId;
     if (!runId) return;
