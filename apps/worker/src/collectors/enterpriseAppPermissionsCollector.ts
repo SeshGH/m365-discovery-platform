@@ -1,59 +1,36 @@
-﻿import type { Collector } from "./types";
+﻿﻿import type { Collector } from "./types";
 import { getGraphAccessToken, graphGetAllPages } from "./graph";
 
 type ServicePrincipal = {
   id: string;
-  appId?: string | null;
-  displayName?: string | null;
-  servicePrincipalType?: string | null;
+  appId?: string;
+  displayName?: string;
+  servicePrincipalType?: string;
   accountEnabled?: boolean | null;
 };
 
-type AppRole = {
-  id: string;
-  value?: string | null;
-  isEnabled?: boolean | null;
-};
-
-type GraphSpWithRoles = {
-  id: string;
-  appId?: string | null;
-  displayName?: string | null;
-  appRoles?: AppRole[];
+type GraphSp = {
+  appRoles?: Array<{ id?: string; value?: string }>;
 };
 
 type AppRoleAssignment = {
   id: string;
-  appRoleId: string;
-  resourceId: string;
-  principalId: string;
+  appRoleId?: string;
+  resourceId?: string;
+  principalId?: string;
   createdDateTime?: string;
 };
 
 type OAuth2PermissionGrant = {
   id: string;
-  clientId: string;
-  resourceId: string;
-  scope?: string | null; // space-separated
-  consentType?: string | null;
-  principalId?: string | null; // null for AllPrincipals
+  clientId?: string;
+  consentType?: string;
+  principalId?: string | null;
+  resourceId?: string;
+  scope?: string;
 };
 
-const GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000";
-
-const RISKY_PERMISSIONS = new Set<string>([
-  "Directory.ReadWrite.All",
-  "Directory.AccessAsUser.All",
-  "RoleManagement.ReadWrite.Directory",
-  "Application.ReadWrite.All",
-  "AppRoleAssignment.ReadWrite.All",
-  "DelegatedPermissionGrant.ReadWrite.All",
-  "Policy.ReadWrite.ConditionalAccess",
-  "PrivilegedAccess.ReadWrite.AzureAD",
-  "User.ReadWrite.All"
-]);
-
-function splitScopes(scope: string | null | undefined): string[] {
+function parseScopes(scope: string | undefined | null): string[] {
   if (!scope) return [];
   return scope
     .split(" ")
@@ -63,25 +40,27 @@ function splitScopes(scope: string | null | undefined): string[] {
 
 function limitConcurrency<T, R>(
   items: T[],
-  limit: number,
+  concurrency: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
   const results: R[] = [];
-  let idx = 0;
+  let currentIndex = 0;
+  let active = 0;
 
   return new Promise((resolve, reject) => {
-    let active = 0;
-
     const next = () => {
-      if (idx >= items.length && active === 0) return resolve(results);
+      if (currentIndex >= items.length && active === 0) {
+        resolve(results);
+        return;
+      }
 
-      while (active < limit && idx < items.length) {
-        const currentIndex = idx++;
+      while (active < concurrency && currentIndex < items.length) {
+        const idx = currentIndex++;
         active++;
 
-        fn(items[currentIndex])
+        fn(items[idx])
           .then((r) => {
-            results[currentIndex] = r;
+            results[idx] = r;
             active--;
             next();
           })
@@ -92,6 +71,24 @@ function limitConcurrency<T, R>(
     next();
   });
 }
+
+const RISKY_PERMS = new Set<string>([
+  // Common “high impact” delegated scopes (representative, not exhaustive)
+  "Directory.ReadWrite.All",
+  "Directory.AccessAsUser.All",
+  "RoleManagement.ReadWrite.Directory",
+  "User.ReadWrite.All",
+  "Group.ReadWrite.All",
+  "Policy.ReadWrite.ConditionalAccess",
+  "Application.ReadWrite.All",
+  "AppRoleAssignment.ReadWrite.All",
+  "AuditLog.Read.All",
+  "AuditLog.ReadWrite.All",
+  "SecurityEvents.Read.All",
+  "Mail.Read",
+  "Mail.ReadWrite",
+  "Mail.Send"
+]);
 
 export const enterpriseAppPermissionsCollector: Collector = {
   id: "entra.enterpriseApps.permissions",
@@ -107,21 +104,18 @@ export const enterpriseAppPermissionsCollector: Collector = {
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
-    const dataProfile = (ctx.run as any).dataProfile ?? "safe";
+    // Collector-level hardening:
+    // Only an explicit "full" enables sensitive inventory exports.
+    // Any unknown/missing value is treated as "safe".
+    const rawProfile = (ctx.run as any)?.dataProfile;
+    const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
     // 1) Load Microsoft Graph service principal (to resolve appRoleId -> permission value)
-    const graphSpList = await graphGetAllPages<GraphSpWithRoles>(
+    const graphSp = await graphGetAllPages<GraphSp>(
       token,
-      `https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '${GRAPH_APP_ID}'&$select=id,appId,displayName,appRoles`
-    );
-
-    const graphSp = graphSpList[0];
-    if (!graphSp?.id) {
-      throw new Error(
-        "[enterprise-apps] Could not resolve Microsoft Graph service principal"
-      );
-    }
+      "https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '00000003-0000-0000-c000-000000000000'&$select=appRoles"
+    ).then((arr) => arr[0]);
 
     const graphRoleMap = new Map<string, string>();
     for (const role of graphSp.appRoles ?? []) {
@@ -138,20 +132,20 @@ export const enterpriseAppPermissionsCollector: Collector = {
       (sp) => (sp.servicePrincipalType ?? "").toLowerCase() === "application"
     );
 
+    // Demo-only cap to keep runtimes predictable in CDX and surface truncation as a signal
+    const MAX_APPS = Number(process.env.ENTAPP_MAX_APPS ?? 200);
+    const CONCURRENCY = Number(process.env.ENTAPP_CONCURRENCY ?? 8);
+
+    const wasTruncated = enterpriseApps.length > MAX_APPS;
+    const targetApps = wasTruncated ? enterpriseApps.slice(0, MAX_APPS) : enterpriseApps;
+
     const totalEnterpriseApps = enterpriseApps.length;
-
-    // 3) For each app: fetch appRoleAssignments + oauth2PermissionGrants
-    const MAX_APPS = Number(process.env.ENTAPP_MAX_APPS ?? 50);
-    const CONCURRENCY = Number(process.env.ENTAPP_CONCURRENCY ?? 5);
-
-    const targetApps = enterpriseApps.slice(0, MAX_APPS);
-    const wasTruncated = totalEnterpriseApps > targetApps.length;
 
     type AppPermissionReport = {
       id: string;
-      displayName?: string | null;
-      appId?: string | null;
-      accountEnabled?: boolean | null;
+      displayName: string;
+      appId: string;
+      accountEnabled: boolean | null;
       applicationPermissions: string[];
       delegatedPermissions: string[];
       raw: {
@@ -168,97 +162,85 @@ export const enterpriseAppPermissionsCollector: Collector = {
       );
 
       const graphAssignments = appRoleAssignments.filter(
-        (a) => a.resourceId === graphSp.id
+        (a) => (a.resourceId ?? "").toLowerCase() === (graphSp as any)?.id?.toLowerCase()
       );
 
       const appPerms = graphAssignments
-        .map((a) => graphRoleMap.get(a.appRoleId) ?? a.appRoleId)
+        .map((a) => graphRoleMap.get(a.appRoleId ?? "") ?? "")
         .filter(Boolean);
 
-      const grants = await graphGetAllPages<OAuth2PermissionGrant>(
+      const oauth2Grants = await graphGetAllPages<OAuth2PermissionGrant>(
         token,
-        `https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '${sp.id}'&$select=id,clientId,resourceId,scope,consentType,principalId`
+        `https://graph.microsoft.com/v1.0/servicePrincipals/${sp.id}/oauth2PermissionGrants?$select=id,clientId,consentType,principalId,resourceId,scope`
       );
 
-      const graphGrants = grants.filter((g) => g.resourceId === graphSp.id);
-      const delegated = graphGrants.flatMap((g) => splitScopes(g.scope));
-
-      const riskyFound = [...new Set([...appPerms, ...delegated])].filter((p) =>
-        RISKY_PERMISSIONS.has(p)
+      const graphGrants = oauth2Grants.filter(
+        (g) => (g.resourceId ?? "").toLowerCase() === (graphSp as any)?.id?.toLowerCase()
       );
+
+      const delegated = graphGrants.flatMap((g) => parseScopes(g.scope));
+
+      const risky = [...new Set([...appPerms, ...delegated])].filter((p) => RISKY_PERMS.has(p));
 
       return {
         id: sp.id,
-        displayName: sp.displayName,
-        appId: sp.appId,
-        accountEnabled: sp.accountEnabled,
+        displayName: sp.displayName ?? "(unknown)",
+        appId: sp.appId ?? "",
+        accountEnabled: sp.accountEnabled ?? null,
         applicationPermissions: [...new Set(appPerms)].sort(),
         delegatedPermissions: [...new Set(delegated)].sort(),
         raw: {
           graphAppRoleAssignments: graphAssignments,
           graphOauth2Grants: graphGrants
         },
-        risky: riskyFound.sort()
+        risky
       } satisfies AppPermissionReport;
     });
 
-    // 4) Write findings for risky apps
     const riskyApps = reports.filter((r) => r.risky.length > 0);
 
+    // 3) Findings
+    // ENTRA_EAP_001 — risky permissions exist
     if (riskyApps.length > 0) {
-      await ctx.prisma.finding.createMany({
-        data: riskyApps.map((app) => ({
+      await ctx.prisma.finding.create({
+        data: {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_001",
-          category: "application_permissions",
           severity: "high",
-          confidence: "high",
-          status: "open",
-          score: 80,
-          title: `Enterprise App has high-privilege permissions: ${
-            app.displayName ?? app.appId ?? app.id
-          }`,
+          title: "Risky enterprise application permissions detected",
           description:
-            "This enterprise application has one or more high-privilege Microsoft Graph permissions granted.",
+            "One or more enterprise applications have been granted high-impact delegated or application permissions.",
           recommendation:
-            "Review and remove unnecessary Graph permissions. Prefer least-privilege scopes/roles and restrict consent. Ensure app owners are known and approvals are governed.",
+            "Review enterprise application consent and permissions. Remove unnecessary grants, validate least privilege, and enforce admin consent policies.",
           evidence: {
-            servicePrincipalId: app.id,
-            appId: app.appId,
-            displayName: app.displayName,
-            riskyPermissions: app.risky,
-            applicationPermissions: app.applicationPermissions,
-            delegatedPermissions: app.delegatedPermissions
-          } as any,
-          references: ["https://learn.microsoft.com/graph/permissions-reference"] as any
-        }))
+            riskyApps: riskyApps.length,
+            scannedApps: reports.length,
+            maxApps: MAX_APPS,
+            truncated: wasTruncated
+          },
+          references: [] as any
+        }
       });
     }
 
-    // 4b) Derived scoping finding: scan was truncated
+    // ENTRA_EAP_002 — demo-only truncation signal
     if (wasTruncated) {
       await ctx.prisma.finding.create({
         data: {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_002",
-          category: "application_permissions",
           severity: "info",
-          confidence: "high",
-          status: "open",
-          score: 0,
-          title: "Enterprise app permission scan was truncated (results may be incomplete)",
+          title: "Enterprise app enumeration truncated (demo-only limit)",
           description:
-            "This run scanned only a subset of enterprise applications due to the configured ENTAPP_MAX_APPS limit. Risk findings and the permissions report may not reflect the full tenant footprint.",
+            "Enterprise app enumeration exceeded the configured maximum and was truncated. Results may be incomplete.",
           recommendation:
-            "Increase ENTAPP_MAX_APPS (and/or ENTAPP_CONCURRENCY) and re-run discovery if you need complete enterprise app coverage for scoping or security review.",
+            "Increase ENTAPP_MAX_APPS or run in an environment where full enumeration is feasible. Treat outputs as incomplete until resolved.",
           evidence: {
             totalEnterpriseApps,
-            scannedApps: reports.length,
-            maxApps: MAX_APPS,
-            concurrency: CONCURRENCY
-          } as any,
+            maxApps: MAX_APPS
+          },
           references: [] as any
         }
       });
