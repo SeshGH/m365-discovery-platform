@@ -18,124 +18,136 @@ function iso(v: unknown): string {
 
 function requireEnv(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`[report.runSummary.xlsx] Missing env var: ${name}`);
+  if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
 }
 
-async function streamToBuffer(body: any): Promise<Buffer> {
+function createS3ClientOrThrow(): S3Client {
+  const endpoint = requireEnv("S3_ENDPOINT");
+  const region = process.env.S3_REGION ?? "us-east-1";
+  const accessKeyId = requireEnv("S3_ACCESS_KEY");
+  const secretAccessKey = requireEnv("S3_SECRET_KEY");
+
+  return new S3Client({
+    region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: { accessKeyId, secretAccessKey }
+  });
+}
+
+async function readStreamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function getObjectBytes(args: {
+  s3: S3Client;
+  bucket: string;
+  key: string;
+}): Promise<Buffer> {
+  const { s3, bucket, key } = args;
+  const resp = await s3.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key
+    })
+  );
+
+  const body: any = resp.Body;
   if (!body) return Buffer.from("");
+
   if (Buffer.isBuffer(body)) return body;
 
-  // AWS SDK v3 in Node often returns a Readable stream
   if (body instanceof Readable) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of body) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    return Buffer.concat(chunks);
+    return await readStreamToBuffer(body);
   }
 
-  // Fallback: try common shapes
   if (typeof body.transformToByteArray === "function") {
     const arr = await body.transformToByteArray();
     return Buffer.from(arr);
   }
 
-  throw new Error("[report.runSummary.xlsx] Unsupported S3 body type");
+  throw new Error("Unsupported S3 Body type");
 }
 
-function createS3ClientOrThrow(): S3Client {
-  const endpoint = requireEnv("S3_ENDPOINT");
-  const accessKeyId = requireEnv("S3_ACCESS_KEY");
-  const secretAccessKey = requireEnv("S3_SECRET_KEY");
-
-  const region = process.env.S3_REGION ?? "us-east-1";
-  const forcePathStyle =
-    String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
-
-  return new S3Client({
-    region,
-    endpoint,
-    credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle
-  });
-}
-
-async function downloadArtefactText(params: {
+async function downloadArtefactText(args: {
   s3: S3Client;
   bucket: string;
   key: string;
 }): Promise<string> {
-  const res = await params.s3.send(
-    new GetObjectCommand({
-      Bucket: params.bucket,
-      Key: params.key
-    })
-  );
-
-  const buf = await streamToBuffer(res.Body as any);
-  return buf.toString("utf8");
+  const buf = await getObjectBytes(args);
+  return buf.toString("utf-8");
 }
 
-function tryParseJson<T>(text: string): { ok: true; value: T } | { ok: false; error: string } {
+function tryParseJson<T>(
+  text: string
+): { ok: true; value: T } | { ok: false; error: string } {
   try {
     return { ok: true, value: JSON.parse(text) as T };
   } catch (e: any) {
-    return { ok: false, error: String(e?.message ?? e) };
+    return { ok: false, error: e?.message ? String(e.message) : String(e) };
   }
 }
 
 type UsersInventoryJson = {
   generatedAt?: string;
+  profile?: "safe" | "full";
   tenant?: {
     tenantGuid?: string;
     primaryDomain?: string;
-    displayName?: string | null;
+    displayName?: string;
   };
   summary?: {
     totalUsers?: number;
     enabledUsers?: number;
     disabledUsers?: number;
+    memberUsers?: number;
+    guestUsers?: number;
   };
-  signInActivity?: {
-    available?: boolean;
-    inactiveDaysThreshold?: number;
-    enabledUsersNoSuccessfulSignInSinceThreshold?: number | null;
-    enabledUsersNoSuccessfulSignInSinceThresholdPct?: number | null;
-  };
+  users?: Array<{
+    id?: string;
+    userPrincipalName?: string;
+    displayName?: string;
+    mail?: string;
+    accountEnabled?: boolean;
+    userType?: string;
+    createdDateTime?: string;
+  }>;
 };
 
 type EnterpriseAppPermissionsJson = {
   generatedAt?: string;
+  profile?: "safe" | "full";
   tenant?: {
     tenantGuid?: string;
     primaryDomain?: string;
-    displayName?: string | null;
+    displayName?: string;
   };
   summary?: {
     totalEnterpriseApps?: number;
-    scannedApps?: number;
-    riskyApps?: number;
+    scannedEnterpriseApps?: number;
     truncated?: boolean;
     maxApps?: number;
-    concurrency?: number;
   };
   apps?: Array<{
-    id: string;
-    displayName?: string | null;
-    appId?: string | null;
-    accountEnabled?: boolean | null;
+    appId?: string;
+    displayName?: string;
+    servicePrincipalId?: string;
+    // Note: this matches the existing report collector’s expected shape
     applicationPermissions?: string[];
     delegatedPermissions?: string[];
     risky?: string[];
+    accountEnabled?: boolean;
   }>;
 };
 
 export const runSummaryExcelReportCollector: Collector = {
   id: "report.runSummary.xlsx",
-  displayName: "Run Summary Excel (XLSX)",
   async run(ctx) {
-    // Gate report generation until all NON-report jobs are terminal.
     await assertReportReadyOrThrow({ prisma: ctx.prisma, runId: ctx.run.id });
 
     const run = await ctx.prisma.run.findUnique({
@@ -148,13 +160,7 @@ export const runSummaryExcelReportCollector: Collector = {
       }
     });
 
-    if (!run) {
-      return {
-        id: "report.runSummary.xlsx",
-        status: "error",
-        errors: ["Run not found while generating XLSX report"]
-      };
-    }
+    if (!run) throw new Error(`Run not found: ${ctx.run.id}`);
 
     const jobs = run.jobs ?? [];
     const derivedStatus = deriveRunStatus(jobs);
@@ -176,10 +182,35 @@ export const runSummaryExcelReportCollector: Collector = {
     // -------------------------
     const s3 = createS3ClientOrThrow();
 
-    const usersArtefact = artefacts.find((a) => a.key.endsWith("/users-inventory.json"));
-    const eapArtefact = artefacts.find((a) =>
-      a.key.endsWith("/enterprise-app-permissions.json")
-    );
+    const pickArtefactByFilename = (filenames: string[]) => {
+      for (const fn of filenames) {
+        const a = artefacts.find((x) => x.key.endsWith("/" + fn));
+        if (a) return { artefact: a, filename: fn };
+      }
+      return { artefact: null as any, filename: filenames[0] ?? "" };
+    };
+
+    // Profile-aware artefact selection:
+    // - safe runs typically produce legacy filenames (no suffix)
+    // - full runs may produce profile-suffixed variants; prefer .full where applicable
+    const usersCandidates =
+      run.dataProfile === "full"
+        ? ["users-inventory.full.json", "users-inventory.safe.json", "users-inventory.json"]
+        : ["users-inventory.json", "users-inventory.safe.json"];
+
+    const eapCandidates =
+      run.dataProfile === "full"
+        ? [
+            "enterprise-app-permissions.full.json",
+            "enterprise-app-permissions.safe.json",
+            "enterprise-app-permissions.json"
+          ]
+        : ["enterprise-app-permissions.json", "enterprise-app-permissions.safe.json"];
+
+    const { artefact: usersArtefact, filename: usersArtefactName } =
+      pickArtefactByFilename(usersCandidates);
+    const { artefact: eapArtefact, filename: eapArtefactName } =
+      pickArtefactByFilename(eapCandidates);
 
     let usersJson: UsersInventoryJson | null = null;
     let usersJsonError: string | null = null;
@@ -218,116 +249,125 @@ export const runSummaryExcelReportCollector: Collector = {
     // Sheet 1: Run Summary
     // -------------------------
     {
-      const ws = wb.addWorksheet("Run Summary");
+      const ws = wb.addWorksheet(safeSheetName("Run Summary"));
 
       ws.columns = [
-        { header: "Field", key: "field", width: 28 },
-        { header: "Value", key: "value", width: 80 }
+        { header: "field", key: "field", width: 38 },
+        { header: "value", key: "value", width: 80 }
       ];
 
-      const rows: Array<[string, string | number]> = [
-        ["generatedAt", new Date().toISOString()],
-        ["runId", run.id],
-        ["runStatus", derivedStatus],
-        ["dataProfile", (run as any).dataProfile ?? "safe"],
-        ["runCreatedAt", iso(run.createdAt)],
-        ["runStartedAt", iso(run.startedAt)],
-        ["runEndedAt", iso(run.endedAt)],
-        ["tenantGuid", run.tenant.tenantGuid],
-        ["primaryDomain", run.tenant.primaryDomain],
-        ["tenantDisplayName", run.tenant.displayName ?? ""],
-        ["jobsTotal", jobs.length],
-        ["findingsTotal", findings.length],
-        ["artefactsTotal", artefacts.length],
-        ["sevCritical", sevCounts.critical],
-        ["sevHigh", sevCounts.high],
-        ["sevMedium", sevCounts.medium],
-        ["sevLow", sevCounts.low],
-        ["sevInfo", sevCounts.info],
-        ["sevUnknown", sevCounts.unknown]
+      ws.addRow({ field: "runId", value: run.id });
+      ws.addRow({ field: "tenantGuid", value: run.tenant.tenantGuid });
+      ws.addRow({ field: "primaryDomain", value: run.tenant.primaryDomain });
+      ws.addRow({ field: "tenantDisplayName", value: run.tenant.displayName ?? "" });
+      ws.addRow({ field: "dataProfile", value: run.dataProfile ?? "safe" });
+      ws.addRow({ field: "derivedStatus", value: derivedStatus });
+      ws.addRow({ field: "createdAt", value: iso(run.createdAt) });
+      ws.addRow({ field: "startedAt", value: iso(run.startedAt) });
+      ws.addRow({ field: "endedAt", value: iso(run.endedAt) });
+
+      ws.addRow({ field: "jobs", value: jobs.length });
+      ws.addRow({ field: "findings", value: findings.length });
+      ws.addRow({ field: "artefacts", value: artefacts.length });
+
+      ws.addRow({ field: "findings.critical", value: sevCounts.critical });
+      ws.addRow({ field: "findings.high", value: sevCounts.high });
+      ws.addRow({ field: "findings.medium", value: sevCounts.medium });
+      ws.addRow({ field: "findings.low", value: sevCounts.low });
+      ws.addRow({ field: "findings.info", value: sevCounts.info });
+      ws.addRow({ field: "findings.unknown", value: sevCounts.unknown });
+    }
+
+    // -------------------------
+    // Sheet 2: Jobs
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Jobs"));
+
+      ws.columns = [
+        { header: "collectorId", key: "collectorId", width: 34 },
+        { header: "status", key: "status", width: 12 },
+        { header: "attempts", key: "attempts", width: 10 },
+        { header: "startedAt", key: "startedAt", width: 26 },
+        { header: "endedAt", key: "endedAt", width: 26 },
+        { header: "lockedBy", key: "lockedBy", width: 22 },
+        { header: "lockedAt", key: "lockedAt", width: 26 },
+        { header: "lastError", key: "lastError", width: 80 }
       ];
 
-      for (const [field, value] of rows) {
-        ws.addRow({ field, value });
+      for (const j of jobs) {
+        ws.addRow({
+          collectorId: j.collectorId,
+          status: j.status,
+          attempts: j.attempts,
+          startedAt: iso(j.startedAt),
+          endedAt: iso(j.endedAt),
+          lockedBy: j.lockedBy ?? "",
+          lockedAt: iso(j.lockedAt),
+          lastError: j.lastError ?? ""
+        });
       }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
     }
 
     // -------------------------
-    // Sheet 2: Executive Summary (demo-friendly)
+    // Sheet 3: Findings
     // -------------------------
     {
-      const ws = wb.addWorksheet("Executive Summary");
+      const ws = wb.addWorksheet(safeSheetName("Findings"));
 
       ws.columns = [
-        { header: "Metric", key: "metric", width: 40 },
-        { header: "Value", key: "value", width: 30 },
-        { header: "Notes", key: "notes", width: 80 }
+        { header: "checkId", key: "checkId", width: 22 },
+        { header: "severity", key: "severity", width: 12 },
+        { header: "title", key: "title", width: 44 },
+        { header: "description", key: "description", width: 90 },
+        { header: "resource", key: "resource", width: 60 },
+        { header: "details", key: "details", width: 90 }
       ];
 
-      const totalUsers = usersJson?.summary?.totalUsers ?? "";
-      const enabledUsers = usersJson?.summary?.enabledUsers ?? "";
-      const disabledUsers = usersJson?.summary?.disabledUsers ?? "";
-
-      const totalEnterpriseApps = eapJson?.summary?.totalEnterpriseApps ?? "";
-      const scannedApps = eapJson?.summary?.scannedApps ?? "";
-      const riskyApps = eapJson?.summary?.riskyApps ?? "";
-      const truncated = eapJson?.summary?.truncated ?? "";
-
-      const signInAvailable = usersJson?.signInActivity?.available;
-      const signInNote =
-        signInAvailable === true
-          ? "Sign-in activity enrichment available."
-          : signInAvailable === false
-            ? "Sign-in activity enrichment not available (permission/endpoint may be missing)."
-            : "No users artefact present.";
-
-      ws.addRow({
-        metric: "Run status",
-        value: derivedStatus,
-        notes: ""
-      });
-      ws.addRow({
-        metric: "Findings (total)",
-        value: findings.length,
-        notes: `Critical=${sevCounts.critical}, High=${sevCounts.high}, Medium=${sevCounts.medium}, Low=${sevCounts.low}, Info=${sevCounts.info}`
-      });
-
-      ws.addRow({
-        metric: "Users (total / enabled / disabled)",
-        value:
-          totalUsers === ""
-            ? ""
-            : `${totalUsers} / ${enabledUsers} / ${disabledUsers}`,
-        notes: usersJsonError ? `Users artefact parse error: ${usersJsonError}` : signInNote
-      });
-
-      ws.addRow({
-        metric: "Enterprise apps (total / scanned / risky)",
-        value:
-          totalEnterpriseApps === ""
-            ? ""
-            : `${totalEnterpriseApps} / ${scannedApps} / ${riskyApps}`,
-        notes:
-          eapJsonError
-            ? `Enterprise apps artefact parse error: ${eapJsonError}`
-            : truncated === true
-              ? "Scan truncated (ENTAPP_MAX_APPS limit). Results may be incomplete."
-              : ""
-      });
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:C1";
+      for (const f of findings) {
+        ws.addRow({
+          checkId: f.checkId,
+          severity: f.severity,
+          title: f.title,
+          description: f.description,
+          resource: f.resource,
+          details: f.details
+        });
+      }
     }
 
     // -------------------------
-    // Sheet 3: Users (Summary)
+    // Sheet 4: Artefacts
     // -------------------------
     {
-      const ws = wb.addWorksheet("Users (Summary)");
+      const ws = wb.addWorksheet(safeSheetName("Artefacts"));
+
+      ws.columns = [
+        { header: "type", key: "type", width: 12 },
+        { header: "bucket", key: "bucket", width: 12 },
+        { header: "key", key: "key", width: 90 },
+        { header: "sizeBytes", key: "sizeBytes", width: 12 },
+        { header: "hash", key: "hash", width: 70 },
+        { header: "createdAt", key: "createdAt", width: 26 }
+      ];
+
+      for (const a of artefacts) {
+        ws.addRow({
+          type: a.type,
+          bucket: a.bucket,
+          key: a.key,
+          sizeBytes: a.sizeBytes,
+          hash: a.hash,
+          createdAt: iso(a.createdAt)
+        });
+      }
+    }
+
+    // -------------------------
+    // Sheet 5: Users (Summary)
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Users (Summary)"));
 
       ws.columns = [
         { header: "field", key: "field", width: 38 },
@@ -339,13 +379,13 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({
           field: "status",
           value: "not-available",
-          notes: "users-inventory.json artefact was not present in this run."
+          notes: `${usersArtefactName} artefact was not present in this run.`
         });
       } else if (usersJsonError) {
         ws.addRow({
           field: "status",
           value: "error",
-          notes: `Failed to parse users-inventory.json: ${usersJsonError}`
+          notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
         });
       } else {
         ws.addRow({ field: "generatedAt", value: usersJson?.generatedAt ?? "", notes: "" });
@@ -364,51 +404,32 @@ export const runSummaryExcelReportCollector: Collector = {
           value: usersJson?.summary?.disabledUsers ?? "",
           notes: ""
         });
-
-        const signIn = usersJson?.signInActivity;
         ws.addRow({
-          field: "signInActivity.available",
-          value: signIn?.available ?? "",
-          notes:
-            signIn?.available === false
-              ? "Enrichment not available (optional permission/endpoint)."
-              : ""
-        });
-        ws.addRow({
-          field: "signInActivity.inactiveDaysThreshold",
-          value: signIn?.inactiveDaysThreshold ?? "",
+          field: "memberUsers",
+          value: usersJson?.summary?.memberUsers ?? "",
           notes: ""
         });
         ws.addRow({
-          field: "enabledUsersNoSuccessfulSignInSinceThreshold",
-          value: signIn?.enabledUsersNoSuccessfulSignInSinceThreshold ?? "",
-          notes: ""
-        });
-        ws.addRow({
-          field: "enabledUsersNoSuccessfulSignInSinceThresholdPct",
-          value: signIn?.enabledUsersNoSuccessfulSignInSinceThresholdPct ?? "",
+          field: "guestUsers",
+          value: usersJson?.summary?.guestUsers ?? "",
           notes: ""
         });
       }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:C1";
     }
 
     // -------------------------
-    // Sheet 4: Enterprise Apps (Permissions)
+    // Sheet 6: Enterprise Apps (Permissions)
     // -------------------------
     {
-      const ws = wb.addWorksheet(safeSheetName("Enterprise Apps (Permissions)"));
+      const ws = wb.addWorksheet(safeSheetName("Enterprise Apps (Perms)"));
 
       ws.columns = [
-        { header: "displayName", key: "displayName", width: 40 },
-        { header: "appId", key: "appId", width: 38 },
+        { header: "displayName", key: "displayName", width: 44 },
+        { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
-        { header: "applicationPermissions", key: "applicationPermissions", width: 55 },
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 55 },
-        { header: "riskyPermissions", key: "riskyPermissions", width: 40 },
+        { header: "applicationPermissions", key: "applicationPermissions", width: 60 },
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 60 },
+        { header: "riskyPermissions", key: "riskyPermissions", width: 80 },
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
@@ -429,7 +450,7 @@ export const runSummaryExcelReportCollector: Collector = {
           accountEnabled: "",
           applicationPermissions: "",
           delegatedPermissions: "",
-          riskyPermissions: `Failed to parse enterprise-app-permissions.json: ${eapJsonError}`,
+          riskyPermissions: `Failed to parse ${eapArtefactName}: ${eapJsonError}`,
           riskFlag: "n/a"
         });
       } else {
@@ -450,166 +471,20 @@ export const runSummaryExcelReportCollector: Collector = {
             riskFlag
           });
         }
-
-        // Add a small footer row if scan was truncated
-        if (eapJson?.summary?.truncated === true) {
-          ws.addRow({});
-          ws.addRow({
-            displayName: "NOTE",
-            appId: "",
-            accountEnabled: "",
-            applicationPermissions: "",
-            delegatedPermissions: "",
-            riskyPermissions: "",
-            riskFlag: ""
-          });
-          ws.addRow({
-            displayName: "Scan truncated",
-            appId: "",
-            accountEnabled: "",
-            applicationPermissions: "",
-            delegatedPermissions: "",
-            riskyPermissions: "",
-            riskFlag: "ENTAPP_MAX_APPS limit"
-          });
-        }
       }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:G1";
     }
 
-    // -------------------------
-    // Sheet 5: Findings
-    // -------------------------
-    {
-      const ws = wb.addWorksheet("Findings");
-
-      ws.columns = [
-        { header: "checkId", key: "checkId", width: 18 },
-        { header: "severity", key: "severity", width: 10 },
-        { header: "category", key: "category", width: 22 },
-        { header: "title", key: "title", width: 80 },
-        { header: "jobId", key: "jobId", width: 26 },
-        { header: "createdAt", key: "createdAt", width: 24 }
-      ];
-
-      for (const f of findings) {
-        ws.addRow({
-          checkId: f.checkId,
-          severity: f.severity,
-          category: (f as any).category ?? "",
-          title: f.title,
-          jobId: f.jobId ?? "",
-          createdAt: f.createdAt ? f.createdAt.toISOString() : ""
-        });
-      }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:F1";
-    }
-
-    // -------------------------
-    // Sheet 6: Jobs
-    // -------------------------
-    {
-      const ws = wb.addWorksheet("Jobs");
-
-      ws.columns = [
-        { header: "collectorId", key: "collectorId", width: 30 },
-        { header: "status", key: "status", width: 12 },
-        { header: "attempts", key: "attempts", width: 10 },
-        { header: "startedAt", key: "startedAt", width: 24 },
-        { header: "endedAt", key: "endedAt", width: 24 },
-        { header: "lastError", key: "lastError", width: 80 }
-      ];
-
-      for (const j of jobs) {
-        ws.addRow({
-          collectorId: j.collectorId,
-          status: j.status,
-          attempts: j.attempts,
-          startedAt: j.lockedAt ? j.lockedAt.toISOString() : "",
-          endedAt:
-            (j.status === "succeeded" || j.status === "failed") && j.updatedAt
-              ? j.updatedAt.toISOString()
-              : "",
-          lastError: j.lastError ?? ""
-        });
-      }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:F1";
-    }
-
-    // -------------------------
-    // Sheet 7: Artefacts (index)
-    // -------------------------
-    {
-      const ws = wb.addWorksheet("Artefacts");
-
-      ws.columns = [
-        { header: "type", key: "type", width: 10 },
-        { header: "key", key: "key", width: 90 },
-        { header: "sizeBytes", key: "sizeBytes", width: 12 },
-        { header: "hash", key: "hash", width: 70 },
-        { header: "createdAt", key: "createdAt", width: 24 }
-      ];
-
-      for (const a of artefacts) {
-        ws.addRow({
-          type: a.type,
-          key: a.key,
-          sizeBytes: a.sizeBytes ?? "",
-          hash: a.hash ?? "",
-          createdAt: a.createdAt ? a.createdAt.toISOString() : ""
-        });
-      }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:E1";
-    }
-
-    // Optional: Add a “Per Collector” artefact listing sheet (nice for demo)
-    {
-      const ws = wb.addWorksheet("Artefacts by Job");
-      ws.columns = [
-        { header: "jobId", key: "jobId", width: 28 },
-        { header: "type", key: "type", width: 10 },
-        { header: "key", key: "key", width: 90 }
-      ];
-
-      for (const a of artefacts) {
-        ws.addRow({
-          jobId: a.jobId ?? "",
-          type: a.type,
-          key: a.key
-        });
-      }
-
-      ws.getRow(1).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.autoFilter = "A1:C1";
-    }
-
-    // Build workbook bytes
-    const buffer = await wb.xlsx.writeBuffer();
+    const buf = await wb.xlsx.writeBuffer();
 
     return {
-      id: "report.runSummary.xlsx",
-      status: "ok",
       summary: {
-        sheets: wb.worksheets.length,
-        findings: findings.length,
-        jobs: jobs.length,
-        artefacts: artefacts.length,
-        parsed: {
-          usersInventory: Boolean(usersArtefact && !usersJsonError),
-          enterpriseAppPermissions: Boolean(eapArtefact && !eapJsonError)
+        generatedAt: new Date().toISOString(),
+        runId: run.id,
+        derivedStatus,
+        rows: {
+          jobs: jobs.length,
+          findings: findings.length,
+          artefacts: artefacts.length
         }
       },
       artefacts: [
@@ -617,7 +492,7 @@ export const runSummaryExcelReportCollector: Collector = {
           type: "raw",
           filename: "run-summary.xlsx",
           contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          content: Buffer.from(buffer)
+          content: Buffer.from(buf)
         }
       ]
     };
