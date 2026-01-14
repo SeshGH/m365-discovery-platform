@@ -1,5 +1,4 @@
 // apps/worker/src/collectors/reportUtils.ts
-import type { PrismaClient } from "@acme/db";
 
 export function isTerminalJobStatus(status: string): boolean {
   return status === "succeeded" || status === "failed";
@@ -15,25 +14,31 @@ export function deriveRunStatus(
   if (jobs.some((j) => j.status === "failed")) return "failed";
   if (jobs.length > 0 && jobs.every((j) => j.status === "succeeded")) return "succeeded";
   if (jobs.some((j) => j.status === "running")) return "running";
-  if (jobs.some((j) => j.status === "queued")) return "queued";
-  return "running";
+  // queued or mixed queued/succeeded
+  return "queued";
 }
 
 /**
- * Gate report generation until all NON-report jobs are terminal.
- * This prevents misleading "running" summaries if the report job is picked up early.
+ * Report collectors must not run until all *non-report* jobs are in a terminal state.
+ * This avoids generating partial summaries when report jobs are picked up early in a concurrent worker model.
+ *
+ * Throws an Error if any non-report jobs are still pending (queued/running/etc).
  */
-export async function assertReportReadyOrThrow(params: {
-  prisma: PrismaClient;
+export async function assertReportReadyOrThrow(args: {
+  prisma: any;
   runId: string;
-}) {
-  const jobs = await params.prisma.job.findMany({
-    where: { runId: params.runId },
-    select: { collectorId: true, status: true }
+}): Promise<void> {
+  const { prisma, runId } = args;
+
+  const jobs = await prisma.job.findMany({
+    where: { runId },
+    select: { status: true, collectorId: true }
   });
 
-  const nonReportJobs = jobs.filter((j) => !isReportCollectorId(j.collectorId));
-  const pendingNonReportJobs = nonReportJobs.filter((j) => !isTerminalJobStatus(j.status));
+  const pendingNonReportJobs = jobs.filter(
+    (j: { status: string; collectorId: string }) =>
+      !isReportCollectorId(j.collectorId) && !isTerminalJobStatus(j.status)
+  );
 
   if (pendingNonReportJobs.length > 0) {
     const counts = pendingNonReportJobs.reduce<Record<string, number>>((acc, j) => {

@@ -145,6 +145,81 @@ type EnterpriseAppPermissionsJson = {
   }>;
 };
 
+type NormalizedUsersSummary = {
+  totalUsers: number;
+  enabledUsers: number | null;
+  disabledUsers: number | null;
+  memberUsers: number | null;
+  guestUsers: number | null;
+};
+
+function normalizeUsersSummary(usersJson: any): NormalizedUsersSummary {
+  const summary = usersJson?.summary ?? {};
+  const users: any[] = Array.isArray(usersJson?.users) ? usersJson.users : [];
+
+  const totalUsers =
+    typeof summary.totalUsers === "number" ? summary.totalUsers : users.length;
+
+  const guestUsers =
+    typeof summary.guestUsers === "number"
+      ? summary.guestUsers
+      : users.filter((u) => String(u?.userType).toLowerCase() === "guest").length;
+
+  const memberUsers =
+    typeof summary.memberUsers === "number"
+      ? summary.memberUsers
+      : users.length
+        ? users.filter((u) => String(u?.userType).toLowerCase() !== "guest").length
+        : null;
+
+  const enabledUsers =
+    typeof summary.enabledUsers === "number"
+      ? summary.enabledUsers
+      : users.length
+        ? users.filter((u) => u?.accountEnabled === true).length
+        : null;
+
+  const disabledUsers =
+    typeof summary.disabledUsers === "number"
+      ? summary.disabledUsers
+      : users.length
+        ? users.filter((u) => u?.accountEnabled === false).length
+        : null;
+
+  return { totalUsers, enabledUsers, disabledUsers, memberUsers, guestUsers };
+}
+
+type NormalizedEapSummary = {
+  totalEnterpriseApps: number;
+  scannedApps: number | null;
+  riskyApps: number | null;
+  truncated: boolean | null;
+  maxApps: number | null;
+};
+
+function normalizeEapSummary(eapJson: any): NormalizedEapSummary {
+  const summary = eapJson?.summary ?? {};
+  const apps: any[] = Array.isArray(eapJson?.apps) ? eapJson.apps : [];
+
+  const totalEnterpriseApps =
+    typeof summary.totalEnterpriseApps === "number"
+      ? summary.totalEnterpriseApps
+      : apps.length;
+
+  const scannedApps =
+    typeof summary.scannedApps === "number" ? summary.scannedApps : (apps.length ? apps.length : null);
+
+  const riskyApps =
+    typeof summary.riskyApps === "number"
+      ? summary.riskyApps
+      : (apps.length ? apps.filter((a) => Array.isArray(a?.risky) && a.risky.length > 0).length : null);
+
+  const truncated = typeof summary.truncated === "boolean" ? summary.truncated : null;
+  const maxApps = typeof summary.maxApps === "number" ? summary.maxApps : null;
+
+  return { totalEnterpriseApps, scannedApps, riskyApps, truncated, maxApps };
+}
+
 export const runSummaryExcelReportCollector: Collector = {
   id: "report.runSummary.xlsx",
   async run(ctx) {
@@ -240,10 +315,15 @@ export const runSummaryExcelReportCollector: Collector = {
       else eapJsonError = parsed.error;
     }
 
+    const usersSummary = usersJson ? normalizeUsersSummary(usersJson) : null;
+    const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
+
+
     const wb = new ExcelJS.Workbook();
     wb.creator = "m365-discovery-platform";
     wb.created = new Date();
     wb.modified = new Date();
+
 
     // -------------------------
     // Sheet 1: Run Summary
@@ -391,31 +471,124 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({ field: "generatedAt", value: usersJson?.generatedAt ?? "", notes: "" });
         ws.addRow({
           field: "totalUsers",
-          value: usersJson?.summary?.totalUsers ?? "",
+          value: usersSummary?.totalUsers ?? "n/a",
           notes: ""
         });
         ws.addRow({
           field: "enabledUsers",
-          value: usersJson?.summary?.enabledUsers ?? "",
+          value: usersSummary?.enabledUsers ?? "n/a",
           notes: ""
         });
         ws.addRow({
           field: "disabledUsers",
-          value: usersJson?.summary?.disabledUsers ?? "",
+          value: usersSummary?.disabledUsers ?? "n/a",
           notes: ""
         });
         ws.addRow({
           field: "memberUsers",
-          value: usersJson?.summary?.memberUsers ?? "",
+          value: usersSummary?.memberUsers ?? "n/a",
           notes: ""
         });
         ws.addRow({
           field: "guestUsers",
-          value: usersJson?.summary?.guestUsers ?? "",
+          value: usersSummary?.guestUsers ?? "n/a",
           notes: ""
         });
       }
     }
+
+    // -------------------------
+// Sheet 5b: Users (Full)  (FULL profile only)
+// -------------------------
+{
+  const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
+
+  // This sheet is intentionally PII-bearing and only emitted for full profile runs.
+  if (run.dataProfile !== "full") {
+    ws.columns = [
+      { header: "field", key: "field", width: 38 },
+      { header: "value", key: "value", width: 28 },
+      { header: "notes", key: "notes", width: 80 }
+    ];
+
+    ws.addRow({
+      field: "status",
+      value: "not-available",
+      notes: "Users (Full) is only generated when dataProfile is 'full'."
+    });
+  } else if (!usersArtefact) {
+    ws.columns = [
+      { header: "field", key: "field", width: 38 },
+      { header: "value", key: "value", width: 28 },
+      { header: "notes", key: "notes", width: 80 }
+    ];
+
+    ws.addRow({
+      field: "status",
+      value: "not-available",
+      notes: `${usersArtefactName} artefact was not present in this run.`
+    });
+  } else if (usersJsonError) {
+    ws.columns = [
+      { header: "field", key: "field", width: 38 },
+      { header: "value", key: "value", width: 28 },
+      { header: "notes", key: "notes", width: 80 }
+    ];
+
+    ws.addRow({
+      field: "status",
+      value: "error",
+      notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
+    });
+  } else {
+    ws.columns = [
+      { header: "id", key: "id", width: 38 },
+      { header: "displayName", key: "displayName", width: 28 },
+      { header: "userPrincipalName", key: "userPrincipalName", width: 36 },
+      { header: "mail", key: "mail", width: 30 },
+      { header: "userType", key: "userType", width: 12 },
+      { header: "accountEnabled", key: "accountEnabled", width: 14 },
+      { header: "createdDateTime", key: "createdDateTime", width: 22 }
+    ];
+
+    const users: any[] = Array.isArray((usersJson as any)?.users) ? (usersJson as any).users : [];
+
+    if (!users.length) {
+      // Keep it explicit if the artefact exists but has no rows
+      ws.addRow({
+        id: "",
+        displayName: "",
+        userPrincipalName: "",
+        mail: "",
+        userType: "",
+        accountEnabled: "",
+        createdDateTime: ""
+      });
+      // Add a note row at the bottom
+      ws.addRow({
+        id: "status",
+        displayName: "empty",
+        userPrincipalName: "",
+        mail: "",
+        userType: "",
+        accountEnabled: "",
+        createdDateTime: `No users[] were present in ${usersArtefactName}`
+      });
+    } else {
+      for (const u of users) {
+        ws.addRow({
+          id: String(u?.id ?? ""),
+          displayName: String(u?.displayName ?? ""),
+          userPrincipalName: String(u?.userPrincipalName ?? ""),
+          mail: String(u?.mail ?? ""),
+          userType: String(u?.userType ?? ""),
+          accountEnabled: u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
+          createdDateTime: String(u?.createdDateTime ?? "")
+        });
+      }
+    }
+  }
+}
 
     // -------------------------
     // Sheet 6: Enterprise Apps (Permissions)
@@ -427,9 +600,9 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "displayName", key: "displayName", width: 44 },
         { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
-        { header: "applicationPermissions", key: "applicationPermissions", width: 60 },
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 60 },
-        { header: "riskyPermissions", key: "riskyPermissions", width: 80 },
+        { header: "applicationPermissions", key: "applicationPermissions", width: 24 }, // count
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 },     // count
+        { header: "riskyPermissions", key: "riskyPermissions", width: 16 },             // count
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
@@ -454,21 +627,27 @@ export const runSummaryExcelReportCollector: Collector = {
           riskFlag: "n/a"
         });
       } else {
-        const apps = eapJson?.apps ?? [];
+        const apps: any[] = Array.isArray(eapJson?.apps) ? eapJson.apps : [];
+
         for (const app of apps) {
-          const appPerms = (app.applicationPermissions ?? []).join(", ");
-          const delPerms = (app.delegatedPermissions ?? []).join(", ");
-          const risky = (app.risky ?? []).join(", ");
-          const riskFlag = (app.risky ?? []).length > 0 ? "YES" : "NO";
+          const appPermCount = Array.isArray(app?.applicationPermissions)
+            ? app.applicationPermissions.length
+            : 0;
+
+          const delPermCount = Array.isArray(app?.delegatedPermissions)
+            ? app.delegatedPermissions.length
+            : 0;
+
+          const riskyCount = Array.isArray(app?.risky) ? app.risky.length : 0;
 
           ws.addRow({
-            displayName: app.displayName ?? "",
-            appId: app.appId ?? "",
-            accountEnabled: app.accountEnabled ?? "",
-            applicationPermissions: appPerms,
-            delegatedPermissions: delPerms,
-            riskyPermissions: risky,
-            riskFlag
+            displayName: app?.displayName ?? "",
+            appId: app?.appId ?? "",
+            accountEnabled: String(app?.accountEnabled ?? ""),
+            applicationPermissions: String(appPermCount),
+            delegatedPermissions: String(delPermCount),
+            riskyPermissions: String(riskyCount),
+            riskFlag: riskyCount > 0 ? "YES" : "NO"
           });
         }
       }
