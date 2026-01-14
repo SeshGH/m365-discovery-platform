@@ -169,6 +169,72 @@ Direction for XLSX:
 
 ---
 
+## Reporting formats: XLSX vs CSV (design intent)
+
+The M365 Discovery Platform intentionally produces **multiple report formats** with different goals. These formats are **not equivalent** and are **not expected to contain the same data**.
+
+### XLSX — Primary, human-facing report (authoritative)
+
+The **XLSX report is the primary reporting artefact** for the platform.
+
+It is designed for:
+
+* internal consultants
+* technical pre-sales
+* solution walkthroughs
+* executive and stakeholder discussions
+
+Characteristics:
+
+* multi-sheet workbook
+* derived summaries (counts, risk indicators, truncation flags)
+* human-readable structure
+* prioritised signal over raw volume
+* aligned with CloudGeezer-style expectations
+
+Design intent:
+
+* This is the report that **will be polished, extended, and evolved**
+* This is what you show customers, leadership, and pre-sales
+* Engineering effort is **intentionally focused here**
+
+### CSV — Secondary, machine-friendly export (non-authoritative)
+
+The **CSV report exists purely as a lightweight compatibility artefact**.
+
+It is intended for:
+
+* basic automation
+* quick ad-hoc inspection
+* downstream tooling that expects CSV input
+
+Important constraints:
+
+* CSV is **not required** to:
+
+  * mirror the XLSX structure
+  * include full inventories
+  * expose all derived logic
+  * contain PII-heavy datasets
+* CSV may contain **only summaries and counts**
+* CSV completeness will always lag XLSX by design
+
+Design rule:
+
+> If a trade-off must be made, **XLSX fidelity always wins over CSV completeness**.
+
+This is a **deliberate architectural decision**, not a limitation or unfinished work.
+
+### Practical implication
+
+* A **full run** correctly produces:
+
+  * full users inventory artefact
+  * full enterprise app permissions artefact
+  * populated XLSX summary
+* A minimal or sparse CSV is **expected behaviour**
+* CSV is *not* the source of truth for discovery depth
+
 ## Demo-only constraints (must not be treated as long-term behaviour)
 
 The demo tenant and demo harness may apply limits that are explicitly not architectural guarantees.
