@@ -94,14 +94,15 @@ model Run {
   /// - "safe": summary-only, no PII-heavy artefacts (default)
   /// - "full": explicit opt-in for sensitive exports
   dataProfile String @default("safe")
-  
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  jobs      Job[]
-  findings  Finding[]
-  artefacts Artefact[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobs           Job[]
+  findings       Finding[]
+  observedChecks ObservedCheck[]
+  artefacts      Artefact[]
 
   @@index([tenantId])
   @@index([status])
@@ -119,8 +120,10 @@ model Job {
   result    Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  findings  Finding[]
-  artefacts Artefact[]
+
+  findings       Finding[]
+  observedChecks ObservedCheck[]
+  artefacts      Artefact[]
 
   run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -167,6 +170,44 @@ model Finding {
   @@index([createdAt])
 }
 
+/// Observed checks are NOT findings.
+/// They store "what was observed" without forcing a pass/fail judgement.
+/// The semantic registry for observed checkIds lives in docs/findings-observed-checks.md
+model ObservedCheck {
+  id String @id @default(cuid())
+
+  runId String
+  jobId String?
+
+  /// Stable ID for the observed check (contract)
+  checkId String
+
+  /// Collector responsible for the observation (stable collector id)
+  collectorId String
+
+  /// Optional rule ID if an observation maps to a rule later
+  ruleId String?
+
+  /// When the observation was recorded
+  observedAt DateTime @default(now())
+
+  /// Arbitrary JSON payload describing what was seen
+  data Json @default("{}")
+
+  /// Optional references (links to artefacts, object IDs, URLs, etc.)
+  references Json @default("[]")
+
+  run Run  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([runId])
+  @@index([jobId])
+  @@index([checkId])
+  @@index([collectorId])
+  @@index([ruleId])
+  @@index([observedAt])
+}
+
 model Artefact {
   id        String       @id @default(cuid())
   runId     String
@@ -195,7 +236,7 @@ model TenantAuth {
   mode     TenantAuthMode @default(MULTI_TENANT_APP)
 
   consentedAt DateTime?
-  status      String  @default("not_connected")
+  status      String @default("not_connected")
   lastError   String?
 
   createdAt DateTime @default(now())

@@ -11,6 +11,7 @@ type ServicePrincipal = {
 
 type GraphSp = {
   appRoles?: Array<{ id?: string; value?: string }>;
+  id?: string;
 };
 
 type AppRoleAssignment = {
@@ -114,11 +115,11 @@ export const enterpriseAppPermissionsCollector: Collector = {
     // 1) Load Microsoft Graph service principal (to resolve appRoleId -> permission value)
     const graphSp = await graphGetAllPages<GraphSp>(
       token,
-      "https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '00000003-0000-0000-c000-000000000000'&$select=appRoles"
+      "https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '00000003-0000-0000-c000-000000000000'&$select=id,appRoles"
     ).then((arr) => arr[0]);
 
     const graphRoleMap = new Map<string, string>();
-    for (const role of graphSp.appRoles ?? []) {
+    for (const role of graphSp?.appRoles ?? []) {
       if (role?.id && role?.value) graphRoleMap.set(role.id, role.value);
     }
 
@@ -162,7 +163,8 @@ export const enterpriseAppPermissionsCollector: Collector = {
       );
 
       const graphAssignments = appRoleAssignments.filter(
-        (a) => (a.resourceId ?? "").toLowerCase() === (graphSp as any)?.id?.toLowerCase()
+        (a) =>
+          (a.resourceId ?? "").toLowerCase() === (graphSp?.id ?? "").toLowerCase()
       );
 
       const appPerms = graphAssignments
@@ -175,12 +177,15 @@ export const enterpriseAppPermissionsCollector: Collector = {
       );
 
       const graphGrants = oauth2Grants.filter(
-        (g) => (g.resourceId ?? "").toLowerCase() === (graphSp as any)?.id?.toLowerCase()
+        (g) =>
+          (g.resourceId ?? "").toLowerCase() === (graphSp?.id ?? "").toLowerCase()
       );
 
       const delegated = graphGrants.flatMap((g) => parseScopes(g.scope));
 
-      const risky = [...new Set([...appPerms, ...delegated])].filter((p) => RISKY_PERMS.has(p));
+      const risky = [...new Set([...appPerms, ...delegated])].filter((p) =>
+        RISKY_PERMS.has(p)
+      );
 
       return {
         id: sp.id,
@@ -198,6 +203,30 @@ export const enterpriseAppPermissionsCollector: Collector = {
     });
 
     const riskyApps = reports.filter((r) => r.risky.length > 0);
+
+    // -------------------------
+    // Observed check (preferred pattern)
+    // -------------------------
+    await ctx.prisma.observedCheck.create({
+      data: {
+        runId: ctx.run.id,
+        jobId: ctx.job.id,
+        checkId: "ENTRA_EAP_OBS_001",
+        collectorId: "entra.enterpriseApps.permissions",
+        ruleId: null,
+        data: {
+          profile: dataProfile,
+          totalEnterpriseApps,
+          scannedApps: reports.length,
+          riskyApps: riskyApps.length,
+          truncated: wasTruncated,
+          maxApps: MAX_APPS,
+          concurrency: CONCURRENCY,
+          fullExported: includeSensitive
+        },
+        references: [] as any
+      }
+    });
 
     // 3) Findings
     // ENTRA_EAP_001 — risky permissions exist

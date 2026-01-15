@@ -221,6 +221,7 @@ app.get("/demo", async (_req, reply) => {
       border: 1px solid var(--border); background: #fff; font-size: 12px;
     }
     .muted { color: var(--muted); }
+    .jsoncell { max-width: 520px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -299,6 +300,21 @@ app.get("/demo", async (_req, reply) => {
         <tbody id="jobsBody"></tbody>
       </table>
 
+      <div style="margin-top: 14px; font-weight:700;">Observed checks</div>
+      <div class="muted" style="margin-bottom: 8px;">Observed facts captured by collectors (not findings). Should always render even if empty.</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>observedAt</th>
+            <th>checkId</th>
+            <th>collectorId</th>
+            <th>data</th>
+          </tr>
+        </thead>
+        <tbody id="observedBody"></tbody>
+      </table>
+
       <div style="margin-top: 14px; font-weight:700;">Artefacts</div>
       <div class="muted" style="margin-bottom: 8px;">Artefacts produced by this run. Downloads use the API redirect flow.</div>
 
@@ -325,17 +341,18 @@ app.get("/demo", async (_req, reply) => {
   let currentRunId = null;
 
   const normalizeList = (v) => {
-  if (Array.isArray(v)) return v;
-  if (v && Array.isArray(v.value)) return v.value;
-  return [];
-};
+    if (Array.isArray(v)) return v;
+    if (v && Array.isArray(v.value)) return v.value;
+    return [];
+  };
 
   const mkLink = (href, text) =>
     \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
 
+  const safe = (v) => (v === null || v === undefined) ? "" : String(v);
+
   const renderJobs = (jobs) => {
     const rows = jobs.map(j => {
-      const safe = (v) => (v === null || v === undefined) ? "" : String(v);
       return \`
         <tr>
           <td>\${safe(j.collectorId)}</td>
@@ -349,6 +366,31 @@ app.get("/demo", async (_req, reply) => {
     $("jobsBody").innerHTML = rows || \`<tr><td colspan="6" class="muted">No jobs yet</td></tr>\`;
   };
 
+  const safeJsonInline = (obj) => {
+    try {
+      const s = JSON.stringify(obj ?? {}, null, 0);
+      // keep it compact-ish
+      if (s.length > 600) return s.slice(0, 600) + "…";
+      return s;
+    } catch {
+      return "";
+    }
+  };
+
+  const renderObserved = (observed) => {
+    const rows = observed.map(o => {
+      return \`
+        <tr>
+          <td>\${safe(o.observedAt)}</td>
+          <td>\${safe(o.checkId)}</td>
+          <td>\${safe(o.collectorId)}</td>
+          <td class="jsoncell">\${safeJsonInline(o.data)}</td>
+        </tr>\`;
+    }).join("");
+
+    $("observedBody").innerHTML =
+      rows || \`<tr><td colspan="4" class="muted">No observed checks yet</td></tr>\`;
+  };
 
   const filenameFromKey = (a) => {
     const k = (a && (a.key || a.uri)) || "";
@@ -358,7 +400,6 @@ app.get("/demo", async (_req, reply) => {
   };
 
   const renderArtefacts = (artefacts) => {
-    const safe = (v) => (v === null || v === undefined) ? "" : String(v);
     const rows = artefacts.map(a => {
       const filename = filenameFromKey(a);
       const href = "/artefacts/" + a.id + "/download";
@@ -381,32 +422,42 @@ app.get("/demo", async (_req, reply) => {
   };
 
   const startPolling = () => {
-  stopPolling();
-  pollTimer = setInterval(async () => {
-    if (!currentRunId) return;
-    try {
-      const [runRes, jobsRes, artefactsRes] = await Promise.all([
-        fetch("/runs/" + currentRunId),
-        fetch("/runs/" + currentRunId + "/jobs"),
-        fetch("/runs/" + currentRunId + "/artefacts")
-      ]);
+    stopPolling();
+    pollTimer = setInterval(async () => {
+      if (!currentRunId) return;
 
-      const run = await runRes.json();
-      const jobs = await jobsRes.json();
-      const artefacts = await artefactsRes.json();
+      try {
+        const [runRes, jobsRes, artefactsRes, observedRes] = await Promise.all([
+          fetch("/runs/" + currentRunId),
+          fetch("/runs/" + currentRunId + "/jobs"),
+          fetch("/runs/" + currentRunId + "/artefacts"),
+          fetch("/runs/" + currentRunId + "/observed-checks")
+        ]);
 
-      renderJobs(normalizeList(jobs));
-      renderArtefacts(normalizeList(artefacts));
+        const run = await runRes.json();
+        const jobs = await jobsRes.json();
+        const artefacts = await artefactsRes.json();
 
-      if (run && (run.status === "succeeded" || run.status === "failed")) {
-        stopPolling();
+        // Observed checks should never break the UI
+        let observed = [];
+        try {
+          if (observedRes && observedRes.ok) {
+            observed = normalizeList(await observedRes.json());
+          }
+        } catch { /* ignore */ }
+
+        renderJobs(normalizeList(jobs));
+        renderArtefacts(normalizeList(artefacts));
+        renderObserved(observed);
+
+        if (run && (run.status === "succeeded" || run.status === "failed")) {
+          stopPolling();
+        }
+      } catch (e) {
+        console.warn("poll failed", e);
       }
-    } catch (e) {
-      console.warn("poll failed", e);
-    }
-  }, 500);
-};
-
+    }, 500);
+  };
 
   $("clear").addEventListener("click", () => {
     stopPolling();
@@ -416,6 +467,7 @@ app.get("/demo", async (_req, reply) => {
     $("links").innerHTML = "";
     $("jobsBody").innerHTML = "";
     if ($("artefactsBody")) $("artefactsBody").innerHTML = "";
+    if ($("observedBody")) $("observedBody").innerHTML = "";
   });
 
   $("createRun").addEventListener("click", async () => {
@@ -440,7 +492,6 @@ app.get("/demo", async (_req, reply) => {
       }
     };
 
-
     const res = await fetch("/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -460,6 +511,7 @@ app.get("/demo", async (_req, reply) => {
       mkLink(\`/runs/\${runId}\`, \`GET /runs/\${runId}\`),
       mkLink(\`/runs/\${runId}/jobs\`, \`GET /runs/\${runId}/jobs\`),
       mkLink(\`/runs/\${runId}/findings\`, \`GET /runs/\${runId}/findings\`),
+      mkLink(\`/runs/\${runId}/observed-checks\`, \`GET /runs/\${runId}/observed-checks\`),
       mkLink(\`/runs/\${runId}/artefacts\`, \`GET /runs/\${runId}/artefacts\`)
     ].join("");
 
@@ -1082,6 +1134,27 @@ app.get("/runs/:runId/findings", async (req, reply) => {
   });
 
   return findings;
+});
+
+// --------------------
+// GET /runs/:runId/observed-checks
+// --------------------
+app.get("/runs/:runId/observed-checks", async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+
+  // Keep consistent with other run-scoped endpoints: validate run exists first
+  const runExists = await prisma.run.findUnique({
+    where: { id: runId },
+    select: { id: true }
+  });
+  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+
+  const observed = await prisma.observedCheck.findMany({
+    where: { runId },
+    orderBy: { observedAt: "asc" }
+  });
+
+  return observed;
 });
 
 // List artefacts for a run (includes bucket/key + jobId)

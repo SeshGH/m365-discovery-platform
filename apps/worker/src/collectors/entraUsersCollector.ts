@@ -17,6 +17,54 @@ type GraphUserFull = {
   createdDateTime?: string | null;
 };
 
+type ObservedCheckInput = {
+  checkId: string;
+  data: unknown;
+  references?: unknown; // stored as Json, usually [] or [{...}]
+};
+
+/**
+ * Record observed checks in an idempotent way.
+ * Since ObservedCheck has no unique constraint, we enforce idempotency by:
+ * - deleting existing rows for the same (runId, jobId, checkId)
+ * - inserting fresh rows
+ */
+async function recordObservedChecks(params: {
+  prisma: any;
+  runId: string;
+  jobId?: string | null;
+  collectorId: string;
+  checks: ObservedCheckInput[];
+}) {
+  const { prisma, runId, jobId, collectorId, checks } = params;
+
+  const checkIds = checks.map((c) => c.checkId);
+
+  // Idempotency: remove any prior observations from this same job/run for these checkIds
+  await prisma.observedCheck.deleteMany({
+    where: {
+      runId,
+      jobId: jobId ?? null,
+      checkId: { in: checkIds }
+    }
+  });
+
+  if (checks.length === 0) return;
+
+  await prisma.observedCheck.createMany({
+    data: checks.map((c) => ({
+      runId,
+      jobId: jobId ?? null,
+      checkId: c.checkId,
+      collectorId,
+      ruleId: null,
+      // observedAt uses default(now()) in schema
+      data: (c.data ?? {}) as any,
+      references: (c.references ?? []) as any
+    }))
+  });
+}
+
 export const entraUsersCollector: Collector = {
   id: "entra.users",
   displayName: "Entra Users",
@@ -51,6 +99,31 @@ export const entraUsersCollector: Collector = {
 
     const guests = inventoryUsers.filter((u) => (u.userType ?? "") === "Guest").length;
     const members = total - guests;
+
+    // -------------------------
+    // Observed checks (counts-only; safe-by-default)
+    // -------------------------
+    await recordObservedChecks({
+      prisma: ctx.prisma,
+      runId: ctx.run.id,
+      jobId: ctx.job?.id ?? null,
+      collectorId: entraUsersCollector.id,
+      checks: [
+        {
+          checkId: "ENTRA_USERS_OBS_001",
+          data: {
+            profile: dataProfile,
+            totalUsers: total,
+            enabledUsers: enabled,
+            disabledUsers: disabled,
+            memberUsers: members,
+            guestUsers: guests,
+            fullExported: includeSensitive
+          },
+          references: []
+        }
+      ]
+    });
 
     // Finding: Guest users present (counts only; safe-by-default)
     // Contract: stable checkId, small evidence, no inventory/PII.
