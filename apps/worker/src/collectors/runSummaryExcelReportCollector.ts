@@ -93,23 +93,14 @@ function tryParseJson<T>(
   }
 }
 
-/**
- * Avoids Excel cell overflow / huge JSON blobs.
- * Excel cell limit is 32,767 chars. We trim well below that.
- */
-function safeJsonCell(value: unknown, maxChars = 30000): string {
-  if (value === null || value === undefined) return "";
-
+// Keep JSON cells readable and bounded
+function safeJsonCell(v: unknown, maxLen = 1200): string {
   try {
-    const s =
-      typeof value === "string"
-        ? value
-        : JSON.stringify(value, null, 0) ?? String(value);
-
-    if (s.length <= maxChars) return s;
-    return s.slice(0, maxChars) + "…(truncated)";
-  } catch (e: any) {
-    return `<<unstringifiable: ${e?.message ? String(e.message) : String(e)}>>`;
+    const s = JSON.stringify(v ?? null);
+    if (s.length > maxLen) return s.slice(0, maxLen) + "...";
+    return s;
+  } catch {
+    return "";
   }
 }
 
@@ -379,17 +370,6 @@ export const runSummaryExcelReportCollector: Collector = {
       ws.addRow({ field: "findings.low", value: sevCounts.low });
       ws.addRow({ field: "findings.info", value: sevCounts.info });
       ws.addRow({ field: "findings.unknown", value: sevCounts.unknown });
-
-      // Optional: handy rollups if artefacts parsed
-      if (usersSummary) {
-        ws.addRow({ field: "users.totalUsers", value: usersSummary.totalUsers });
-        ws.addRow({ field: "users.guestUsers", value: usersSummary.guestUsers ?? "n/a" });
-      }
-      if (eapSummary) {
-        ws.addRow({ field: "eap.totalEnterpriseApps", value: eapSummary.totalEnterpriseApps });
-        ws.addRow({ field: "eap.riskyApps", value: eapSummary.riskyApps ?? "n/a" });
-        ws.addRow({ field: "eap.truncated", value: eapSummary.truncated ?? "n/a" });
-      }
     }
 
     // -------------------------
@@ -414,7 +394,7 @@ export const runSummaryExcelReportCollector: Collector = {
           collectorId: j.collectorId,
           status: j.status,
           attempts: j.attempts,
-          startedAt: iso((j as any).startedAt),
+          startedAt: iso((j as any).startedAt ?? j.lockedAt),
           endedAt: iso((j as any).endedAt),
           lockedBy: j.lockedBy ?? "",
           lockedAt: iso(j.lockedAt),
@@ -434,80 +414,88 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "severity", key: "severity", width: 12 },
         { header: "title", key: "title", width: 44 },
         { header: "description", key: "description", width: 90 },
-        { header: "resource", key: "resource", width: 60 },
-        { header: "details", key: "details", width: 90 }
+        { header: "recommendation", key: "recommendation", width: 90 },
+        { header: "evidence", key: "evidence", width: 90 },
+        { header: "references", key: "references", width: 70 },
+        { header: "createdAt", key: "createdAt", width: 26 }
       ];
 
       for (const f of findings) {
         ws.addRow({
-          checkId: (f as any).checkId,
-          severity: (f as any).severity,
-          title: (f as any).title,
-          description: (f as any).description,
-          resource: (f as any).resource,
-          details: (f as any).details
+          checkId: f.checkId,
+          severity: f.severity,
+          title: f.title,
+          description: f.description,
+          recommendation: (f as any).recommendation ?? "",
+          evidence: safeJsonCell((f as any).evidence, 1800),
+          references: safeJsonCell((f as any).references, 1200),
+          createdAt: iso(f.createdAt)
+        });
+      }
+
+      if (!findings.length) {
+        ws.addRow({
+          checkId: "status",
+          severity: "empty",
+          title: "",
+          description: "No findings for this run.",
+          recommendation: "",
+          evidence: "",
+          references: "",
+          createdAt: ""
         });
       }
     }
 
     // -------------------------
-    // Sheet 3b: Observed Checks
+    // Sheet 4: Observed Checks
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Observed Checks"));
 
       ws.columns = [
         { header: "observedAt", key: "observedAt", width: 26 },
+        { header: "checkId", key: "checkId", width: 28 },
         { header: "collectorId", key: "collectorId", width: 34 },
-        { header: "checkId", key: "checkId", width: 26 },
         { header: "jobId", key: "jobId", width: 28 },
-        { header: "ruleId", key: "ruleId", width: 18 },
-        { header: "data", key: "data", width: 90 },
-        { header: "references", key: "references", width: 60 }
+        { header: "ruleId", key: "ruleId", width: 22 },
+        { header: "data", key: "data", width: 110 },
+        { header: "references", key: "references", width: 90 }
       ];
 
-      if (!observedChecks.length) {
+      const sorted = [...observedChecks].sort((a: any, b: any) => {
+        const ta = new Date(a?.observedAt ?? 0).getTime();
+        const tb = new Date(b?.observedAt ?? 0).getTime();
+        return ta - tb;
+      });
+
+      for (const o of sorted as any[]) {
+        ws.addRow({
+          observedAt: iso(o.observedAt),
+          checkId: String(o.checkId ?? ""),
+          collectorId: String(o.collectorId ?? ""),
+          jobId: String(o.jobId ?? ""),
+          ruleId: String(o.ruleId ?? ""),
+          data: safeJsonCell(o.data, 2400),
+          references: safeJsonCell(o.references, 1200)
+        });
+      }
+
+      if (!sorted.length) {
         ws.addRow({
           observedAt: "",
-          collectorId: "status",
-          checkId: "no-observed-checks",
+          checkId: "status",
+          collectorId: "empty",
           jobId: "",
           ruleId: "",
-          data: "",
+          data: "No observed checks for this run.",
           references: ""
         });
-      } else {
-        // Deterministic ordering: observedAt asc, then collectorId/checkId
-        const sorted = [...observedChecks].sort((a: any, b: any) => {
-          const atA = a?.observedAt ? new Date(a.observedAt).getTime() : 0;
-          const atB = b?.observedAt ? new Date(b.observedAt).getTime() : 0;
-          if (atA !== atB) return atA - atB;
-
-          const ca = String(a?.collectorId ?? "");
-          const cb = String(b?.collectorId ?? "");
-          if (ca !== cb) return ca.localeCompare(cb);
-
-          const ia = String(a?.checkId ?? "");
-          const ib = String(b?.checkId ?? "");
-          return ia.localeCompare(ib);
-        });
-
-        for (const o of sorted as any[]) {
-          ws.addRow({
-            observedAt: iso(o.observedAt),
-            collectorId: String(o.collectorId ?? ""),
-            checkId: String(o.checkId ?? ""),
-            jobId: String(o.jobId ?? ""),
-            ruleId: String(o.ruleId ?? ""),
-            data: safeJsonCell(o.data),
-            references: safeJsonCell(o.references)
-          });
-        }
       }
     }
 
     // -------------------------
-    // Sheet 4: Artefacts
+    // Sheet 5: Artefacts
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Artefacts"));
@@ -531,10 +519,21 @@ export const runSummaryExcelReportCollector: Collector = {
           createdAt: iso(a.createdAt)
         });
       }
+
+      if (!artefacts.length) {
+        ws.addRow({
+          type: "status",
+          bucket: "empty",
+          key: "No artefacts for this run.",
+          sizeBytes: "",
+          hash: "",
+          createdAt: ""
+        });
+      }
     }
 
     // -------------------------
-    // Sheet 5: Users (Summary)
+    // Sheet 6: Users (Summary)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Users (Summary)"));
@@ -559,36 +558,16 @@ export const runSummaryExcelReportCollector: Collector = {
         });
       } else {
         ws.addRow({ field: "generatedAt", value: usersJson?.generatedAt ?? "", notes: "" });
-        ws.addRow({
-          field: "totalUsers",
-          value: usersSummary?.totalUsers ?? "n/a",
-          notes: ""
-        });
-        ws.addRow({
-          field: "enabledUsers",
-          value: usersSummary?.enabledUsers ?? "n/a",
-          notes: ""
-        });
-        ws.addRow({
-          field: "disabledUsers",
-          value: usersSummary?.disabledUsers ?? "n/a",
-          notes: ""
-        });
-        ws.addRow({
-          field: "memberUsers",
-          value: usersSummary?.memberUsers ?? "n/a",
-          notes: ""
-        });
-        ws.addRow({
-          field: "guestUsers",
-          value: usersSummary?.guestUsers ?? "n/a",
-          notes: ""
-        });
+        ws.addRow({ field: "totalUsers", value: usersSummary?.totalUsers ?? "n/a", notes: "" });
+        ws.addRow({ field: "enabledUsers", value: usersSummary?.enabledUsers ?? "n/a", notes: "" });
+        ws.addRow({ field: "disabledUsers", value: usersSummary?.disabledUsers ?? "n/a", notes: "" });
+        ws.addRow({ field: "memberUsers", value: usersSummary?.memberUsers ?? "n/a", notes: "" });
+        ws.addRow({ field: "guestUsers", value: usersSummary?.guestUsers ?? "n/a", notes: "" });
       }
     }
 
     // -------------------------
-    // Sheet 5b: Users (Full)  (FULL profile only)
+    // Sheet 6b: Users (Full)  (FULL profile only)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
@@ -644,17 +623,6 @@ export const runSummaryExcelReportCollector: Collector = {
         const users: any[] = Array.isArray((usersJson as any)?.users) ? (usersJson as any).users : [];
 
         if (!users.length) {
-          // Keep it explicit if the artefact exists but has no rows
-          ws.addRow({
-            id: "",
-            displayName: "",
-            userPrincipalName: "",
-            mail: "",
-            userType: "",
-            accountEnabled: "",
-            createdDateTime: ""
-          });
-          // Add a note row at the bottom
           ws.addRow({
             id: "status",
             displayName: "empty",
@@ -672,7 +640,8 @@ export const runSummaryExcelReportCollector: Collector = {
               userPrincipalName: String(u?.userPrincipalName ?? ""),
               mail: String(u?.mail ?? ""),
               userType: String(u?.userType ?? ""),
-              accountEnabled: u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
+              accountEnabled:
+                u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
               createdDateTime: String(u?.createdDateTime ?? "")
             });
           }
@@ -681,7 +650,7 @@ export const runSummaryExcelReportCollector: Collector = {
     }
 
     // -------------------------
-    // Sheet 6: Enterprise Apps (Permissions)
+    // Sheet 7: Enterprise Apps (Permissions)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Enterprise Apps (Perms)"));
@@ -691,8 +660,8 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
         { header: "applicationPermissions", key: "applicationPermissions", width: 24 }, // count
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 }, // count
-        { header: "riskyPermissions", key: "riskyPermissions", width: 16 }, // count
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 },     // count
+        { header: "riskyPermissions", key: "riskyPermissions", width: 16 },             // count
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
@@ -738,6 +707,18 @@ export const runSummaryExcelReportCollector: Collector = {
             delegatedPermissions: String(delPermCount),
             riskyPermissions: String(riskyCount),
             riskFlag: riskyCount > 0 ? "YES" : "NO"
+          });
+        }
+
+        if (!apps.length) {
+          ws.addRow({
+            displayName: "status",
+            appId: "empty",
+            accountEnabled: "",
+            applicationPermissions: "",
+            delegatedPermissions: "",
+            riskyPermissions: "No apps[] present in parsed JSON.",
+            riskFlag: "n/a"
           });
         }
       }
