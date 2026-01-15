@@ -93,6 +93,26 @@ function tryParseJson<T>(
   }
 }
 
+/**
+ * Avoids Excel cell overflow / huge JSON blobs.
+ * Excel cell limit is 32,767 chars. We trim well below that.
+ */
+function safeJsonCell(value: unknown, maxChars = 30000): string {
+  if (value === null || value === undefined) return "";
+
+  try {
+    const s =
+      typeof value === "string"
+        ? value
+        : JSON.stringify(value, null, 0) ?? String(value);
+
+    if (s.length <= maxChars) return s;
+    return s.slice(0, maxChars) + "…(truncated)";
+  } catch (e: any) {
+    return `<<unstringifiable: ${e?.message ? String(e.message) : String(e)}>>`;
+  }
+}
+
 type UsersInventoryJson = {
   generatedAt?: string;
   profile?: "safe" | "full";
@@ -207,7 +227,9 @@ function normalizeEapSummary(eapJson: any): NormalizedEapSummary {
       : apps.length;
 
   const scannedApps =
-    typeof summary.scannedApps === "number" ? summary.scannedApps : (apps.length ? apps.length : null);
+    typeof summary.scannedApps === "number"
+      ? summary.scannedApps
+      : (apps.length ? apps.length : null);
 
   const riskyApps =
     typeof summary.riskyApps === "number"
@@ -231,6 +253,7 @@ export const runSummaryExcelReportCollector: Collector = {
         tenant: true,
         jobs: true,
         findings: true,
+        observedChecks: true,
         artefacts: true
       }
     });
@@ -241,6 +264,7 @@ export const runSummaryExcelReportCollector: Collector = {
     const derivedStatus = deriveRunStatus(jobs);
 
     const findings = run.findings ?? [];
+    const observedChecks = run.observedChecks ?? [];
     const artefacts = run.artefacts ?? [];
 
     const sevCounts = {
@@ -318,12 +342,10 @@ export const runSummaryExcelReportCollector: Collector = {
     const usersSummary = usersJson ? normalizeUsersSummary(usersJson) : null;
     const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
 
-
     const wb = new ExcelJS.Workbook();
     wb.creator = "m365-discovery-platform";
     wb.created = new Date();
     wb.modified = new Date();
-
 
     // -------------------------
     // Sheet 1: Run Summary
@@ -348,6 +370,7 @@ export const runSummaryExcelReportCollector: Collector = {
 
       ws.addRow({ field: "jobs", value: jobs.length });
       ws.addRow({ field: "findings", value: findings.length });
+      ws.addRow({ field: "observedChecks", value: observedChecks.length });
       ws.addRow({ field: "artefacts", value: artefacts.length });
 
       ws.addRow({ field: "findings.critical", value: sevCounts.critical });
@@ -356,6 +379,17 @@ export const runSummaryExcelReportCollector: Collector = {
       ws.addRow({ field: "findings.low", value: sevCounts.low });
       ws.addRow({ field: "findings.info", value: sevCounts.info });
       ws.addRow({ field: "findings.unknown", value: sevCounts.unknown });
+
+      // Optional: handy rollups if artefacts parsed
+      if (usersSummary) {
+        ws.addRow({ field: "users.totalUsers", value: usersSummary.totalUsers });
+        ws.addRow({ field: "users.guestUsers", value: usersSummary.guestUsers ?? "n/a" });
+      }
+      if (eapSummary) {
+        ws.addRow({ field: "eap.totalEnterpriseApps", value: eapSummary.totalEnterpriseApps });
+        ws.addRow({ field: "eap.riskyApps", value: eapSummary.riskyApps ?? "n/a" });
+        ws.addRow({ field: "eap.truncated", value: eapSummary.truncated ?? "n/a" });
+      }
     }
 
     // -------------------------
@@ -380,8 +414,8 @@ export const runSummaryExcelReportCollector: Collector = {
           collectorId: j.collectorId,
           status: j.status,
           attempts: j.attempts,
-          startedAt: iso(j.startedAt),
-          endedAt: iso(j.endedAt),
+          startedAt: iso((j as any).startedAt),
+          endedAt: iso((j as any).endedAt),
           lockedBy: j.lockedBy ?? "",
           lockedAt: iso(j.lockedAt),
           lastError: j.lastError ?? ""
@@ -406,13 +440,69 @@ export const runSummaryExcelReportCollector: Collector = {
 
       for (const f of findings) {
         ws.addRow({
-          checkId: f.checkId,
-          severity: f.severity,
-          title: f.title,
-          description: f.description,
-          resource: f.resource,
-          details: f.details
+          checkId: (f as any).checkId,
+          severity: (f as any).severity,
+          title: (f as any).title,
+          description: (f as any).description,
+          resource: (f as any).resource,
+          details: (f as any).details
         });
+      }
+    }
+
+    // -------------------------
+    // Sheet 3b: Observed Checks
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Observed Checks"));
+
+      ws.columns = [
+        { header: "observedAt", key: "observedAt", width: 26 },
+        { header: "collectorId", key: "collectorId", width: 34 },
+        { header: "checkId", key: "checkId", width: 26 },
+        { header: "jobId", key: "jobId", width: 28 },
+        { header: "ruleId", key: "ruleId", width: 18 },
+        { header: "data", key: "data", width: 90 },
+        { header: "references", key: "references", width: 60 }
+      ];
+
+      if (!observedChecks.length) {
+        ws.addRow({
+          observedAt: "",
+          collectorId: "status",
+          checkId: "no-observed-checks",
+          jobId: "",
+          ruleId: "",
+          data: "",
+          references: ""
+        });
+      } else {
+        // Deterministic ordering: observedAt asc, then collectorId/checkId
+        const sorted = [...observedChecks].sort((a: any, b: any) => {
+          const atA = a?.observedAt ? new Date(a.observedAt).getTime() : 0;
+          const atB = b?.observedAt ? new Date(b.observedAt).getTime() : 0;
+          if (atA !== atB) return atA - atB;
+
+          const ca = String(a?.collectorId ?? "");
+          const cb = String(b?.collectorId ?? "");
+          if (ca !== cb) return ca.localeCompare(cb);
+
+          const ia = String(a?.checkId ?? "");
+          const ib = String(b?.checkId ?? "");
+          return ia.localeCompare(ib);
+        });
+
+        for (const o of sorted as any[]) {
+          ws.addRow({
+            observedAt: iso(o.observedAt),
+            collectorId: String(o.collectorId ?? ""),
+            checkId: String(o.checkId ?? ""),
+            jobId: String(o.jobId ?? ""),
+            ruleId: String(o.ruleId ?? ""),
+            data: safeJsonCell(o.data),
+            references: safeJsonCell(o.references)
+          });
+        }
       }
     }
 
@@ -498,97 +588,97 @@ export const runSummaryExcelReportCollector: Collector = {
     }
 
     // -------------------------
-// Sheet 5b: Users (Full)  (FULL profile only)
-// -------------------------
-{
-  const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
+    // Sheet 5b: Users (Full)  (FULL profile only)
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
 
-  // This sheet is intentionally PII-bearing and only emitted for full profile runs.
-  if (run.dataProfile !== "full") {
-    ws.columns = [
-      { header: "field", key: "field", width: 38 },
-      { header: "value", key: "value", width: 28 },
-      { header: "notes", key: "notes", width: 80 }
-    ];
+      // This sheet is intentionally PII-bearing and only emitted for full profile runs.
+      if (run.dataProfile !== "full") {
+        ws.columns = [
+          { header: "field", key: "field", width: 38 },
+          { header: "value", key: "value", width: 28 },
+          { header: "notes", key: "notes", width: 80 }
+        ];
 
-    ws.addRow({
-      field: "status",
-      value: "not-available",
-      notes: "Users (Full) is only generated when dataProfile is 'full'."
-    });
-  } else if (!usersArtefact) {
-    ws.columns = [
-      { header: "field", key: "field", width: 38 },
-      { header: "value", key: "value", width: 28 },
-      { header: "notes", key: "notes", width: 80 }
-    ];
-
-    ws.addRow({
-      field: "status",
-      value: "not-available",
-      notes: `${usersArtefactName} artefact was not present in this run.`
-    });
-  } else if (usersJsonError) {
-    ws.columns = [
-      { header: "field", key: "field", width: 38 },
-      { header: "value", key: "value", width: 28 },
-      { header: "notes", key: "notes", width: 80 }
-    ];
-
-    ws.addRow({
-      field: "status",
-      value: "error",
-      notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
-    });
-  } else {
-    ws.columns = [
-      { header: "id", key: "id", width: 38 },
-      { header: "displayName", key: "displayName", width: 28 },
-      { header: "userPrincipalName", key: "userPrincipalName", width: 36 },
-      { header: "mail", key: "mail", width: 30 },
-      { header: "userType", key: "userType", width: 12 },
-      { header: "accountEnabled", key: "accountEnabled", width: 14 },
-      { header: "createdDateTime", key: "createdDateTime", width: 22 }
-    ];
-
-    const users: any[] = Array.isArray((usersJson as any)?.users) ? (usersJson as any).users : [];
-
-    if (!users.length) {
-      // Keep it explicit if the artefact exists but has no rows
-      ws.addRow({
-        id: "",
-        displayName: "",
-        userPrincipalName: "",
-        mail: "",
-        userType: "",
-        accountEnabled: "",
-        createdDateTime: ""
-      });
-      // Add a note row at the bottom
-      ws.addRow({
-        id: "status",
-        displayName: "empty",
-        userPrincipalName: "",
-        mail: "",
-        userType: "",
-        accountEnabled: "",
-        createdDateTime: `No users[] were present in ${usersArtefactName}`
-      });
-    } else {
-      for (const u of users) {
         ws.addRow({
-          id: String(u?.id ?? ""),
-          displayName: String(u?.displayName ?? ""),
-          userPrincipalName: String(u?.userPrincipalName ?? ""),
-          mail: String(u?.mail ?? ""),
-          userType: String(u?.userType ?? ""),
-          accountEnabled: u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
-          createdDateTime: String(u?.createdDateTime ?? "")
+          field: "status",
+          value: "not-available",
+          notes: "Users (Full) is only generated when dataProfile is 'full'."
         });
+      } else if (!usersArtefact) {
+        ws.columns = [
+          { header: "field", key: "field", width: 38 },
+          { header: "value", key: "value", width: 28 },
+          { header: "notes", key: "notes", width: 80 }
+        ];
+
+        ws.addRow({
+          field: "status",
+          value: "not-available",
+          notes: `${usersArtefactName} artefact was not present in this run.`
+        });
+      } else if (usersJsonError) {
+        ws.columns = [
+          { header: "field", key: "field", width: 38 },
+          { header: "value", key: "value", width: 28 },
+          { header: "notes", key: "notes", width: 80 }
+        ];
+
+        ws.addRow({
+          field: "status",
+          value: "error",
+          notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
+        });
+      } else {
+        ws.columns = [
+          { header: "id", key: "id", width: 38 },
+          { header: "displayName", key: "displayName", width: 28 },
+          { header: "userPrincipalName", key: "userPrincipalName", width: 36 },
+          { header: "mail", key: "mail", width: 30 },
+          { header: "userType", key: "userType", width: 12 },
+          { header: "accountEnabled", key: "accountEnabled", width: 14 },
+          { header: "createdDateTime", key: "createdDateTime", width: 22 }
+        ];
+
+        const users: any[] = Array.isArray((usersJson as any)?.users) ? (usersJson as any).users : [];
+
+        if (!users.length) {
+          // Keep it explicit if the artefact exists but has no rows
+          ws.addRow({
+            id: "",
+            displayName: "",
+            userPrincipalName: "",
+            mail: "",
+            userType: "",
+            accountEnabled: "",
+            createdDateTime: ""
+          });
+          // Add a note row at the bottom
+          ws.addRow({
+            id: "status",
+            displayName: "empty",
+            userPrincipalName: "",
+            mail: "",
+            userType: "",
+            accountEnabled: "",
+            createdDateTime: `No users[] were present in ${usersArtefactName}`
+          });
+        } else {
+          for (const u of users) {
+            ws.addRow({
+              id: String(u?.id ?? ""),
+              displayName: String(u?.displayName ?? ""),
+              userPrincipalName: String(u?.userPrincipalName ?? ""),
+              mail: String(u?.mail ?? ""),
+              userType: String(u?.userType ?? ""),
+              accountEnabled: u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
+              createdDateTime: String(u?.createdDateTime ?? "")
+            });
+          }
+        }
       }
     }
-  }
-}
 
     // -------------------------
     // Sheet 6: Enterprise Apps (Permissions)
@@ -601,8 +691,8 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
         { header: "applicationPermissions", key: "applicationPermissions", width: 24 }, // count
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 },     // count
-        { header: "riskyPermissions", key: "riskyPermissions", width: 16 },             // count
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 }, // count
+        { header: "riskyPermissions", key: "riskyPermissions", width: 16 }, // count
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
@@ -663,6 +753,7 @@ export const runSummaryExcelReportCollector: Collector = {
         rows: {
           jobs: jobs.length,
           findings: findings.length,
+          observedChecks: observedChecks.length,
           artefacts: artefacts.length
         }
       },
