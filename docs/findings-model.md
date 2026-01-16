@@ -1,188 +1,218 @@
-# Findings Model (Contract, Taxonomy Guidance, and Future Extensions)
+# Findings Model
 
-This page defines the **standard model** used to describe Findings produced by collectors in the M365 Discovery Platform.
+This document defines the **standard model** for Findings produced by collectors in the M365 Discovery Platform.
 
-It has two parts:
+A Finding is an **interpreted signal** (risk, gap, misconfiguration, governance issue, or meaningful scoping complexity driver).
+It is **not** an inventory record.
 
-1. **Implemented contract (today):** the fields and severity values the platform currently persists and exposes via the API.
-2. **Taxonomy guidance (future-facing):** additional classification concepts we intend to adopt over time, without implying they exist yet.
-
-The goal is to ensure findings are:
-- **Decision-ready** (prioritised and explainable)
-- **Consistent** across collectors and over time
-- **Future-proof** for UI, reporting, and automation
-- **Secure-by-design** (clear risk communication and defensible outputs)
-
-This document is intentionally practical: it describes what each field means and how to apply it consistently.
+Observed checks are related but separate: they capture **facts without judgement**. See `docs/findings-observed-checks.md`.
 
 ---
 
 ## Findings are signals, not inventory
 
-A Finding is an **interpreted signal** (risk, gap, misconfiguration, governance issue, or meaningful scoping complexity driver).
-
-Inventory should not be encoded as Findings.
-
 Examples of **inventory (not findings)**:
-- “User exists”
-- “Mailbox exists”
-- “100 SharePoint sites exist”
 
-Those belong in **artefacts** as inventories/reports, with **summary** counts used by scoping lenses.
+* “User exists”
+* “Mailbox exists”
+* “100 SharePoint sites exist”
+
+These belong in **artefacts** (inventories/exports), with **summary counts** used by scoping/reporting.
 
 Examples of **signals (good findings)**:
-- “Enterprise app has high-privilege Graph permissions”
-- “Audit retention too low to support investigation”
-- “Privileged roles assigned to daily-use accounts”
-- “Guest users present with no lifecycle controls”
-- “Scan truncated; results may be incomplete” (data completeness signal, often demo-only)
 
-This rule keeps the Findings view decision-ready and reduces noise as coverage grows.
+* “Enterprise app has high-privilege Graph permissions”
+* “Audit retention too low to support investigation”
+* “Privileged roles assigned to daily-use accounts”
+* “Guest users present with no lifecycle controls”
+* “Scan truncated; results may be incomplete” (data completeness signal, often demo-only)
+
+This rule keeps Findings decision-ready and prevents the UI/report from becoming noise as coverage grows.
 
 ---
 
-## Implemented contract (current behaviour)
+## Data model and contract
 
-### Core finding fields (today)
+The platform persists Findings in Postgres via Prisma (`Finding` model in `packages/db/prisma/schema.prisma`).
 
-Findings currently persist and are exposed by the API with the following fields:
+There are **two important shapes** to understand:
 
-- `checkId` — stable identifier for the check/signal (contract)
-- `severity` — impact rating (see ladder below)
-- `title` — short human-readable summary
-- `description` — explanation of what was detected and why it matters
-- `recommendation` — suggested remediation / next action
-- `evidence` — short supporting details (must not be a large payload)
-- `references` — optional links/notes for further reading (if present)
-- `runId` / `jobId` — traceability to run and producing job
-- `createdAt` — timestamp
+1. **Persisted shape (DB contract):** what we store.
+2. **API shape (v1 contract):** what endpoints currently return.
 
-**Rule:** Findings must remain **small and readable**. Large inventories and raw evidence belong in artefacts.
+### Persisted fields (DB)
 
-### Stable Check IDs (contract)
+Persisted fields are intended to be stable over time.
+
+* `id` — primary key
+* `runId` — owning run
+* `jobId` — producing job (nullable)
+* `checkId` — stable identifier for the check/signal (**contract**)
+* `ruleId` — optional mapping to a future rule engine (nullable)
+
+Classification / lifecycle (stored today; not all are surfaced by the v1 API yet):
+
+* `category` — broad area (see Category)
+* `severity` — impact ladder (see Severity)
+* `confidence` — credibility ladder (see Confidence)
+* `status` — lifecycle state (see Status)
+* `score` — optional numeric score for sorting/trending
+
+Human-readable fields:
+
+* `title` — short summary
+* `description` — what was detected and why it matters
+* `recommendation` — suggested next action/remediation (nullable)
+
+Supporting context:
+
+* `evidence` — small JSON supporting details (must not be a large payload)
+* `references` — optional JSON list of links/notes for further reading
+
+Timestamps:
+
+* `createdAt`
+* `updatedAt`
+
+**Rule:** Findings must remain **small and readable**. Large evidence and inventories belong in artefacts.
+
+### API fields (v1)
+
+Current run-scoped endpoints intentionally return a **minimal** finding payload suitable for UI and reports.
+
+As of today, `GET /runs/:runId/findings` returns (subset):
+
+* `id`, `runId`, `jobId`
+* `checkId`, `severity`
+* `title`, `description`, `recommendation`
+* `evidence`, `references`
+* `createdAt`
+
+Category / confidence / status / score are **stored** but are not currently guaranteed to be present in v1 API responses.
+
+---
+
+## Stable check IDs (contract)
 
 `checkId` values are treated as stable contracts.
 
 Rules:
-- A `checkId` must never change meaning once shipped.
-- Prefer predictable, namespaced IDs.
+
+* A `checkId` must **never change meaning** once shipped.
+* Prefer predictable, namespaced IDs.
 
 Current implemented examples:
-- `ENTRA_EAP_001` — high-privilege Graph permissions detected
-- `ENTRA_EAP_002` — scan truncated (results may be incomplete)
+
+* `ENTRA_USERS_001` — guest users present
+* `ENTRA_EAP_001` — high-privilege Graph permissions detected
+* `ENTRA_EAP_002` — scan truncated (results may be incomplete)
 
 Recommended format:
-- `{DOMAIN}_{AREA}_{NNN}` (e.g. `ENTRA_EAP_003`)
 
-### Severity (contract)
+* `{DOMAIN}_{AREA}_{NNN}` (e.g. `ENTRA_EAP_003`)
 
-Severity answers:
-> “If ignored, how bad could this realistically be?”
-
-Severity is impact-based (not confidence).
-
-**Severity ladder (supported by reporting today)**
-- `info` — worth knowing; no meaningful risk on its own
-- `low` — minor weakness / defence-in-depth improvement
-- `medium` — legitimate concern; should be planned and addressed
-- `high` — serious exposure if abused; prioritise remediation
-- `critical` — direct compromise path or tenant-wide high-impact risk
-- `unknown` — only if impact cannot be determined (should be rare)
-
-**Guidance**
-- Avoid overusing `unknown`. If you have enough evidence to raise a finding, you usually have enough to classify impact.
-- Do not encode inventory as `info` findings long-term; use artefacts + summaries instead.
+The authoritative list of implemented finding IDs lives in `docs/findings-registry.md`.
 
 ---
 
-## Taxonomy guidance (future-facing; not necessarily implemented yet)
+## Severity (contract)
 
-The concepts in this section are **intended direction**. They may be implemented later via:
-- additional persisted fields,
-- derived classification from `checkId`,
-- or UI-layer grouping rules.
+Severity answers:
 
-Until implemented, they must not be assumed to exist in API payloads.
+> “If ignored, how bad could this realistically be?”
 
-### Category (future-facing)
+Severity is **impact-based** (not confidence).
 
-**Purpose:** grouping, filtering, ownership, roadmap coverage.
+Supported ladder:
 
-Category answers:
-> “What area of M365 does this relate to?”
-
-Suggested category set (keep stable and not overly granular):
-- `identity`
-- `access`
-- `application_permissions`
-- `tenant_configuration`
-- `audit_and_logging`
-- `data_protection`
-- `device_management`
-- `data_completeness` (for truncation/partial coverage signals)
-
-Mapping guidance:
-- `ENTRA_EAP_*` generally maps to `application_permissions`
-- truncation/partial scan findings (like `ENTRA_EAP_002`) map to `data_completeness`
-
-### Confidence (future-facing)
-
-**Purpose:** credibility, reducing false positives, review workflows.
-
-Confidence answers:
-> “How sure are we that this is actually a problem?”
-
-Suggested levels:
-- `high` — direct, authoritative evidence
-- `medium` — reasonable inference with good evidence but some assumptions
-- `low` — heuristic / incomplete telemetry / higher false-positive risk
+* `info` — worth knowing; no meaningful risk on its own
+* `low` — minor weakness / defence-in-depth improvement
+* `medium` — legitimate concern; should be planned and addressed
+* `high` — serious exposure if abused; prioritise remediation
+* `critical` — direct compromise path or tenant-wide high-impact risk
+* `unknown` — only if impact cannot be determined (should be rare)
 
 Guidance:
-- Do not inflate confidence to justify severity.
-- A `critical` finding can be low confidence if evidence is incomplete (treat carefully in UI/reporting).
 
-### Status (future-facing)
+* Avoid overusing `unknown`.
+* Do not encode inventory as `info` findings long-term; use artefacts + summaries instead.
 
-**Purpose:** operational lifecycle tracking across repeat runs.
+---
 
-Suggested statuses:
-- `open`
-- `acknowledged`
-- `resolved`
-- `false_positive`
+## Category (stored)
+
+Category is used for grouping/filtering and long-term coverage tracking.
+
+Suggested set (keep stable and not overly granular):
+
+* `identity`
+* `access`
+* `application_permissions`
+* `tenant_configuration`
+* `audit_and_logging`
+* `data_protection`
+* `device_management`
+* `other`
+
+Note: “data completeness” style signals (e.g. truncation) currently map to `other` in the schema. If we want a dedicated category later, that must be a deliberate schema + documentation change.
+
+---
+
+## Confidence (stored)
+
+Confidence answers:
+
+> “How sure are we that this is actually a problem?”
+
+* `high` — direct, authoritative evidence
+* `medium` — reasonable inference with good evidence but some assumptions
+* `low` — heuristic / incomplete telemetry / higher false-positive risk
+
+Guidance:
+
+* Do not inflate confidence to justify severity.
+* A `critical` finding can be low confidence if evidence is incomplete (treat carefully in UI/reporting).
+
+---
+
+## Status (stored)
+
+Status is the lifecycle state for operational tracking over time:
+
+* `open`
+* `acknowledged`
+* `resolved`
+* `false_positive`
 
 Status records human/operational decisions; it must not change the underlying evidence.
 
-### Numeric score (future-facing)
+---
+
+## Score (stored, optional)
 
 Severity is designed for humans. A numeric score supports sorting and trending.
 
-Suggested initial derived mapping:
-- `info` → 0
-- `low` → 20
-- `medium` → 50
-- `high` → 80
-- `critical` → 100
+If we introduce a standard scoring mapping, it must be:
 
-Optional adjustments (later):
-- confidence adjustment (e.g. low confidence −10)
-- scope adjustment (e.g. tenant-wide +10)
+* simple
+* explainable
+* documented
 
-Guidance:
-- Keep scoring rules simple and explainable.
-- “Clever” scoring should come later once you have enough data to validate it.
+Until then, treat `score` as optional and do not assume it exists.
 
 ---
 
 ## Writing good findings
 
 Collectors should aim to produce findings that are:
-- **Clear** (human-readable title/summary)
-- **Evidence-based** (include key supporting details)
-- **Actionable** (recommend remediation where appropriate)
-- **Non-invasive** (avoid leaking sensitive data into findings)
+
+* **Clear** (human-readable title)
+* **Evidence-based** (include key supporting details)
+* **Actionable** (recommendation where appropriate)
+* **Non-invasive** (avoid leaking sensitive data into findings)
 
 A good mental model:
-- Severity = how much it’s on fire
-- Evidence = why we think it’s on fire
-- Recommendation = what to do about it
+
+* Severity = how much it’s on fire
+* Evidence = why we think it’s on fire
+* Recommendation = what to do about it

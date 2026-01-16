@@ -81,14 +81,14 @@ model Tenant {
 }
 
 model Run {
-  id             String    @id @default(cuid())
-  tenantId       String
-  status         RunStatus @default(queued)
-  startedAt      DateTime?
-  endedAt        DateTime?
-  toolVersion    String    @default("0.1.0")
-  triggeredBy    String?
-  modulesEnabled Json      @default("{}")
+  id          String    @id @default(cuid())
+  tenantId    String
+  status      RunStatus @default(queued)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  toolVersion String    @default("0.1.0")
+  triggeredBy String?
+  modulesEnabled Json   @default("{}")
 
   /// Data profile for the run
   /// - "safe": summary-only, no PII-heavy artefacts (default)
@@ -173,6 +173,10 @@ model Finding {
 /// Observed checks are NOT findings.
 /// They store "what was observed" without forcing a pass/fail judgement.
 /// The semantic registry for observed checkIds lives in docs/findings-observed-checks.md
+///
+/// Query patterns we optimize for:
+/// - list observed checks for a run: WHERE runId ORDER BY observedAt
+/// - slice within a run by collectorId/checkId
 model ObservedCheck {
   id String @id @default(cuid())
 
@@ -200,12 +204,18 @@ model ObservedCheck {
   run Run  @relation(fields: [runId], references: [id], onDelete: Cascade)
   job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
+  // Single-column indexes (useful generally)
   @@index([runId])
   @@index([jobId])
   @@index([checkId])
   @@index([collectorId])
   @@index([ruleId])
   @@index([observedAt])
+
+  // Composite indexes (match real access patterns)
+  @@index([runId, observedAt])
+  @@index([runId, collectorId])
+  @@index([runId, checkId])
 }
 
 model Artefact {

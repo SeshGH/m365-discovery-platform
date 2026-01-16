@@ -1,19 +1,19 @@
-# Collectors (Contract, Behaviour, and Design Rules)
+# Collectors
 
-> **Authoritative contract:** Stable rules for artefact naming, storage keys, safe/full emission, and report expectations live in:
+> **Authoritative contracts** (stable and versioned):
 >
-> - `docs/artefact-and-report-contracts.md`
+> * `docs/artefact-and-report-contracts.md` (artefact naming, keys, storage rules, report expectations)
+> * `docs/runs-and-jobs.md` (run/job lifecycle, orchestration rules)
 >
-> This document defines collector behaviour and design rules, but must not redefine artefact/report contracts.
+> This page describes **collector behaviour** and how we keep outputs consistent. It must not redefine artefact/report contracts.
 
 Collectors are worker-executed modules that gather Microsoft 365 / Entra telemetry and produce:
 
-- **Findings** (decision-ready signals: risks, gaps, misconfigurations, notable scoping complexity)
-- **Artefacts** (evidence payloads: inventories, reports, raw/structured exports)
+* **Observed checks** (preferred pattern): factual observations, no judgement
+* **Findings**: decision-ready signals (severity + recommendation)
+* **Artefacts**: evidence payloads (inventories / exports / derived reports)
 
 Collectors never run inside the API. They run in the **worker** and persist outputs via Prisma.
-
-This document defines the **collector contract** and the rules we use to keep outputs consistent, safe, and useful.
 
 ---
 
@@ -21,180 +21,208 @@ This document defines the **collector contract** and the rules we use to keep ou
 
 Collectors must produce outputs that are:
 
-- **Consistent** (stable schema over time)
-- **Explainable** (humans can interpret results)
-- **Composable** (UI + reporting can aggregate across collectors)
-- **Secure-by-design** (least privilege; avoid sensitive leakage by default)
-- **Scoping-friendly** (inventory + complexity signals, not just security posture)
+* **Consistent** (stable shapes and IDs over time)
+* **Explainable** (humans can interpret results)
+* **Composable** (UI + reporting can aggregate across collectors)
+* **Secure-by-design** (least privilege; avoid sensitive leakage by default)
+* **Scoping-friendly** (inventory + complexity signals, not just posture)
 
 ---
 
 ## Execution model (high level)
 
-1. A **Run** is created (API) with a set of enabled modules/collectors.
-2. The API enqueues **Jobs** for those collectors.
-3. The worker dequeues jobs, executes collectors, and persists:
-   - Findings (via Prisma)
-   - Artefacts (uploaded to object storage + recorded in DB)
-   - Job status, timing, and error information
+1. A **Run** is created via the API (modules enabled + `dataProfile`).
+2. The API enqueues one or more **Jobs** for the run.
+3. The worker polls jobs, executes collectors, and persists:
 
-Collectors do not manage orchestration, retries, or concurrency directly.
+   * observed checks
+   * findings
+   * artefacts (uploaded to object storage + recorded in DB)
+   * job status/timing/errors
 
-Those concerns are owned by the **worker and run/job model**:
-- see **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**
+Collectors do **not** manage orchestration, retries, or concurrency directly.
 
 ---
 
 ## Collector interface (contract)
 
-Collectors implement the `Collector` interface and return a `CollectorResult` with this shape:
+Collectors implement `Collector` and return a `CollectorResult`:
 
-- `id` — collector identifier (must match the registered collector id)
-- `status` — `"ok" | "warning" | "error"`
-- `summary` — small, human-friendly summary (counts, flags)
-- `data` — optional structured data (avoid large payloads)
-- `artefacts` — optional downloadable outputs
+* `id` — collector identifier (must match the registered collector id)
+* `summary` — small, stable summary (counts/flags)
+* `artefacts` — optional downloadable outputs
+* may emit findings/observed checks via Prisma within execution
 
 Rules:
-- `id` **must** equal the collector’s registered ID (e.g. `entra.users`)
-- `summary` should be small and stable
-- `data` should not contain large inventories
-- inventory-style outputs should be artefacts
-- throw errors for unexpected conditions (job will fail / retry)
+
+* `id` **must** equal the collector’s registered ID (e.g. `entra.users`).
+* `summary` must stay small and stable.
+* Large inventories must be emitted as artefacts (not embedded into findings).
+* Fail cleanly and write a useful `lastError` when failing.
 
 ---
 
-## Findings vs Artefacts
+## Data profile handling (safe vs full)
+
+Runs have a `dataProfile`:
+
+* **`safe`** (default): summary-only, low-impact, avoids PII-heavy exports.
+* **`full`**: explicit opt-in for sensitive inventories/exports.
+
+Collector responsibilities:
+
+* Treat unknown values as `safe`.
+* Make safe/full behaviour **explicit** (do not infer).
+* Where artefact output differs, use profile-specific filenames (`*.safe.json`, `*.full.json`) or documented legacy naming.
+
+See also:
+
+* `docs/collector-hardening-checklist.md`
+
+---
+
+## Observed checks vs findings
+
+### Observed checks (preferred)
+
+Observed checks store **what was observed** without asserting compliance, severity, or remediation.
+
+* Stable identifiers are **contracts**.
+* The semantic registry for observed checks is:
+
+  * `docs/findings-observed-checks.md`
+
+Observed checks are exposed via:
+
+* `GET /runs/:runId/observed-checks`
 
 ### Findings
 
-Use findings for **signals** that are:
+Findings are **interpreted signals** intended to be decision-ready.
 
-- Prioritisable (severity, confidence, score)
-- Actionable (recommendation)
-- Comparable across runs
-- Useful to surface prominently in the UI
+* `checkId` values are **stable contracts**.
+* Implemented findings live in:
 
-Examples:
-- Enterprise app has high-privilege Graph permissions
-- Too many Global Admins
-- Audit retention below recommended minimum
+  * `docs/findings-registry.md`
 
----
+Model guidance:
 
-### Artefacts
-
-Use artefacts for **evidence** or **inventory** that is:
-
-- Large or multi-record
-- Useful to download
-- Supports findings
-- Useful for scoping and effort estimation
-
-Examples:
-- Enterprise app permissions export (JSON)
-- Users inventory
-- Run summary exports (CSV/XLSX)
-
-Artefacts may be:
-- **summary-level** (safe by default), or
-- **sensitive** (explicitly enabled, may contain PII)
+* `docs/findings-model.md`
 
 ---
 
-## Scoping vs Security (two lenses)
+## Artefacts (evidence layer)
 
-The platform intentionally supports two complementary lenses:
+Artefacts are the evidence and inventory layer:
 
-### Security assessment lens
-- Focus: risk, misconfiguration, hardening opportunities
-- Output: high-value findings with severity, confidence, recommendations
+* downloadable outputs stored in object storage
+* referenced from DB (`bucket`, `key`, etc.)
 
-### Scoping / effort estimation lens (primary driver)
-- Focus: what exists, scale, complexity, migration or take-on effort
-- Output: inventories and “complexity driver” signals
+Rules:
 
-A single collector may:
-- emit one or more artefacts (inventory/report)
-- emit a small number of findings that act as complexity or governance signals
+* filenames/keys/JSON shapes are treated as **contracts**
+* reports must keep working even if some inputs are missing/unparseable
 
----
+See:
 
-## Design rules (must-follow)
-
-1. **Least privilege**
-   - Request only required Microsoft Graph permissions
-   - Prefer read-only scopes
-
-2. **Avoid sensitive leakage by default**
-   - Do not store secrets or tokens
-   - Avoid embedding PII in findings
-   - Emit sensitive inventories only when explicitly enabled
-
-3. **Stable identifiers**
-   - Use stable `collectorId` values (e.g. `entra.users`)
-   - Use stable `checkId` values (e.g. `ENTRA_EAP_001`)
-   - Do not change the meaning of existing IDs once shipped
-
-4. **Avoid findings spam**
-   - Inventory collectors should not emit hundreds of low-value `info` findings long-term
-   - Prefer artefacts + summary rollups
-
-5. **Artefacts are the evidence layer**
-   - Findings should reference evidence conceptually
-   - Avoid duplicating large or sensitive datasets into findings
-
-6. **Treat contracts as stable**
-   - Collector IDs, artefact keys, and exported report schema are treated as contracts
-   - If a contract must change, document it and version it deliberately
+* `docs/artefacts.md`
+* `docs/artefact-and-report-contracts.md`
 
 ---
 
-## Report collectors (current iteration)
+## Reporting collectors
 
-Report collectors are normal worker collectors whose purpose is to export **derived views** over a run.
+Report collectors are normal collectors whose purpose is to export **derived views** over a run.
 
 Current report collector IDs:
-- `report.runSummary.csv` → uploads `run-summary.csv`
-- `report.runSummary.xlsx` → uploads `run-summary.xlsx`
 
-Important notes:
+* `report.runSummary.csv` → uploads `run-summary.csv`
+* `report.runSummary.xlsx` → uploads `run-summary.xlsx`
 
-- Reports are **derived artefacts**, not sources of truth.
-- Report collectors may be picked up before other jobs complete in a concurrent worker model.
-- Correctness is enforced by **retry-until-complete semantics**, not execution order.
+Important:
 
-The canonical description of this behaviour lives in:
-- **[`docs/runs-and-jobs.md`](./runs-and-jobs.md)**
-
-Collectors themselves do **not** coordinate with each other.
+* Reports are **derived artefacts**, not sources of truth.
+* Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOrThrow`).
 
 ---
 
 ## Current collectors (implemented)
 
-- `entra.users`
-  - Artefact: users inventory (JSON)
-  - Findings: user/audit signals as implemented
+### `entra.users`
 
-- `entra.enterpriseApps.permissions`
-  - Artefact: enterprise app permissions export (JSON)
-  - Findings:
-    - `ENTRA_EAP_001` high-privilege Graph permissions detected
-    - `ENTRA_EAP_002` scan truncated (results may be incomplete)
+**Purpose**
 
-- `entra.auth.test`
-  - Purpose: validates app-only Graph access and updates tenant auth state
-  - Artefacts: none
-  - Findings: none (status is expressed via `TenantAuth`)
+* Collects user summary (safe) and optional richer inventory (full).
+
+**Observed checks (current)**
+
+* `ENTRA_USERS_OBS_001` — user counts summary (total/member/guest/enabled/disabled + profile + fullExported)
+
+**Findings (current)**
+
+* `ENTRA_USERS_001` — Guest users present (severity: `info`)
+
+**Artefacts (current)**
+
+* Users inventory JSON (profile-aware candidates consumed by reporting):
+
+  * `users-inventory.json` (legacy)
+  * `users-inventory.safe.json`
+  * `users-inventory.full.json`
 
 ---
 
-## Roadmap expectations
+### `entra.enterpriseApps.permissions`
 
-As the platform evolves:
-- collectors provide stable summaries
-- inventories live in artefacts
-- findings remain decision-focused
-- reports remain views over stored evidence
-- orchestration stays outside collector logic
+**Purpose**
+
+* Scans enterprise applications and captures permissions shape and a bounded “risky” signal.
+
+**Observed checks (current)**
+
+* `ENTRA_EAP_OBS_001` — scan summary (total apps, scanned apps, risky apps count, truncated flag, maxApps, profile)
+
+**Findings (current)**
+
+* `ENTRA_EAP_001` — High-privilege Graph permissions detected (severity: `high`)
+* `ENTRA_EAP_002` — Scan truncated (results may be incomplete) (severity: `info`, often demo guardrails)
+
+**Artefacts (current)**
+
+* Enterprise app permissions JSON (profile-aware candidates consumed by reporting):
+
+  * `enterprise-app-permissions.json` (legacy)
+  * `enterprise-app-permissions.safe.json`
+  * `enterprise-app-permissions.full.json`
+
+---
+
+### `entra.auth.test`
+
+**Purpose**
+
+* Validates app-only Graph access and updates tenant auth state.
+
+**Observed checks**
+
+* None (current)
+
+**Findings**
+
+* None (status is expressed via `TenantAuth`)
+
+**Artefacts**
+
+* None
+
+---
+
+## Definition of done
+
+A collector is considered **done** when:
+
+* it meets `docs/collector-hardening-checklist.md`
+* it runs cleanly for `safe` and `full`
+* it produces stable artefacts and/or stable observed checks
+* it does not break reporting if inputs are missing/unparseable
+* it is documented here (and any new IDs are registered)
