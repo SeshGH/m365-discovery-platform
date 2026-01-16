@@ -148,7 +148,7 @@ type EnterpriseAppPermissionsJson = {
     appId?: string;
     displayName?: string;
     servicePrincipalId?: string;
-    // Note: this matches the existing report collector’s expected shape
+    // Note: this matches the existing report collector's expected shape
     applicationPermissions?: string[];
     delegatedPermissions?: string[];
     risky?: string[];
@@ -235,6 +235,7 @@ function normalizeEapSummary(eapJson: any): NormalizedEapSummary {
 
 export const runSummaryExcelReportCollector: Collector = {
   id: "report.runSummary.xlsx",
+  displayName: "Run Summary (Excel)",
   async run(ctx) {
     await assertReportReadyOrThrow({ prisma: ctx.prisma, runId: ctx.run.id });
 
@@ -370,6 +371,21 @@ export const runSummaryExcelReportCollector: Collector = {
       ws.addRow({ field: "findings.low", value: sevCounts.low });
       ws.addRow({ field: "findings.info", value: sevCounts.info });
       ws.addRow({ field: "findings.unknown", value: sevCounts.unknown });
+
+      // Optional: surface artefact parsing summaries (handy for debugging)
+      if (usersSummary) {
+        ws.addRow({ field: "users.total", value: usersSummary.totalUsers });
+        ws.addRow({ field: "users.guest", value: usersSummary.guestUsers ?? "" });
+      } else if (usersJsonError) {
+        ws.addRow({ field: "users.parseError", value: usersJsonError });
+      }
+
+      if (eapSummary) {
+        ws.addRow({ field: "eap.totalEnterpriseApps", value: eapSummary.totalEnterpriseApps });
+        ws.addRow({ field: "eap.riskyApps", value: eapSummary.riskyApps ?? "" });
+      } else if (eapJsonError) {
+        ws.addRow({ field: "eap.parseError", value: eapJsonError });
+      }
     }
 
     // -------------------------
@@ -660,8 +676,8 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
         { header: "applicationPermissions", key: "applicationPermissions", width: 24 }, // count
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 },     // count
-        { header: "riskyPermissions", key: "riskyPermissions", width: 16 },             // count
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 }, // count
+        { header: "riskyPermissions", key: "riskyPermissions", width: 16 }, // count
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
