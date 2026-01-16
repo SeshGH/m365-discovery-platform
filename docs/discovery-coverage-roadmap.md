@@ -1,13 +1,13 @@
 ﻿# Discovery Coverage & Roadmap
 
-This document defines the **intended discovery coverage**, **output lenses**, and **evolution path** of the M365 Discovery Platform.
+This document defines the **implemented discovery coverage**, **output layers**, and **evolution path** of the M365 Discovery Platform.
 
 It exists to:
 
 * capture architectural intent
+* distinguish *implemented behaviour* from *future-facing direction*
 * prevent scope drift
-* provide a shared reference for future development and discussion
-* document why certain collectors and outputs exist (or are planned)
+* provide a shared reference for contributors, reviewers, and stakeholders
 
 This is a **capability roadmap**, not an implementation backlog.
 
@@ -17,22 +17,24 @@ This is a **capability roadmap**, not an implementation backlog.
 
 The platform is a **discovery engine**, not a report generator.
 
-It collects **facts** (artefacts), derives **signals** (findings), and presents multiple views (lenses) over the same evidence depending on the use case.
+It collects **facts**, persists them as evidence, derives **signals**, and exposes multiple **views (lenses)** over the same underlying data.
 
 Security posture is one output — not the only one.
 
 ---
 
-## Discovery layers
+## Discovery layers (authoritative mental model)
 
-### 1) Artefacts (evidence layer)
+The platform is intentionally layered. Each layer has a clear responsibility and contract.
+
+### 1) Artefacts — evidence layer (implemented)
 
 Artefacts are:
 
-* raw, machine-readable outputs (JSON, CSV, XLSX, ZIP, etc.)
+* raw or structured outputs (JSON, CSV, XLSX, ZIP)
 * immutable per run/job
 * directly traceable to a specific job and run
-* suitable for validation, debugging, audit, and downstream processing
+* suitable for validation, audit, debugging, and downstream processing
 
 Artefacts answer:
 
@@ -43,289 +45,277 @@ Authoritative contracts:
 * `docs/artefact-and-report-contracts.md`
 * `docs/artefacts.md` (overview; defers to contracts)
 
+Artefacts are **the evidence layer**. All higher layers must be defensible against them.
+
 ---
 
-### 2) Findings (interpretation layer)
+### 2) Observed checks — factual signals layer (implemented)
 
-Findings are:
+Observed checks capture **what was observed** without judgement.
 
-* small, decision-ready signals
-* human-readable and prioritised by severity
-* traceable to a run and producing job
+They are:
 
-They answer:
+* factual
+* non-opinionated
+* stable and repeatable
+* explicitly *not* pass/fail
+
+Observed checks answer:
+
+> “What state did we actually see?”
+
+Key properties:
+
+* Each observed check has a **stable `checkId` contract**.
+* Observed checks do **not**:
+
+  * assign severity
+  * make recommendations
+  * imply compliance or non-compliance
+
+Observed checks are the **preferred pattern** for new collectors.
+
+Semantic registry (source of truth):
+
+* `docs/findings-observed-checks.md`
+
+Observed checks are persisted and exposed via the API and are consumed by:
+
+* reporting
+* future scoring engines
+* future rules and interpretation layers
+* UI visualisation
+
+---
+
+### 3) Findings — interpretation layer (implemented contract + future extensions)
+
+Findings are **interpreted signals** derived from artefacts and/or observed checks.
+
+They are:
+
+* small
+* decision-ready
+* human-readable
+* prioritised by severity
+
+Findings answer:
 
 > “What does this mean, and how important is it?”
 
-Important:
+Important distinctions:
 
-* The platform’s **implemented** findings contract today includes `checkId`, `severity`, and descriptive fields.
-* Additional taxonomy concepts (category/confidence/status/score) are **future-facing** and must not be assumed to exist in API payloads until implemented.
+* The **implemented findings contract today** includes:
 
-The findings model is defined in:
+  * `checkId`
+  * `severity`
+  * descriptive fields (title, description, recommendation, evidence, references)
+* Additional taxonomy concepts (category, confidence, status, numeric score) are **future-facing** and must not be assumed to exist in API payloads yet.
 
-* `docs/findings-model.md` (source of truth)
+Authoritative documentation:
 
-Implemented check IDs are listed in:
-
-* `docs/findings-registry.md`
+* Findings model: `docs/findings-model.md`
+* Implemented finding IDs: `docs/findings-registry.md`
 
 ---
 
-### 3) Summaries / Reports (view layer)
+### 4) Reports / summaries — view layer (implemented)
 
-Reports are derived views over the same underlying evidence.
+Reports are **derived views** over stored evidence.
 
-In the current iteration, report artefacts are generated via worker “report collectors” so a portal/demo can download a small number of summary outputs per run.
+They do **not** introduce a new source of truth.
 
-Long-term direction:
+Reports answer:
 
-* Reports remain derived views (not new sources of truth).
-* The UI should be able to request/generate views over stored evidence without re-running discovery.
+> “How should this evidence be presented for a specific audience or use case?”
 
-Implementation note (current behaviour):
+Current implementation:
 
-* Report collectors may **retry automatically** until all non-report jobs in the run have reached a terminal state (`succeeded` or `failed`).
-* This prevents generating misleading partial summaries if report jobs are picked up early in an asynchronous worker model.
-* This retry behaviour is a safety mechanism; it does not introduce a new architectural phase or source of truth.
+* Reports are generated by **report collectors** running in the worker.
+* Report collectors may retry automatically until the run is in a safe terminal state.
+
+Important:
+
+* Execution order is not guaranteed in a concurrent worker model.
+* Correctness is enforced by *retry-until-complete semantics*, not orchestration ordering.
+
+This behaviour is a **safety mechanism**, not a new architectural phase.
 
 ---
 
 ## Output lenses
 
-The same discovery run can be viewed through different lenses.
+The same discovery run can be viewed through different **lenses**.
 
-These lenses share collectors, artefacts, and findings — they differ only in aggregation, emphasis, and presentation.
+Lenses reuse the same artefacts, observed checks, and findings — they differ only in aggregation and presentation.
 
 ---
 
-## Lens 1: Security posture
+### Lens 1: Security posture
 
 Focus:
 
-* risk, misconfiguration, hygiene
+* risk
+* misconfiguration
+* hygiene and exposure
 
-Typical summary sections:
+Typical outputs:
 
 * findings by severity
-* top risks
-* privilege and access concerns
+* privilege and access risks
 * audit and logging coverage
-* identity and application security
+* identity and application security signals
 
 ---
 
-## Lens 2: Migration / take-on / acquisition scoping
+### Lens 2: Migration / take-on / acquisition scoping
 
 Focus:
 
-* inventory, complexity, delivery effort
+* inventory
+* scale
+* complexity
+* delivery effort and unknowns
 
-Typical summary sections:
+Typical outputs:
 
-* tenant inventory (users, apps, workloads)
+* tenant inventories
 * complexity drivers
-* unknowns and gaps
-* likely workstreams
+* truncation or data completeness signals
 * scoping assumptions and risks
+
+This lens is a **primary design driver** of the platform.
 
 ---
 
 ## Current discovery coverage (implemented)
 
-| Area                       | Collector ID                       | Evidence (Artefacts)                                                                | Implemented Finding IDs                                 |
-| -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Entra ID users             | `entra.users`                      | `users-inventory.json` (safe) and profile-aware variants (see contracts)            | `ENTRA_USERS_001`                                       |
-| Enterprise app permissions | `entra.enterpriseApps.permissions` | `enterprise-app-permissions.json` (safe) and profile-aware variants (see contracts) | `ENTRA_EAP_001`, `ENTRA_EAP_002`                        |
-| Tenant auth validation     | `entra.auth.test`                  | none                                                                                | none (tenant auth status is expressed via `TenantAuth`) |
+| Area                       | Collector ID                       | Evidence (Artefacts)                                     | Implemented Findings             |
+| -------------------------- | ---------------------------------- | -------------------------------------------------------- | -------------------------------- |
+| Entra ID users             | `entra.users`                      | Users inventory JSON (profile-aware variants)            | `ENTRA_USERS_001`                |
+| Enterprise app permissions | `entra.enterpriseApps.permissions` | Enterprise app permissions JSON (profile-aware variants) | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
+| Tenant auth validation     | `entra.auth.test`                  | none                                                     | none (status via `TenantAuth`)   |
 
 Notes:
 
 * Implemented finding IDs and meanings are tracked in `docs/findings-registry.md`.
+* Observed checks emitted by collectors are tracked in `docs/findings-observed-checks.md`.
 * Artefact filenames and profile behaviour are defined in `docs/artefact-and-report-contracts.md`.
-* **Profile enforcement is hardened at collector level**: only an explicit `dataProfile = "full"` enables PII-bearing artefacts; any unknown or missing value is treated as `safe`.
 
 ---
 
 ## Current reporting coverage (implemented)
 
-Report collectors are executed as standard worker jobs to produce downloadable terminal artefacts:
+Report collectors are executed as standard worker jobs and produce downloadable terminal artefacts:
 
-| Report             | Collector ID             | Artefact (filename) |
-| ------------------ | ------------------------ | ------------------- |
-| Run summary (CSV)  | `report.runSummary.csv`  | `run-summary.csv`   |
-| Run summary (XLSX) | `report.runSummary.xlsx` | `run-summary.xlsx`  |
+| Report             | Collector ID             | Artefact           |
+| ------------------ | ------------------------ | ------------------ |
+| Run summary (CSV)  | `report.runSummary.csv`  | `run-summary.csv`  |
+| Run summary (XLSX) | `report.runSummary.xlsx` | `run-summary.xlsx` |
 
 Notes:
 
-* Report jobs are enqueued last by the API for demo/UX value.
-* Execution order is **not guaranteed** in a concurrent worker model.
-* Report collectors validate run completeness at execution time and may retry until safe to generate output.
-
-Direction for XLSX:
-
-* Evolve toward a CloudGeezer-style workbook where each module/collector has its own sheet.
-* Keep inventories as artefacts and/or referenced sheets; avoid duplicating large datasets into findings.
+* Report jobs are enqueued last by the API for demo and UX value.
+* Execution order is not guaranteed.
+* Report collectors validate run completeness at execution time.
 
 ---
 
-## Reporting formats: XLSX vs CSV (design intent)
+## Reporting formats: XLSX vs CSV (intentional design)
 
-The M365 Discovery Platform intentionally produces **multiple report formats** with different goals. These formats are **not equivalent** and are **not expected to contain the same data**.
+### XLSX — Primary, human-facing report
 
-### XLSX — Primary, human-facing report (authoritative)
+The XLSX report is the **primary reporting artefact**.
 
-The **XLSX report is the primary reporting artefact** for the platform.
+Designed for:
 
-It is designed for:
-
-* internal consultants
+* consultants
 * technical pre-sales
-* solution walkthroughs
-* executive and stakeholder discussions
+* stakeholder walkthroughs
+* executive discussions
 
 Characteristics:
 
 * multi-sheet workbook
-* derived summaries (counts, risk indicators, truncation flags)
+* derived summaries and indicators
 * human-readable structure
 * prioritised signal over raw volume
-* aligned with CloudGeezer-style expectations
 
-Design intent:
+Engineering effort is intentionally focused here.
 
-* This is the report that **will be polished, extended, and evolved**
-* This is what you show customers, leadership, and pre-sales
-* Engineering effort is **intentionally focused here**
+---
 
-### CSV — Secondary, machine-friendly export (non-authoritative)
+### CSV — Secondary, machine-friendly export
 
-The **CSV report exists purely as a lightweight compatibility artefact**.
+CSV exists for:
 
-It is intended for:
+* lightweight automation
+* compatibility with downstream tooling
 
-* basic automation
-* quick ad-hoc inspection
-* downstream tooling that expects CSV input
+Constraints:
 
-Important constraints:
-
-* CSV is **not required** to:
-
-  * mirror the XLSX structure
-  * include full inventories
-  * expose all derived logic
-  * contain PII-heavy datasets
-* CSV may contain **only summaries and counts**
+* CSV is not required to mirror XLSX
+* CSV may contain only summaries and counts
 * CSV completeness will always lag XLSX by design
 
 Design rule:
 
 > If a trade-off must be made, **XLSX fidelity always wins over CSV completeness**.
 
-This is a **deliberate architectural decision**, not a limitation or unfinished work.
+---
 
-### Practical implication
+## Demo-only constraints (explicitly non-architectural)
 
-* A **full run** correctly produces:
-
-  * full users inventory artefact
-  * full enterprise app permissions artefact
-  * populated XLSX summary
-* A minimal or sparse CSV is **expected behaviour**
-* CSV is *not* the source of truth for discovery depth
-
-## Demo-only constraints (must not be treated as long-term behaviour)
-
-The demo tenant and demo harness may apply limits that are explicitly not architectural guarantees.
+The demo tenant and harness may apply limits that are **not long-term guarantees**.
 
 Examples:
 
-* Enterprise app enumeration caps (e.g. `ENTAPP_MAX_APPS`) causing truncation signals such as `ENTRA_EAP_002`.
+* enterprise app enumeration caps causing truncation findings
 
 Rule:
 
-* Any demo-only limit must be documented as demo-only and surfaced as a data completeness signal (finding and/or report note).
+* Demo-only limits must be documented as demo-only
+* They must surface as **data completeness signals**, not silent omissions
 
 ---
 
 ## Validated behaviours (implementation-backed)
 
-The following behaviours are **implemented, validated in the CDX demo tenant, and treated as stable contracts** unless explicitly changed:
+The following behaviours are **implemented, validated, and treated as stable contracts** unless explicitly changed:
 
 ### Safe vs full data profiles
 
-* `dataProfile` is a first-class property on a run (`safe` | `full`).
-* Default is `safe`.
-* **Collectors enforce this boundary locally**:
-
-  * Only an explicit `dataProfile = "full"` enables PII-bearing or inventory-heavy artefacts.
-  * Any missing or unknown value is coerced to `safe` inside the collector.
-* Artefact-producing collectors validated:
-
-  * `entra.users`
-  * `entra.enterpriseApps.permissions`
-* Collectors that do not emit artefacts (e.g. `entra.auth.test`) are intentionally safe-by-design and do not require profile gating.
+* `dataProfile` is first-class on a run (`safe` | `full`)
+* Default is `safe`
+* Collectors enforce the boundary locally
+* Only explicit `full` enables PII-bearing artefacts
+* Unknown or missing values are coerced to `safe`
 
 ### Artefact download flow
 
-* The API **never streams artefacts**.
-* `GET /artefacts/:artefactId/download` returns an **HTTP 302 redirect** to a presigned object storage URL.
-* Redirect responses include a server-calculated expiry (e.g. `x-download-expires-at`).
-* Clients are expected to request downloads immediately before retrieval (PowerShell-friendly).
+* API never streams artefacts
+* Download endpoints return HTTP 302 redirects to presigned URLs
+* Redirects include server-calculated expiry metadata
 
-### Report job retry behaviour
+### Report retry behaviour
 
-* Report collectors (`report.runSummary.*`) are enqueued last for demo/UX value.
-* Execution order is not guaranteed in a concurrent worker model.
-* If a report job is picked up before all non-report jobs complete, it will:
+* Report collectors may run before other jobs complete
+* If unsafe to generate output:
 
-  * exit without producing an artefact
-  * be retried automatically until the run is in a safe terminal state
+  * no artefact is produced
+  * the job is retried automatically
 
-This behaviour is a **safety mechanism**, not a separate processing phase, and does not introduce a new source of truth.
+This prevents misleading partial summaries and does not introduce a new source of truth.
 
 ---
 
-## Local demo / validation workflow (PowerShell)
+## Direction of travel (future-facing)
 
-These snippets reflect the actual API response shape and PowerShell enumeration behaviour.
+Future work may include:
 
-### Create a run
+* richer interpretation layers built on observed checks
+* scoring engines
+* compliance mappings
+* UI-driven report generation over stored evidence
 
-```powershell
-Invoke-RestMethod "http://localhost:8080/runs" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{
-    "tenantGuid": "00000000-0000-0000-0000-000000000000",
-    "primaryDomain": "example.onmicrosoft.com",
-    "triggeredBy": "manual",
-    "modulesEnabled": {
-      "entraUsers": true,
-      "enterpriseAppPermissions": true
-    }
-  }'
-```
-
-### Inspect jobs for a run (PowerShell-safe)
-
-```powershell
-# Set explicitly to avoid stale values in the current session
-$runId = "<PASTE_RUN_ID_HERE>"
-$jobs = $null
-
-$jobs = Invoke-RestMethod "http://localhost:8080/runs/$runId/jobs" -ErrorAction Stop
-
-($jobs | ForEach-Object { $_ } |
-  Select-Object id, collectorId, status, attempts, lastError |
-  ConvertTo-Json -Depth 5) | Out-String -Width 300
-```
-
-### Download report artefacts
-
-Downloads use `GET /artefacts/:artefactId/download`.
-
-The API responds with an HTTP **302 redirect** to a short-lived presigned URL.
-
-Always request the download immediately before retrieving the file.
+All future evolution must preserve the existing contracts and layering described above.
