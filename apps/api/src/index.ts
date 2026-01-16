@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -370,7 +370,7 @@ app.get("/demo", async (_req, reply) => {
     try {
       const s = JSON.stringify(obj ?? {}, null, 0);
       // keep it compact-ish
-      if (s.length > 600) return s.slice(0, 600) + "…";
+      if (s.length > 600) return s.slice(0, 600) + "...";
       return s;
     } catch {
       return "";
@@ -580,7 +580,7 @@ app.get("/artefacts/:artefactId/download", async (req, reply) => {
 });
 
 // --------------------
-// Artefact download (run-scoped) — keep for backwards compatibility
+// Artefact download (run-scoped) - keep for backwards compatibility
 // GET /runs/:runId/artefacts/:artefactId/download
 // --------------------
 app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
@@ -604,7 +604,7 @@ app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
 });
 
 // --------------------
-// Tenants — list / lookup for portal UX
+// Tenants - list / lookup for portal UX
 // GET /tenants?tenantGuid=...&primaryDomain=...&q=...&take=...
 // --------------------
 app.get("/tenants", async (req) => {
@@ -1193,3 +1193,6 @@ app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });
+
+
+
