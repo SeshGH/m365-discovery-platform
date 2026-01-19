@@ -45,6 +45,35 @@ async function readErrorBody(res: Response): Promise<string> {
   return truncateForLogs(text);
 }
 
+/**
+ * Typed error that preserves the existing human-readable message
+ * but also provides machine-readable fields for collectors to interpret.
+ */
+export class GraphHttpError extends Error {
+  public readonly status: number;
+  public readonly url: string;
+  public readonly requestId?: string;
+  public readonly clientRequestId?: string;
+  public readonly bodyText?: string;
+
+  constructor(params: {
+    message: string;
+    status: number;
+    url: string;
+    requestId?: string;
+    clientRequestId?: string;
+    bodyText?: string;
+  }) {
+    super(params.message);
+    this.name = "GraphHttpError";
+    this.status = params.status;
+    this.url = params.url;
+    this.requestId = params.requestId;
+    this.clientRequestId = params.clientRequestId;
+    this.bodyText = params.bodyText;
+  }
+}
+
 export async function getGraphAccessToken(params: { tenantId: string }): Promise<string> {
   const clientId = requireEnv("GRAPH_CLIENT_ID");
   const clientSecret = requireEnv("GRAPH_CLIENT_SECRET");
@@ -73,9 +102,17 @@ export async function getGraphAccessToken(params: { tenantId: string }): Promise
     const ids = extractRequestIds(res.headers);
     const text = await readErrorBody(res);
 
-    throw new Error(
-      `[collectors] Failed to get Graph token (${res.status}) tenant=${params.tenantId} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`
-    );
+    // Keep message format stable (matches previous behaviour)
+    const msg = `[collectors] Failed to get Graph token (${res.status}) tenant=${params.tenantId} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
+
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url: `https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/token`,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: text
+    });
   }
 
   const json = (await res.json()) as TokenResponse;
@@ -99,9 +136,17 @@ export async function graphGet<T>(token: string, url: string): Promise<T> {
     const ids = extractRequestIds(res.headers);
     const text = await readErrorBody(res);
 
-    throw new Error(
-      `[collectors] Graph GET failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`
-    );
+    // Keep message format stable (matches previous behaviour)
+    const msg = `[collectors] Graph GET failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
+
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: text
+    });
   }
 
   return (await res.json()) as T;
