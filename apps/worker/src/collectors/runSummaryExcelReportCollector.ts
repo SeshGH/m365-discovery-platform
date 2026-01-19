@@ -169,12 +169,23 @@ type ConditionalAccessPoliciesSafeJson = {
     maxPolicies?: number | null;
   };
   error?: unknown;
+
+  // Safe artefact may optionally include a policy list (without membership identifiers).
   policies?: Array<{
     id?: string;
     displayName?: string;
     state?: string;
+
+    // The safe collector may include derived booleans. If absent, we attempt light inference.
+    targetsAllUsers?: boolean;
+    excludesUsers?: boolean;
+    hasMfaGrantControl?: boolean;
+
+    // We keep these as unknown and only derive safe fields for the report.
     conditions?: unknown;
     grantControls?: unknown;
+    sessionControls?: unknown;
+
     hasSessionControls?: boolean;
   }>;
 };
@@ -272,7 +283,8 @@ function normalizeCaSummary(caJson: any): NormalizedCaSummary {
   const s = caJson?.summary ?? {};
   const policies: any[] = Array.isArray(caJson?.policies) ? caJson.policies : [];
 
-  const totalPolicies = typeof s.totalPolicies === "number" ? s.totalPolicies : (policies.length ? policies.length : null);
+  const totalPolicies =
+    typeof s.totalPolicies === "number" ? s.totalPolicies : policies.length ? policies.length : null;
 
   const enabledPolicies = typeof s.enabledPolicies === "number" ? s.enabledPolicies : null;
   const reportOnlyPolicies = typeof s.reportOnlyPolicies === "number" ? s.reportOnlyPolicies : null;
@@ -311,6 +323,57 @@ function normalizeCaSummary(caJson: any): NormalizedCaSummary {
     permissionDenied,
     maxPolicies
   };
+}
+
+function deriveCaTargetsAllUsers(policy: any): boolean | null {
+  if (!policy || typeof policy !== "object") return null;
+
+  if (typeof policy.targetsAllUsers === "boolean") return policy.targetsAllUsers;
+
+  const includeUsers = (policy?.conditions as any)?.users?.includeUsers;
+  if (Array.isArray(includeUsers)) {
+    const asStrings = includeUsers.map((x) => String(x).toLowerCase());
+    if (asStrings.includes("all")) return true;
+  }
+
+  // Not enough info in safe artefact to infer reliably
+  return null;
+}
+
+function deriveCaHasMfaGrantControl(policy: any): boolean | null {
+  if (!policy || typeof policy !== "object") return null;
+
+  if (typeof policy.hasMfaGrantControl === "boolean") return policy.hasMfaGrantControl;
+
+  const builtInControls = (policy?.grantControls as any)?.builtInControls;
+  if (Array.isArray(builtInControls)) {
+    const lower = builtInControls.map((x) => String(x).toLowerCase());
+    if (lower.includes("mfa")) return true;
+  }
+
+  return null;
+}
+
+function deriveCaGrantControlTypes(policy: any): string {
+  const builtInControls = (policy?.grantControls as any)?.builtInControls;
+  if (Array.isArray(builtInControls)) {
+    const cleaned = builtInControls.map((x) => String(x)).filter(Boolean);
+    return cleaned.join(", ");
+  }
+  return "";
+}
+
+function deriveCaSessionControlsPresent(policy: any): boolean | null {
+  if (!policy || typeof policy !== "object") return null;
+
+  if (typeof policy.hasSessionControls === "boolean") return policy.hasSessionControls;
+
+  const sc = policy?.sessionControls;
+  if (sc && typeof sc === "object") {
+    // Avoid dumping details; just indicate presence of any keys
+    return Object.keys(sc as any).length > 0;
+  }
+  return null;
 }
 
 export const runSummaryExcelReportCollector: Collector = {
@@ -371,7 +434,11 @@ export const runSummaryExcelReportCollector: Collector = {
 
     const eapCandidates =
       run.dataProfile === "full"
-        ? ["enterprise-app-permissions.full.json", "enterprise-app-permissions.safe.json", "enterprise-app-permissions.json"]
+        ? [
+            "enterprise-app-permissions.full.json",
+            "enterprise-app-permissions.safe.json",
+            "enterprise-app-permissions.json"
+          ]
         : ["enterprise-app-permissions.json", "enterprise-app-permissions.safe.json"];
 
     // Conditional Access: report must only consume safe-compatible artefacts
@@ -823,7 +890,7 @@ export const runSummaryExcelReportCollector: Collector = {
     }
 
     // -------------------------
-    // Sheet 8: Conditional Access
+    // Sheet 8: Conditional Access (Summary + Top Policies)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Conditional Access"));
@@ -856,10 +923,18 @@ export const runSummaryExcelReportCollector: Collector = {
             ? "Conditional Access policy enumeration was truncated (demo guardrails / API limits). Counts reflect only the collected subset."
             : "Conditional Access policies were collected successfully.";
 
-        ws.addRow({ field: "status", value: permissionDenied ? "permission-denied" : (truncated ? "truncated" : "ok"), notes: statusNote });
+        ws.addRow({
+          field: "status",
+          value: permissionDenied ? "permission-denied" : (truncated ? "truncated" : "ok"),
+          notes: statusNote
+        });
 
         ws.addRow({ field: "generatedAt", value: caJson?.generatedAt ?? "", notes: "" });
-        ws.addRow({ field: "artefact", value: caArtefactName, notes: "Report consumes safe-compatible artefact only; full artefacts are never implicitly loaded." });
+        ws.addRow({
+          field: "artefact",
+          value: caArtefactName,
+          notes: "Report consumes safe-compatible artefact only; full artefacts are never implicitly loaded."
+        });
 
         ws.addRow({ field: "totalPolicies", value: caSummary?.totalPolicies ?? "n/a", notes: "" });
         ws.addRow({ field: "enabledPolicies", value: caSummary?.enabledPolicies ?? "n/a", notes: "" });
@@ -868,10 +943,18 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "policiesTargetingAllUsers", value: caSummary?.policiesTargetingAllUsers ?? "n/a", notes: "" });
         ws.addRow({ field: "policiesWithMfaGrantControl", value: caSummary?.policiesWithMfaGrantControl ?? "n/a", notes: "" });
-        ws.addRow({ field: "policiesExcludingUsersCount", value: caSummary?.policiesExcludingUsersCount ?? "n/a", notes: "Count of excludeUsers entries across the collected policies (safe summary)." });
+        ws.addRow({
+          field: "policiesExcludingUsersCount",
+          value: caSummary?.policiesExcludingUsersCount ?? "n/a",
+          notes: "Count of excludeUsers entries across the collected policies (safe summary)."
+        });
         ws.addRow({ field: "hasLegacyAuthPolicyDetected", value: caSummary?.hasLegacyAuthPolicyDetected ?? "n/a", notes: "" });
 
-        ws.addRow({ field: "namedLocationsCount", value: caSummary?.namedLocationsCount ?? "n/a", notes: "Named locations are not enumerated in this collector yet (placeholder factual value)." });
+        ws.addRow({
+          field: "namedLocationsCount",
+          value: caSummary?.namedLocationsCount ?? "n/a",
+          notes: "Named locations are not enumerated in this collector yet (placeholder factual value)."
+        });
 
         ws.addRow({ field: "truncated", value: String(caSummary?.truncated ?? ""), notes: "" });
         ws.addRow({ field: "permissionDenied", value: String(caSummary?.permissionDenied ?? ""), notes: "" });
@@ -879,6 +962,62 @@ export const runSummaryExcelReportCollector: Collector = {
 
         if (caJson?.error) {
           ws.addRow({ field: "error", value: "present", notes: safeJsonCell(caJson.error, 2400) });
+        }
+
+        // --- Top policies table (safe-friendly) ---
+        // We only render this if safe artefact includes a policies[] list (no membership identifiers).
+        ws.addRow({ field: "", value: "", notes: "" });
+        ws.addRow({
+          field: "topPolicies",
+          value: "",
+          notes: "Table below is derived from the safe artefact. It intentionally avoids listing include/exclude membership identifiers."
+        });
+
+        const policies: any[] = Array.isArray((caJson as any)?.policies) ? ((caJson as any).policies as any[]) : [];
+
+        if (!policies.length) {
+          ws.addRow({
+            field: "status",
+            value: "no-policies-list",
+            notes: "No policies[] list was present in the safe artefact. Summary counts above are still authoritative for this lens."
+          });
+        } else {
+          // Add a second table underneath with its own headers
+          const headerRowIndex = ws.rowCount + 1;
+          ws.addRow({ field: "displayName", value: "state", notes: "targetsAllUsers | hasMfaGrantControl | grantControlTypes | sessionControls" });
+
+          // Bold the header row for readability
+          const headerRow = ws.getRow(headerRowIndex);
+          headerRow.font = { bold: true };
+
+          for (const p of policies.slice(0, 50)) {
+            const displayName = String(p?.displayName ?? "");
+            const state = String(p?.state ?? "");
+            const targetsAllUsers = deriveCaTargetsAllUsers(p);
+            const hasMfa = deriveCaHasMfaGrantControl(p);
+            const grantTypes = deriveCaGrantControlTypes(p);
+            const sessionPresent = deriveCaSessionControlsPresent(p);
+
+            const notesParts: string[] = [];
+            notesParts.push(`targetsAllUsers=${targetsAllUsers === null ? "n/a" : String(targetsAllUsers)}`);
+            notesParts.push(`hasMfaGrantControl=${hasMfa === null ? "n/a" : String(hasMfa)}`);
+            if (grantTypes) notesParts.push(`grantControlTypes=${grantTypes}`);
+            notesParts.push(`sessionControls=${sessionPresent === null ? "n/a" : String(sessionPresent)}`);
+
+            ws.addRow({
+              field: displayName,
+              value: state,
+              notes: notesParts.join(" | ")
+            });
+          }
+
+          if (policies.length > 50) {
+            ws.addRow({
+              field: "note",
+              value: "truncated-table",
+              notes: `Only the first 50 policies are shown in this table for readability (policies in artefact: ${policies.length}).`
+            });
+          }
         }
       }
     }
