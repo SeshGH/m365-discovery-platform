@@ -89,12 +89,17 @@ Examples:
 ### `ENTRA_CA_001` — No enabled Conditional Access policies detected
 
 * **Collector:** `entra.conditionalAccess.policies`
-* **Severity (implemented):** `high`
-* **Derived from:** `ENTRA_CA_OBS_001`
-* **Meaning:** No **enabled** Conditional Access policies were observed at discovery time.
+
+* **Severity (implemented):** `low`
+
+* **Meaning:** Conditional Access policies were enumerated successfully and **none** were in an enabled state.
+
+* **Guards (to avoid false signals):**
+
+  * Only emit when evidence is complete (i.e. not permission-denied and not truncated/capped).
+  * Do **not** emit when `permissionDenied === true` or `truncated === true`.
+
 * **Notes:**
 
-  * Report-only policies do **not** count as enforcement.
-  * This finding does not assess *policy quality* — only absence of enabled policies.
-  * Demo tenants may legitimately lack policies; this does not change the meaning of the signal.
-  * Evidence and detail belong in the Conditional Access artefacts.
+  * This is a hygiene / baseline signal and can be interpreted differently depending on tenant maturity and licensing.
+  * Detailed policy configuration remains in Conditional Access artefacts; the finding is a summary signal.
