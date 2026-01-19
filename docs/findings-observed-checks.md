@@ -157,6 +157,21 @@ This allows:
 
 ---
 
+### Conditional Access
+
+| checkId                           | Description                       | Data payload                                                                                                                                                                                                                                                                                                 |                                                      |
+| --------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `entra.conditionalAccess.summary` | Conditional Access policy summary | `{ totalPolicies: number, enabledPolicies: number, reportOnlyPolicies: number, disabledPolicies: number, policiesTargetingAllUsers: number, policiesWithMfaGrantControl: number, policiesExcludingUsersCount: number, hasLegacyAuthPolicyDetected: boolean, namedLocationsCount: number, dataProfile: "safe" | "full", fullExported: boolean, truncated: boolean }` |
+
+Notes:
+
+* This observed check summarises the **state** of Conditional Access policies at discovery time.
+* It contains **counts and booleans only** — no evaluation or judgement.
+* Demo tenant or API limits must surface via `truncated = true`.
+* Report-only policies are counted but are not treated as enforcement by findings.
+
+---
+
 ## Collector responsibilities
 
 Collectors MUST:
