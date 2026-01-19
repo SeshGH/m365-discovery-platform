@@ -90,7 +90,7 @@ Examples:
 
 * **Collector:** `entra.conditionalAccess.policies`
 * **Severity (implemented):** `high`
-* **Derived from:** `entra.conditionalAccess.summary`
+* **Derived from:** `ENTRA_CA_OBS_001`
 * **Meaning:** No **enabled** Conditional Access policies were observed at discovery time.
 * **Notes:**
 
