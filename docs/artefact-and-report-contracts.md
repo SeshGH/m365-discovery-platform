@@ -135,6 +135,30 @@ Absence of suffix implies **safe-mode compatible output**.
 
 ---
 
+### `entra.directoryRoles.assignments` (Raw)
+
+| Profile | Filename                                | Class | Notes                                                                  |
+| ------- | --------------------------------------- | ----- | ---------------------------------------------------------------------- |
+| safe    | `directory-roles-assignments.safe.json` | Raw   | Role names + assignment counts and principal-type distribution; no PII |
+| full    | `directory-roles-assignments.full.json` | Raw   | PII-bearing: principal identifiers/properties where returned by Graph  |
+
+**Rules & guarantees**:
+
+* Safe runs **only** emit `directory-roles-assignments.safe.json`
+* Full runs emit **both** safe and full artefacts
+* Safe artefact must not contain user identifiers, UPNs, mail, or membership identifiers
+* Full artefact is explicitly PII-bearing and must never be implicitly consumed
+
+#### Data completeness & demo behaviour
+
+* API limits, demo guardrails, or permission constraints may result in partial enumeration
+* Any such condition **must be surfaced** via:
+
+  * `truncated = true` in observed checks
+  * appropriate reporting notes
+
+---
+
 ## Reporting Artefacts (Terminal)
 
 ### Run Summary CSV
