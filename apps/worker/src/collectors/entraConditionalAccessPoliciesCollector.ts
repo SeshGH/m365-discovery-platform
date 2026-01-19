@@ -224,7 +224,7 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_CA_001",
-          severity: "high",
+          severity: "low",
           title: "No enabled Conditional Access policies detected",
           description:
             "No enabled Conditional Access policies were observed at discovery time.",
