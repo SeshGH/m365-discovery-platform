@@ -190,11 +190,12 @@ This lens is a **primary design driver** of the platform.
 
 ## Current discovery coverage (implemented)
 
-| Area                       | Collector ID                       | Evidence (Artefacts)                                     | Implemented Findings             |
-| -------------------------- | ---------------------------------- | -------------------------------------------------------- | -------------------------------- |
-| Entra ID users             | `entra.users`                      | Users inventory JSON (profile-aware variants)            | `ENTRA_USERS_001`                |
-| Enterprise app permissions | `entra.enterpriseApps.permissions` | Enterprise app permissions JSON (profile-aware variants) | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
-| Tenant auth validation     | `entra.auth.test`                  | none                                                     | none (status via `TenantAuth`)   |
+| Area                        | Collector ID                       | Evidence (Artefacts)                                      | Implemented Findings             |
+| --------------------------- | ---------------------------------- | --------------------------------------------------------- | -------------------------------- |
+| Entra ID users              | `entra.users`                      | Users inventory JSON (profile-aware variants)             | `ENTRA_USERS_001`                |
+| Enterprise app permissions  | `entra.enterpriseApps.permissions` | Enterprise app permissions JSON (profile-aware variants)  | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
+| Conditional Access policies | `entra.conditionalAccess.policies` | Conditional Access policies JSON (profile-aware variants) | `ENTRA_CA_001`                   |
+| Tenant auth validation      | `entra.auth.test`                  | none                                                      | none (status via `TenantAuth`)   |
 
 Notes:
 

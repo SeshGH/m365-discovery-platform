@@ -197,6 +197,34 @@ Important:
 
 ---
 
+### `entra.conditionalAccess.policies`
+
+**Purpose**
+
+* Enumerates Conditional Access policies and emits evidence + summary observations.
+
+**Observed checks (current)**
+
+* `ENTRA_CA_OBS_001` — Conditional Access policy summary (counts/states/flags + profile + fullExported + truncated)
+
+**Findings (current)**
+
+* `ENTRA_CA_001` — No enabled Conditional Access policies detected (severity: `high`)
+
+**Artefacts (current)**
+
+* Conditional Access policies JSON (profile-aware; safe is always emitted):
+
+  * `conditional-access-policies.safe.json`
+  * `conditional-access-policies.full.json`
+
+Notes:
+
+* Report-only policies do not count as enforcement for findings.
+* Demo-only / guardrail limits must surface as completeness signals (e.g. `truncated`).
+
+---
+
 ### `entra.auth.test`
 
 **Purpose**
