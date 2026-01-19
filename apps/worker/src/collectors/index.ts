@@ -2,6 +2,7 @@ import type { Collector } from "./types";
 import { entraUsersCollector } from "./entraUsersCollector";
 import { enterpriseAppPermissionsCollector } from "./enterpriseAppPermissionsCollector";
 import { entraConditionalAccessPoliciesCollector } from "./entraConditionalAccessPoliciesCollector";
+import { entraDirectoryRolesAssignmentsCollector } from "./entraDirectoryRolesAssignmentsCollector";
 import { entraAuthTestCollector } from "./entraAuthTestCollector";
 import { runSummaryCsvReportCollector } from "./runSummaryCsvReportCollector";
 import { runSummaryExcelReportCollector } from "./runSummaryExcelReportCollector";
@@ -10,6 +11,7 @@ const collectors: Collector[] = [
   entraUsersCollector,
   enterpriseAppPermissionsCollector,
   entraConditionalAccessPoliciesCollector,
+  entraDirectoryRolesAssignmentsCollector,
   entraAuthTestCollector,
 
   // Reports (enqueued last by API)
