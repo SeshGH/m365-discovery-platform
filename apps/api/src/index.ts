@@ -33,7 +33,8 @@ app.addContentTypeParser(
 // IMPORTANT: The keys here must match CreateRunSchema input.modulesEnabled keys
 const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   entraUsers: "entra.users",
-  enterpriseAppPermissions: "entra.enterpriseApps.permissions"
+  enterpriseAppPermissions: "entra.enterpriseApps.permissions",
+  conditionalAccessPolicies: "entra.conditionalAccess.policies"
 };
 
 // Always enqueue these report jobs at the end of a run
@@ -266,6 +267,7 @@ app.get("/demo", async (_req, reply) => {
           <div class="checkrow">
             <label><input type="checkbox" id="entraUsers" checked /> entraUsers</label>
             <label><input type="checkbox" id="enterpriseAppPermissions" checked /> enterpriseAppPermissions</label>
+            <label><input type="checkbox" id="conditionalAccessPolicies" checked /> conditionalAccessPolicies</label>
           </div>
           <div class="note">Report collectors are always enqueued at the end of a run.</div>
         </div>
@@ -479,6 +481,7 @@ app.get("/demo", async (_req, reply) => {
 
     const entraUsers = $("entraUsers").checked;
     const enterpriseAppPermissions = $("enterpriseAppPermissions").checked;
+    const conditionalAccessPolicies = $("conditionalAccessPolicies").checked;
 
     const payload = {
       tenantGuid,
@@ -488,7 +491,8 @@ app.get("/demo", async (_req, reply) => {
       dataProfile,
       modulesEnabled: {
         entraUsers,
-        enterpriseAppPermissions
+        enterpriseAppPermissions,
+        conditionalAccessPolicies
       }
     };
 
@@ -716,7 +720,7 @@ app.get("/tenants/:tenantId/auth", async (req, reply) => {
   const { tenantId } = req.params as { tenantId: string };
 
   const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+    where: { tenantId },
     select: {
       id: true,
       tenantGuid: true,
@@ -1193,6 +1197,3 @@ app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });
-
-
-
