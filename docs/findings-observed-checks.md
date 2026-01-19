@@ -172,12 +172,32 @@ Notes:
 
 ---
 
+### Directory Roles & Privileged Assignments
+
+These observed checks support both **security posture** and **take-on / migration scoping** lenses by recording scale, complexity, and completeness of role assignment evidence.
+
+| checkId                  | Description                               | Data payload                                                                                                                                                                    |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_DIRROLES_OBS_001` | Directory roles inventory summary         | `{ roleDefinitionsCount: number, rolesWithAnyActiveAssignmentCount: number, activeAssignmentsCount: number, dataProfile: "safe" or "full", truncated: boolean }`                |
+| `ENTRA_DIRROLES_OBS_002` | Assignment principal type distribution    | `{ user: number, group: number, servicePrincipal: number, unknown: number, dataProfile: "safe" or "full", truncated: boolean }`                                                 |
+| `ENTRA_DIRROLES_OBS_003` | Group-based role assignments present      | `{ present: boolean, assignmentsCount: number, dataProfile: "safe" or "full", truncated: boolean }`                                                                             |
+| `ENTRA_DIRROLES_OBS_004` | Eligible / PIM coverage signal            | `{ attempted: boolean, succeeded: boolean, eligibleAssignmentsCount?: number, dataProfile: "safe" or "full", truncated: boolean }`                                              |
+| `ENTRA_DIRROLES_OBS_005` | Data completeness for role assignment set | `{ isComplete: boolean, truncated: boolean, permissionDenied: string[], slicesAttempted: string[], slicesCompleted: string[], notes: string[], dataProfile: "safe" or "full" }` |
+
+Notes:
+
+* These checks are **observational only** and do not imply risk.
+* `permissionDenied` should contain stable strings describing which slice(s) were blocked (e.g., `"roleDefinitions"`, `"activeAssignments"`, `"eligibleAssignments"`).
+* Demo tenant / API limits must surface via `truncated = true` and/or `isComplete = false`.
+
+---
+
 ## Collector responsibilities
 
 Collectors MUST:
 
 * emit observed checks consistently
-* include raw counts even when zero
+* include raw counts even when no findings are raised
 * respect `dataProfile` boundaries
 * avoid suppressing observations due to perceived insignificance
 
