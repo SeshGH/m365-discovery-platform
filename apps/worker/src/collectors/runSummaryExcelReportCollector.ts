@@ -44,11 +44,7 @@ async function readStreamToBuffer(stream: Readable): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function getObjectBytes(args: {
-  s3: S3Client;
-  bucket: string;
-  key: string;
-}): Promise<Buffer> {
+async function getObjectBytes(args: { s3: S3Client; bucket: string; key: string }): Promise<Buffer> {
   const { s3, bucket, key } = args;
   const resp = await s3.send(
     new GetObjectCommand({
@@ -74,18 +70,12 @@ async function getObjectBytes(args: {
   throw new Error("Unsupported S3 Body type");
 }
 
-async function downloadArtefactText(args: {
-  s3: S3Client;
-  bucket: string;
-  key: string;
-}): Promise<string> {
+async function downloadArtefactText(args: { s3: S3Client; bucket: string; key: string }): Promise<string> {
   const buf = await getObjectBytes(args);
   return buf.toString("utf-8");
 }
 
-function tryParseJson<T>(
-  text: string
-): { ok: true; value: T } | { ok: false; error: string } {
+function tryParseJson<T>(text: string): { ok: true; value: T } | { ok: false; error: string } {
   try {
     return { ok: true, value: JSON.parse(text) as T };
   } catch (e: any) {
@@ -156,6 +146,39 @@ type EnterpriseAppPermissionsJson = {
   }>;
 };
 
+type ConditionalAccessPoliciesSafeJson = {
+  generatedAt?: string;
+  profile?: "safe" | "full";
+  tenant?: {
+    tenantGuid?: string;
+    primaryDomain?: string;
+    displayName?: string;
+  };
+  summary?: {
+    totalPolicies?: number;
+    enabledPolicies?: number;
+    reportOnlyPolicies?: number;
+    disabledPolicies?: number;
+    policiesTargetingAllUsers?: number;
+    policiesWithMfaGrantControl?: number;
+    policiesExcludingUsersCount?: number;
+    hasLegacyAuthPolicyDetected?: boolean;
+    namedLocationsCount?: number;
+    truncated?: boolean;
+    permissionDenied?: boolean;
+    maxPolicies?: number | null;
+  };
+  error?: unknown;
+  policies?: Array<{
+    id?: string;
+    displayName?: string;
+    state?: string;
+    conditions?: unknown;
+    grantControls?: unknown;
+    hasSessionControls?: boolean;
+  }>;
+};
+
 type NormalizedUsersSummary = {
   totalUsers: number;
   enabledUsers: number | null;
@@ -168,8 +191,7 @@ function normalizeUsersSummary(usersJson: any): NormalizedUsersSummary {
   const summary = usersJson?.summary ?? {};
   const users: any[] = Array.isArray(usersJson?.users) ? usersJson.users : [];
 
-  const totalUsers =
-    typeof summary.totalUsers === "number" ? summary.totalUsers : users.length;
+  const totalUsers = typeof summary.totalUsers === "number" ? summary.totalUsers : users.length;
 
   const guestUsers =
     typeof summary.guestUsers === "number"
@@ -213,24 +235,82 @@ function normalizeEapSummary(eapJson: any): NormalizedEapSummary {
   const apps: any[] = Array.isArray(eapJson?.apps) ? eapJson.apps : [];
 
   const totalEnterpriseApps =
-    typeof summary.totalEnterpriseApps === "number"
-      ? summary.totalEnterpriseApps
-      : apps.length;
+    typeof summary.totalEnterpriseApps === "number" ? summary.totalEnterpriseApps : apps.length;
 
   const scannedApps =
-    typeof summary.scannedApps === "number"
-      ? summary.scannedApps
-      : (apps.length ? apps.length : null);
+    typeof summary.scannedApps === "number" ? summary.scannedApps : apps.length ? apps.length : null;
 
   const riskyApps =
     typeof summary.riskyApps === "number"
       ? summary.riskyApps
-      : (apps.length ? apps.filter((a) => Array.isArray(a?.risky) && a.risky.length > 0).length : null);
+      : apps.length
+        ? apps.filter((a) => Array.isArray(a?.risky) && a.risky.length > 0).length
+        : null;
 
   const truncated = typeof summary.truncated === "boolean" ? summary.truncated : null;
   const maxApps = typeof summary.maxApps === "number" ? summary.maxApps : null;
 
   return { totalEnterpriseApps, scannedApps, riskyApps, truncated, maxApps };
+}
+
+type NormalizedCaSummary = {
+  totalPolicies: number | null;
+  enabledPolicies: number | null;
+  reportOnlyPolicies: number | null;
+  disabledPolicies: number | null;
+  policiesTargetingAllUsers: number | null;
+  policiesWithMfaGrantControl: number | null;
+  policiesExcludingUsersCount: number | null;
+  hasLegacyAuthPolicyDetected: boolean | null;
+  namedLocationsCount: number | null;
+  truncated: boolean | null;
+  permissionDenied: boolean | null;
+  maxPolicies: number | null;
+};
+
+function normalizeCaSummary(caJson: any): NormalizedCaSummary {
+  const s = caJson?.summary ?? {};
+  const policies: any[] = Array.isArray(caJson?.policies) ? caJson.policies : [];
+
+  const totalPolicies = typeof s.totalPolicies === "number" ? s.totalPolicies : (policies.length ? policies.length : null);
+
+  const enabledPolicies = typeof s.enabledPolicies === "number" ? s.enabledPolicies : null;
+  const reportOnlyPolicies = typeof s.reportOnlyPolicies === "number" ? s.reportOnlyPolicies : null;
+  const disabledPolicies = typeof s.disabledPolicies === "number" ? s.disabledPolicies : null;
+
+  const policiesTargetingAllUsers =
+    typeof s.policiesTargetingAllUsers === "number" ? s.policiesTargetingAllUsers : null;
+
+  const policiesWithMfaGrantControl =
+    typeof s.policiesWithMfaGrantControl === "number" ? s.policiesWithMfaGrantControl : null;
+
+  const policiesExcludingUsersCount =
+    typeof s.policiesExcludingUsersCount === "number" ? s.policiesExcludingUsersCount : null;
+
+  const hasLegacyAuthPolicyDetected =
+    typeof s.hasLegacyAuthPolicyDetected === "boolean" ? s.hasLegacyAuthPolicyDetected : null;
+
+  const namedLocationsCount = typeof s.namedLocationsCount === "number" ? s.namedLocationsCount : null;
+
+  const truncated = typeof s.truncated === "boolean" ? s.truncated : null;
+  const permissionDenied = typeof s.permissionDenied === "boolean" ? s.permissionDenied : null;
+
+  const maxPolicies = typeof s.maxPolicies === "number" ? s.maxPolicies : null;
+
+  return {
+    totalPolicies,
+    enabledPolicies,
+    reportOnlyPolicies,
+    disabledPolicies,
+    policiesTargetingAllUsers,
+    policiesWithMfaGrantControl,
+    policiesExcludingUsersCount,
+    hasLegacyAuthPolicyDetected,
+    namedLocationsCount,
+    truncated,
+    permissionDenied,
+    maxPolicies
+  };
 }
 
 export const runSummaryExcelReportCollector: Collector = {
@@ -291,27 +371,21 @@ export const runSummaryExcelReportCollector: Collector = {
 
     const eapCandidates =
       run.dataProfile === "full"
-        ? [
-            "enterprise-app-permissions.full.json",
-            "enterprise-app-permissions.safe.json",
-            "enterprise-app-permissions.json"
-          ]
+        ? ["enterprise-app-permissions.full.json", "enterprise-app-permissions.safe.json", "enterprise-app-permissions.json"]
         : ["enterprise-app-permissions.json", "enterprise-app-permissions.safe.json"];
 
-    const { artefact: usersArtefact, filename: usersArtefactName } =
-      pickArtefactByFilename(usersCandidates);
-    const { artefact: eapArtefact, filename: eapArtefactName } =
-      pickArtefactByFilename(eapCandidates);
+    // Conditional Access: report must only consume safe-compatible artefacts
+    const caCandidates = ["conditional-access-policies.safe.json"];
+
+    const { artefact: usersArtefact, filename: usersArtefactName } = pickArtefactByFilename(usersCandidates);
+    const { artefact: eapArtefact, filename: eapArtefactName } = pickArtefactByFilename(eapCandidates);
+    const { artefact: caArtefact, filename: caArtefactName } = pickArtefactByFilename(caCandidates);
 
     let usersJson: UsersInventoryJson | null = null;
     let usersJsonError: string | null = null;
 
     if (usersArtefact) {
-      const text = await downloadArtefactText({
-        s3,
-        bucket: usersArtefact.bucket,
-        key: usersArtefact.key
-      });
+      const text = await downloadArtefactText({ s3, bucket: usersArtefact.bucket, key: usersArtefact.key });
       const parsed = tryParseJson<UsersInventoryJson>(text);
       if (parsed.ok) usersJson = parsed.value;
       else usersJsonError = parsed.error;
@@ -321,18 +395,25 @@ export const runSummaryExcelReportCollector: Collector = {
     let eapJsonError: string | null = null;
 
     if (eapArtefact) {
-      const text = await downloadArtefactText({
-        s3,
-        bucket: eapArtefact.bucket,
-        key: eapArtefact.key
-      });
+      const text = await downloadArtefactText({ s3, bucket: eapArtefact.bucket, key: eapArtefact.key });
       const parsed = tryParseJson<EnterpriseAppPermissionsJson>(text);
       if (parsed.ok) eapJson = parsed.value;
       else eapJsonError = parsed.error;
     }
 
+    let caJson: ConditionalAccessPoliciesSafeJson | null = null;
+    let caJsonError: string | null = null;
+
+    if (caArtefact) {
+      const text = await downloadArtefactText({ s3, bucket: caArtefact.bucket, key: caArtefact.key });
+      const parsed = tryParseJson<ConditionalAccessPoliciesSafeJson>(text);
+      if (parsed.ok) caJson = parsed.value;
+      else caJsonError = parsed.error;
+    }
+
     const usersSummary = usersJson ? normalizeUsersSummary(usersJson) : null;
     const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
+    const caSummary = caJson ? normalizeCaSummary(caJson) : null;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = "m365-discovery-platform";
@@ -385,6 +466,14 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({ field: "eap.riskyApps", value: eapSummary.riskyApps ?? "" });
       } else if (eapJsonError) {
         ws.addRow({ field: "eap.parseError", value: eapJsonError });
+      }
+
+      if (caSummary) {
+        ws.addRow({ field: "ca.totalPolicies", value: caSummary.totalPolicies ?? "" });
+        ws.addRow({ field: "ca.permissionDenied", value: caSummary.permissionDenied ?? "" });
+        ws.addRow({ field: "ca.truncated", value: caSummary.truncated ?? "" });
+      } else if (caJsonError) {
+        ws.addRow({ field: "ca.parseError", value: caJsonError });
       }
     }
 
@@ -656,8 +745,7 @@ export const runSummaryExcelReportCollector: Collector = {
               userPrincipalName: String(u?.userPrincipalName ?? ""),
               mail: String(u?.mail ?? ""),
               userType: String(u?.userType ?? ""),
-              accountEnabled:
-                u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
+              accountEnabled: u?.accountEnabled === true ? "true" : (u?.accountEnabled === false ? "false" : ""),
               createdDateTime: String(u?.createdDateTime ?? "")
             });
           }
@@ -705,14 +793,8 @@ export const runSummaryExcelReportCollector: Collector = {
         const apps: any[] = Array.isArray(eapJson?.apps) ? eapJson.apps : [];
 
         for (const app of apps) {
-          const appPermCount = Array.isArray(app?.applicationPermissions)
-            ? app.applicationPermissions.length
-            : 0;
-
-          const delPermCount = Array.isArray(app?.delegatedPermissions)
-            ? app.delegatedPermissions.length
-            : 0;
-
+          const appPermCount = Array.isArray(app?.applicationPermissions) ? app.applicationPermissions.length : 0;
+          const delPermCount = Array.isArray(app?.delegatedPermissions) ? app.delegatedPermissions.length : 0;
           const riskyCount = Array.isArray(app?.risky) ? app.risky.length : 0;
 
           ws.addRow({
@@ -736,6 +818,67 @@ export const runSummaryExcelReportCollector: Collector = {
             riskyPermissions: "No apps[] present in parsed JSON.",
             riskFlag: "n/a"
           });
+        }
+      }
+    }
+
+    // -------------------------
+    // Sheet 8: Conditional Access
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Conditional Access"));
+
+      ws.columns = [
+        { header: "field", key: "field", width: 42 },
+        { header: "value", key: "value", width: 22 },
+        { header: "notes", key: "notes", width: 100 }
+      ];
+
+      if (!caArtefact) {
+        ws.addRow({
+          field: "status",
+          value: "not-available",
+          notes: `${caArtefactName} artefact was not present in this run.`
+        });
+      } else if (caJsonError) {
+        ws.addRow({
+          field: "status",
+          value: "error",
+          notes: `Failed to parse ${caArtefactName}: ${caJsonError}`
+        });
+      } else {
+        const permissionDenied = caSummary?.permissionDenied === true;
+        const truncated = caSummary?.truncated === true;
+
+        const statusNote = permissionDenied
+          ? "Permission denied reading Conditional Access policies (missing Graph scopes). This is a data completeness signal, not a policy judgement."
+          : truncated
+            ? "Conditional Access policy enumeration was truncated (demo guardrails / API limits). Counts reflect only the collected subset."
+            : "Conditional Access policies were collected successfully.";
+
+        ws.addRow({ field: "status", value: permissionDenied ? "permission-denied" : (truncated ? "truncated" : "ok"), notes: statusNote });
+
+        ws.addRow({ field: "generatedAt", value: caJson?.generatedAt ?? "", notes: "" });
+        ws.addRow({ field: "artefact", value: caArtefactName, notes: "Report consumes safe-compatible artefact only; full artefacts are never implicitly loaded." });
+
+        ws.addRow({ field: "totalPolicies", value: caSummary?.totalPolicies ?? "n/a", notes: "" });
+        ws.addRow({ field: "enabledPolicies", value: caSummary?.enabledPolicies ?? "n/a", notes: "" });
+        ws.addRow({ field: "reportOnlyPolicies", value: caSummary?.reportOnlyPolicies ?? "n/a", notes: "" });
+        ws.addRow({ field: "disabledPolicies", value: caSummary?.disabledPolicies ?? "n/a", notes: "" });
+
+        ws.addRow({ field: "policiesTargetingAllUsers", value: caSummary?.policiesTargetingAllUsers ?? "n/a", notes: "" });
+        ws.addRow({ field: "policiesWithMfaGrantControl", value: caSummary?.policiesWithMfaGrantControl ?? "n/a", notes: "" });
+        ws.addRow({ field: "policiesExcludingUsersCount", value: caSummary?.policiesExcludingUsersCount ?? "n/a", notes: "Count of excludeUsers entries across the collected policies (safe summary)." });
+        ws.addRow({ field: "hasLegacyAuthPolicyDetected", value: caSummary?.hasLegacyAuthPolicyDetected ?? "n/a", notes: "" });
+
+        ws.addRow({ field: "namedLocationsCount", value: caSummary?.namedLocationsCount ?? "n/a", notes: "Named locations are not enumerated in this collector yet (placeholder factual value)." });
+
+        ws.addRow({ field: "truncated", value: String(caSummary?.truncated ?? ""), notes: "" });
+        ws.addRow({ field: "permissionDenied", value: String(caSummary?.permissionDenied ?? ""), notes: "" });
+        ws.addRow({ field: "maxPolicies", value: caSummary?.maxPolicies ?? "", notes: "If set, indicates demo/performance cap applied by CA_MAX_POLICIES." });
+
+        if (caJson?.error) {
+          ws.addRow({ field: "error", value: "present", notes: safeJsonCell(caJson.error, 2400) });
         }
       }
     }
