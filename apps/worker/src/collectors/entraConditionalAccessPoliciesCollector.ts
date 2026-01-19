@@ -37,6 +37,14 @@ type ObservedCheckInput = {
   references?: unknown;
 };
 
+type GraphErrorReference = {
+  status?: number;
+  url?: string;
+  requestId?: string;
+  clientRequestId?: string;
+  error?: unknown;
+};
+
 /**
  * Record observed checks in an idempotent way.
  * Since ObservedCheck has no unique constraint, we enforce idempotency by:
@@ -100,9 +108,6 @@ function isTargetsAllUsers(policy: ConditionalAccessPolicy): boolean {
 }
 
 function detectsLegacyAuthBlock(policy: ConditionalAccessPolicy): boolean {
-  // Factual heuristic (not a compliance judgement):
-  // - CA policy targets legacy client app types (exchangeActiveSync/other)
-  // - and includes "block" built-in control
   const clientAppTypes = (policy.conditions?.clientAppTypes ?? []).map((s) =>
     (s ?? "").toLowerCase()
   );
@@ -115,6 +120,16 @@ function detectsLegacyAuthBlock(policy: ConditionalAccessPolicy): boolean {
   const blocks = builtIn.includes("block");
 
   return targetsLegacy && blocks;
+}
+
+function buildGraphErrorReference(err: any): GraphErrorReference {
+  return {
+    status: err?.status,
+    url: err?.url,
+    requestId: err?.requestId,
+    clientRequestId: err?.clientRequestId,
+    error: err?.error
+  };
 }
 
 export const entraConditionalAccessPoliciesCollector: Collector = {
@@ -130,19 +145,36 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
     const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
+    let policies: ConditionalAccessPolicy[] = [];
+    let permissionDenied = false;
+    let permissionErrorRef: GraphErrorReference | null = null;
+
     // Fetch policies (full shape so we can compute counts + optional full export)
-    // We do not assume execution order; this collector is standalone evidence + observation.
-    const policies = await graphGetAllPages<ConditionalAccessPolicy>(
-      token,
-      "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
-    );
+    try {
+      policies = await graphGetAllPages<ConditionalAccessPolicy>(
+        token,
+        "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
+      );
+    } catch (err: any) {
+      // Explicitly treat missing scopes / access denied as discovery incompleteness
+      if (err?.status === 403) {
+        permissionDenied = true;
+        permissionErrorRef = buildGraphErrorReference(err);
+        policies = [];
+      } else {
+        throw err;
+      }
+    }
 
     // Optional demo/perf cap (not required, but supports predictable demos).
     // If set, we surface truncation as a completeness signal (never silent).
     const MAX_POLICIES = Number(process.env.CA_MAX_POLICIES ?? 0);
-    const wasTruncated = MAX_POLICIES > 0 && policies.length > MAX_POLICIES;
-    const targetPolicies = wasTruncated ? policies.slice(0, MAX_POLICIES) : policies;
+    const capTruncated = MAX_POLICIES > 0 && policies.length > MAX_POLICIES;
 
+    // Permission denied is also a completeness problem (treat as truncated)
+    const truncated = permissionDenied || capTruncated;
+
+    const targetPolicies = capTruncated ? policies.slice(0, MAX_POLICIES) : policies;
     const totalPolicies = policies.length;
 
     const enabledPolicies = targetPolicies.filter(
@@ -169,6 +201,8 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
     // Named locations: not enumerated in v1; we expose a factual 0.
     const namedLocationsCount = 0;
 
+    const fullExported = includeSensitive && !permissionDenied;
+
     // -------------------------
     // Observed check (preferred pattern)
     // -------------------------
@@ -191,21 +225,21 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
             policiesExcludingUsersCount,
             hasLegacyAuthPolicyDetected,
             namedLocationsCount,
-            truncated: wasTruncated,
+            truncated,
+            permissionDenied,
             maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null,
-            fullExported: includeSensitive
+            fullExported
           },
-          references: []
+          references: permissionErrorRef ? [permissionErrorRef] : []
         }
       ]
     });
 
     // -------------------------
     // Finding: ENTRA_CA_001
-    // Meaning (stable): "No enabled Conditional Access policies detected"
-    // Safety: do NOT raise this if results are truncated/incomplete.
+    // Only when evidence is complete (no truncation AND no permission denial)
     // -------------------------
-    if (!wasTruncated && enabledPolicies === 0) {
+    if (!truncated && enabledPolicies === 0) {
       await ctx.prisma.finding.create({
         data: {
           runId: ctx.run.id,
@@ -231,7 +265,7 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
     // -------------------------
     // Artefacts (evidence layer)
     // Safe: counts/states/control types only; no membership identifiers.
-    // Full: includes include/exclude IDs (PII-adjacent), only when dataProfile === \"full\".
+    // Full: includes include/exclude IDs (PII-adjacent), only when dataProfile === \"full\" and permitted.
     // -------------------------
     const safePolicies = targetPolicies.map((p) => ({
       id: p.id,
@@ -265,65 +299,66 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
       hasSessionControls: !!p.sessionControls
     }));
 
-    const safeArtefactContent = JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        profile: "safe",
-        tenant: {
-          tenantGuid: ctx.tenant.tenantGuid,
-          primaryDomain: ctx.tenant.primaryDomain,
-          displayName: ctx.tenant.displayName
-        },
-        summary: {
-          totalPolicies,
-          enabledPolicies,
-          reportOnlyPolicies,
-          disabledPolicies,
-          policiesTargetingAllUsers,
-          policiesWithMfaGrantControl,
-          policiesExcludingUsersCount,
-          hasLegacyAuthPolicyDetected,
-          namedLocationsCount,
-          truncated: wasTruncated,
-          maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null
-        },
-        policies: safePolicies
+    const safeArtefactBody = {
+      generatedAt: new Date().toISOString(),
+      profile: "safe",
+      tenant: {
+        tenantGuid: ctx.tenant.tenantGuid,
+        primaryDomain: ctx.tenant.primaryDomain,
+        displayName: ctx.tenant.displayName
       },
-      null,
-      2
-    );
+      summary: {
+        totalPolicies,
+        enabledPolicies,
+        reportOnlyPolicies,
+        disabledPolicies,
+        policiesTargetingAllUsers,
+        policiesWithMfaGrantControl,
+        policiesExcludingUsersCount,
+        hasLegacyAuthPolicyDetected,
+        namedLocationsCount,
+        truncated,
+        permissionDenied,
+        maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null
+      },
+      error: permissionErrorRef,
+      policies: safePolicies
+    };
 
-    const fullArtefactContent = includeSensitive
-      ? JSON.stringify(
-          {
-            generatedAt: new Date().toISOString(),
-            profile: "full",
-            tenant: {
-              tenantGuid: ctx.tenant.tenantGuid,
-              primaryDomain: ctx.tenant.primaryDomain,
-              displayName: ctx.tenant.displayName
+    const safeArtefactContent = JSON.stringify(safeArtefactBody, null, 2);
+
+    const fullArtefactContent =
+      includeSensitive && !permissionDenied
+        ? JSON.stringify(
+            {
+              generatedAt: new Date().toISOString(),
+              profile: "full",
+              tenant: {
+                tenantGuid: ctx.tenant.tenantGuid,
+                primaryDomain: ctx.tenant.primaryDomain,
+                displayName: ctx.tenant.displayName
+              },
+              summary: {
+                totalPolicies,
+                enabledPolicies,
+                reportOnlyPolicies,
+                disabledPolicies,
+                truncated,
+                maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null
+              },
+              policies: targetPolicies.map((p) => ({
+                id: p.id,
+                displayName: p.displayName ?? "(unknown)",
+                state: normaliseState(p.state),
+                conditions: p.conditions ?? {},
+                grantControls: p.grantControls ?? {},
+                sessionControls: p.sessionControls ?? null
+              }))
             },
-            summary: {
-              totalPolicies,
-              enabledPolicies,
-              reportOnlyPolicies,
-              disabledPolicies,
-              truncated: wasTruncated,
-              maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null
-            },
-            policies: targetPolicies.map((p) => ({
-              id: p.id,
-              displayName: p.displayName ?? "(unknown)",
-              state: normaliseState(p.state),
-              conditions: p.conditions ?? {},
-              grantControls: p.grantControls ?? {},
-              sessionControls: p.sessionControls ?? null
-            }))
-          },
-          null,
-          2
-        )
-      : null;
+            null,
+            2
+          )
+        : null;
 
     return {
       id: entraConditionalAccessPoliciesCollector.id,
@@ -334,8 +369,9 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
         enabledPolicies,
         reportOnlyPolicies,
         disabledPolicies,
-        truncated: wasTruncated,
-        fullExported: includeSensitive
+        truncated,
+        permissionDenied,
+        fullExported
       },
       artefacts: [
         {
