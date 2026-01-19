@@ -1,10 +1,13 @@
 import type { Collector } from "./types";
-import { getGraphAccessToken, graphGetAllPages } from "./graph";
+import { getGraphAccessToken, graphGetAllPages, GraphHttpError } from "./graph";
+
+// NOTE: This is a FULL FILE REPLACEMENT.
+// It preserves existing behaviour and adds resilient handling for missing Graph scopes (403).
 
 type ConditionalAccessPolicy = {
   id: string;
   displayName?: string | null;
-  state?: string | null; // "enabled" | "disabled" | "enabledForReportingButNotEnforced" (Graph)
+  state?: string | null; // enabled | disabled | enabledForReportingButNotEnforced
   conditions?: {
     users?: {
       includeUsers?: string[];
@@ -26,9 +29,9 @@ type ConditionalAccessPolicy = {
     builtInControls?: string[];
     customAuthenticationFactors?: string[];
     termsOfUse?: string[];
-    authenticationStrength?: any;
+    authenticationStrength?: unknown;
   };
-  sessionControls?: Record<string, any> | null;
+  sessionControls?: Record<string, unknown> | null;
 };
 
 type ObservedCheckInput = {
@@ -42,15 +45,9 @@ type GraphErrorReference = {
   url?: string;
   requestId?: string;
   clientRequestId?: string;
-  error?: unknown;
+  bodyText?: string;
 };
 
-/**
- * Record observed checks in an idempotent way.
- * Since ObservedCheck has no unique constraint, we enforce idempotency by:
- * - deleting existing rows for the same (runId, jobId, checkId)
- * - inserting fresh rows
- */
 async function recordObservedChecks(params: {
   prisma: any;
   runId: string;
@@ -122,69 +119,60 @@ function detectsLegacyAuthBlock(policy: ConditionalAccessPolicy): boolean {
   return targetsLegacy && blocks;
 }
 
-function buildGraphErrorReference(err: any): GraphErrorReference {
+function graphErrorToReference(err: GraphHttpError): GraphErrorReference {
   return {
-    status: err?.status,
-    url: err?.url,
-    requestId: err?.requestId,
-    clientRequestId: err?.clientRequestId,
-    error: err?.error
+    status: err.status,
+    url: err.url,
+    requestId: err.requestId,
+    clientRequestId: err.clientRequestId,
+    bodyText: err.bodyText
   };
 }
 
 export const entraConditionalAccessPoliciesCollector: Collector = {
   id: "entra.conditionalAccess.policies",
   displayName: "Conditional Access Policies",
-  async run(ctx) {
-    const tenantId = ctx.tenant.tenantGuid;
-    const token = await getGraphAccessToken({ tenantId });
 
-    // Collector-level hardening: only explicit "full" enables sensitive exports.
-    // Any unknown/missing value is treated as "safe".
+  async run(ctx) {
+    const tenantGuid = ctx.tenant.tenantGuid;
+    const token = await getGraphAccessToken({ tenantId: tenantGuid });
+
     const rawProfile = (ctx.run as any)?.dataProfile;
     const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
     let policies: ConditionalAccessPolicy[] = [];
     let permissionDenied = false;
-    let permissionErrorRef: GraphErrorReference | null = null;
+    let permissionError: GraphErrorReference | null = null;
 
-    // Fetch policies (full shape so we can compute counts + optional full export)
     try {
       policies = await graphGetAllPages<ConditionalAccessPolicy>(
         token,
         "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies"
       );
     } catch (err: any) {
-      // Explicitly treat missing scopes / access denied as discovery incompleteness
-      if (err?.status === 403) {
+      if (err instanceof GraphHttpError && err.status === 403) {
         permissionDenied = true;
-        permissionErrorRef = buildGraphErrorReference(err);
+        permissionError = graphErrorToReference(err);
         policies = [];
       } else {
         throw err;
       }
     }
 
-    // Optional demo/perf cap (not required, but supports predictable demos).
-    // If set, we surface truncation as a completeness signal (never silent).
     const MAX_POLICIES = Number(process.env.CA_MAX_POLICIES ?? 0);
     const capTruncated = MAX_POLICIES > 0 && policies.length > MAX_POLICIES;
 
-    // Permission denied is also a completeness problem (treat as truncated)
     const truncated = permissionDenied || capTruncated;
-
     const targetPolicies = capTruncated ? policies.slice(0, MAX_POLICIES) : policies;
-    const totalPolicies = policies.length;
 
+    const totalPolicies = policies.length;
     const enabledPolicies = targetPolicies.filter(
       (p) => normaliseState(p.state) === "enabled"
     ).length;
-
     const reportOnlyPolicies = targetPolicies.filter(
       (p) => normaliseState(p.state) === "reportOnly"
     ).length;
-
     const disabledPolicies = targetPolicies.filter(
       (p) => normaliseState(p.state) === "disabled"
     ).length;
@@ -197,15 +185,10 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
     }, 0);
 
     const hasLegacyAuthPolicyDetected = targetPolicies.some(detectsLegacyAuthBlock);
-
-    // Named locations: not enumerated in v1; we expose a factual 0.
-    const namedLocationsCount = 0;
+    const namedLocationsCount = 0; // not enumerated yet
 
     const fullExported = includeSensitive && !permissionDenied;
 
-    // -------------------------
-    // Observed check (preferred pattern)
-    // -------------------------
     await recordObservedChecks({
       prisma: ctx.prisma,
       runId: ctx.run.id,
@@ -230,15 +213,11 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
             maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null,
             fullExported
           },
-          references: permissionErrorRef ? [permissionErrorRef] : []
+          references: permissionError ? [permissionError] : []
         }
       ]
     });
 
-    // -------------------------
-    // Finding: ENTRA_CA_001
-    // Only when evidence is complete (no truncation AND no permission denial)
-    // -------------------------
     if (!truncated && enabledPolicies === 0) {
       await ctx.prisma.finding.create({
         data: {
@@ -262,11 +241,6 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
       });
     }
 
-    // -------------------------
-    // Artefacts (evidence layer)
-    // Safe: counts/states/control types only; no membership identifiers.
-    // Full: includes include/exclude IDs (PII-adjacent), only when dataProfile === \"full\" and permitted.
-    // -------------------------
     const safePolicies = targetPolicies.map((p) => ({
       id: p.id,
       displayName: p.displayName ?? "(unknown)",
@@ -321,7 +295,7 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
         permissionDenied,
         maxPolicies: MAX_POLICIES > 0 ? MAX_POLICIES : null
       },
-      error: permissionErrorRef,
+      error: permissionError,
       policies: safePolicies
     };
 
