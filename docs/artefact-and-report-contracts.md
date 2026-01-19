@@ -108,6 +108,33 @@ Absence of suffix implies **safe-mode compatible output**.
 
 ---
 
+### `entra.conditionalAccess.policies` (Raw)
+
+| Profile | Filename                                | Class | Notes                                                                              |
+| ------- | --------------------------------------- | ----- | ---------------------------------------------------------------------------------- |
+| safe    | `conditional-access-policies.safe.json` | Raw   | Counts, states, control *types* only; no user, group, role, or location membership |
+| full    | `conditional-access-policies.full.json` | Raw   | Includes policy include/exclude assignments and named location references          |
+
+**Rules & guarantees**:
+
+* Safe runs **only** emit `conditional-access-policies.safe.json`
+* Full runs emit **both** safe and full artefacts
+* Safe artefact contains **no PII or membership identifiers**
+* Full artefact is explicitly PII-bearing and must never be implicitly consumed
+
+#### Data completeness & demo behaviour
+
+* API limits, demo guardrails, or permission constraints may result in partial enumeration
+
+* Any such condition **must be surfaced** via:
+
+  * `truncated = true` in observed checks
+  * appropriate reporting notes
+
+* Absence of policies is a valid, complete state and must not be treated as truncation
+
+---
+
 ## Reporting Artefacts (Terminal)
 
 ### Run Summary CSV
@@ -137,6 +164,7 @@ Sheets:
 * Artefacts
 * Users (if safe user artefact present)
 * Enterprise Apps (if artefact present)
+* Conditional Access (if artefact present)
 * Optional per-collector summary (demo-only convenience)
 
 **Consumption rules**:
