@@ -268,6 +268,8 @@ app.get("/demo", async (_req, reply) => {
             <label><input type="checkbox" id="entraUsers" checked /> entraUsers</label>
             <label><input type="checkbox" id="enterpriseAppPermissions" checked /> enterpriseAppPermissions</label>
             <label><input type="checkbox" id="conditionalAccessPolicies" checked /> conditionalAccessPolicies</label>
+            <label><input type="checkbox" id="directoryRolesAssignments" checked /> directoryRolesAssignments</label>
+
           </div>
           <div class="note">Report collectors are always enqueued at the end of a run.</div>
         </div>
@@ -482,6 +484,7 @@ app.get("/demo", async (_req, reply) => {
     const entraUsers = $("entraUsers").checked;
     const enterpriseAppPermissions = $("enterpriseAppPermissions").checked;
     const conditionalAccessPolicies = $("conditionalAccessPolicies").checked;
+    const directoryRolesAssignments = $("directoryRolesAssignments").checked;
 
     const payload = {
       tenantGuid,
@@ -493,6 +496,7 @@ app.get("/demo", async (_req, reply) => {
         entraUsers,
         enterpriseAppPermissions,
         conditionalAccessPolicies
+        directoryRolesAssignments
       }
     };
 
