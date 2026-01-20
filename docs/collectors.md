@@ -49,6 +49,7 @@ Collectors do **not** manage orchestration, retries, or concurrency directly.
 Collectors implement `Collector` and return a `CollectorResult`:
 
 * `id` — collector identifier (must match the registered collector id)
+* `status` — `ok` | `error`
 * `summary` — small, stable summary (counts/flags)
 * `artefacts` — optional downloadable outputs
 * may emit findings/observed checks via Prisma within execution
@@ -56,9 +57,34 @@ Collectors implement `Collector` and return a `CollectorResult`:
 Rules:
 
 * `id` **must** equal the collector’s registered ID (e.g. `entra.users`).
+* `status` must be `ok` on success and `error` on failure.
 * `summary` must stay small and stable.
 * Large inventories must be emitted as artefacts (not embedded into findings).
 * Fail cleanly and write a useful `lastError` when failing.
+
+### Collector result contract (v1)
+
+This is the **runtime contract** that keeps worker → API → UI/reporting stable.
+
+* All collectors return a `CollectorResult` shape.
+* The worker normalises collector outputs before persistence (`normalizeCollectorResult`), so downstream consumers can assume a predictable shape.
+
+`CollectorResult` expectations:
+
+* `id`: string (usually equals `collector.id`)
+* `status`: `ok` | `error`
+* `summary?`: small JSON object (counts/flags, stable keys)
+* `artefacts?`: array of `CollectorArtefact` where:
+  * `type`: **Prisma enum** `ArtefactType` (`json` | `csv` | `raw`)
+  * `filename`: stable, documented filename
+  * `contentType`: MIME type (e.g. `application/json`, `text/csv`)
+  * `content`: `string` or `Buffer` (collector returns bytes; worker uploads to object storage + writes DB row)
+
+Notes:
+
+* Use `type: "raw"` for binary outputs (e.g. `.xlsx`).
+* Collectors must not invent new `type` values; only use `json|csv|raw`.
+* Safe-by-default still applies: returning an artefact does not imply it is safe to contain sensitive content.
 
 ---
 
