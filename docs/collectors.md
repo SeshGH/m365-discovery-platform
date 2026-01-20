@@ -209,7 +209,9 @@ Important:
 
 **Findings (current)**
 
-* `ENTRA_CA_001` — No enabled Conditional Access policies detected (severity: `high`)
+* `ENTRA_CA_001` — No enabled Conditional Access policies detected (severity: `low`)
+  * Emitted only when Conditional Access evidence is complete
+  * (not truncated and not permission-denied)
 
 **Artefacts (current)**
 
@@ -242,6 +244,40 @@ Notes:
 **Artefacts**
 
 * None
+
+---
+
+### `entra.directoryRoles.assignments`
+
+**Purpose**
+
+* Inventories Entra directory roles and privileged role assignments
+* Surfaces scale, complexity, and completeness signals
+* Supports security posture and take-on / migration scoping lenses
+
+**Observed checks (current)**
+
+* `ENTRA_DIRROLES_OBS_001` — Directory roles inventory summary
+* `ENTRA_DIRROLES_OBS_002` — Assignment principal type distribution
+* `ENTRA_DIRROLES_OBS_003` — Group-based role assignments present
+* `ENTRA_DIRROLES_OBS_004` — Eligible / PIM coverage signal
+* `ENTRA_DIRROLES_OBS_005` — Data completeness for role assignment set
+
+**Findings**
+
+* None (initial iteration)
+
+**Artefacts (current)**
+
+* Directory roles assignments JSON (profile-aware):
+
+  * `directory-roles-assignments.safe.json`
+  * `directory-roles-assignments.full.json`
+
+Notes:
+
+* No risk interpretation is performed at this stage
+* Demo or permission limits must surface via completeness signals
 
 ---
 
