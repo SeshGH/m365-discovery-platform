@@ -1,7 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true
+    "composite": true,
+
+    // We run via tsx (runtime), but we want typechecking without forcing .js extensions everywhere.
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "target": "ES2022",
+
+    "noEmit": true,
+    "types": ["node"],
+
+    // Keep it strict enough to catch real bugs, but not insane.
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"]
 }

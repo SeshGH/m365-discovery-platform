@@ -1,17 +1,26 @@
-import type { PrismaClient, Job, Run, Tenant } from "@acme/db";
+import type { PrismaClient, ArtefactType } from "@prisma/client";
 
+/**
+ * NOTE:
+ * We intentionally do NOT import Prisma types (Run/Job/Tenant) from @acme/db.
+ * @acme/db does not export those generated types, and the worker doesn't need
+ * strict Prisma typing here to be useful.
+ *
+ * CollectorContext stays stable as a contract: prisma + job/run/tenant objects exist.
+ */
 export type CollectorContext = {
   prisma: PrismaClient;
-  job: Job;
-  run: Run;
-  tenant: Tenant;
+  job: any;
+  run: any;
+  tenant: any;
 };
 
 export type CollectorArtefact = {
-  type: string; // should align with Prisma ArtefactType enum (e.g. "json")
+  // Must align with Prisma enum ArtefactType (e.g. "json" | "csv" | "raw")
+  type: ArtefactType;
   filename: string;
   contentType: string; // e.g. "application/json", "text/csv"
-  content?: string | Buffer; // optional: some collectors may only write Findings
+  content?: string | Buffer; // optional: some collectors may only write findings
 };
 
 export type CollectorStatus = "ok" | "error";
@@ -31,6 +40,8 @@ export type Collector = {
   run: (ctx: CollectorContext) => Promise<CollectorResult>;
 };
 
+const ALLOWED_ARTEFACT_TYPES = new Set<ArtefactType>(["json", "csv", "raw"] as ArtefactType[]);
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
@@ -39,6 +50,13 @@ function asString(v: unknown): string {
   if (typeof v === "string") return v;
   if (v instanceof Error && typeof v.message === "string") return v.message;
   return String(v);
+}
+
+function normalizeArtefactType(v: unknown): ArtefactType {
+  if (typeof v === "string" && (ALLOWED_ARTEFACT_TYPES as Set<string>).has(v)) {
+    return v as ArtefactType;
+  }
+  return "json" as ArtefactType;
 }
 
 function normalizeArtefacts(input: unknown): CollectorArtefact[] | undefined {
@@ -53,10 +71,10 @@ function normalizeArtefacts(input: unknown): CollectorArtefact[] | undefined {
     if (!isNonEmptyString(a.filename) || !isNonEmptyString(a.contentType)) continue;
 
     out.push({
-      type: isNonEmptyString(a.type) ? a.type : "json",
+      type: normalizeArtefactType((a as any).type),
       filename: a.filename,
       contentType: a.contentType,
-      content: a.content
+      content: (a as any).content
     });
   }
 
@@ -64,22 +82,18 @@ function normalizeArtefacts(input: unknown): CollectorArtefact[] | undefined {
 }
 
 /**
- * Ensures every collector result stored in Job.result has a predictable, safe shape.
- * This avoids downstream UI/processing needing to handle a dozen "almost correct" variations.
+ * Ensures every collector result stored in Job.result has a predictable shape.
+ * This avoids downstream UI/processing needing to handle multiple variations.
  */
-export function normalizeCollectorResult(
-  collectorId: string,
-  result: unknown
-): CollectorResult {
+export function normalizeCollectorResult(collectorId: string, result: unknown): CollectorResult {
   const r = (result ?? {}) as Partial<CollectorResult>;
 
   const status: CollectorStatus = r.status === "error" ? "error" : "ok";
   const id = isNonEmptyString(r.id) ? r.id : collectorId;
 
-  const artefacts = normalizeArtefacts(r.artefacts);
+  const artefacts = normalizeArtefacts((r as any).artefacts);
 
   let errors: string[] | undefined;
-
   if (status === "error") {
     if (Array.isArray(r.errors) && r.errors.length > 0) {
       errors = r.errors.map(asString).filter((s) => s.trim().length > 0);
@@ -88,10 +102,7 @@ export function normalizeCollectorResult(
     }
   }
 
-  const normalized: CollectorResult = {
-    id,
-    status
-  };
+  const normalized: CollectorResult = { id, status };
 
   if (r.data !== undefined) normalized.data = r.data;
   if (artefacts) normalized.artefacts = artefacts;

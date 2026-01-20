@@ -335,7 +335,7 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
         : null;
 
     return {
-      id: entraConditionalAccessPoliciesCollector.id,
+      id: "entra.conditionalAccess.policies",
       status: "ok",
       summary: {
         profile: dataProfile,
@@ -345,11 +345,11 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
         disabledPolicies,
         truncated,
         permissionDenied,
-        fullExported
+        fullExported: includeSensitive
       },
       artefacts: [
         {
-          type: "json",
+          type: "json" as const,
           filename: "conditional-access-policies.safe.json",
           contentType: "application/json",
           content: safeArtefactContent
@@ -357,7 +357,7 @@ export const entraConditionalAccessPoliciesCollector: Collector = {
         ...(includeSensitive && fullArtefactContent
           ? [
               {
-                type: "json",
+                type: "json" as const,
                 filename: "conditional-access-policies.full.json",
                 contentType: "application/json",
                 content: fullArtefactContent

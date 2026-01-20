@@ -204,6 +204,11 @@ export const entraUsersCollector: Collector = {
         )
       : null;
 
+    // Filenames:
+    // - safe run: users-inventory.json
+    // - full run: users-inventory.safe.json + users-inventory.full.json
+    const safeFilename = includeSensitive ? "users-inventory.safe.json" : "users-inventory.json";
+
     return {
       id: "entra.users",
       status: "ok",
@@ -217,15 +222,15 @@ export const entraUsersCollector: Collector = {
       },
       artefacts: [
         {
-          type: "json",
-          filename: includeSensitive ? "users-inventory.safe.json" : "users-inventory.json",
+          type: "json" as const,
+          filename: safeFilename,
           contentType: "application/json",
           content: inventoryArtefact
         },
         ...(includeSensitive && fullInventoryArtefact
           ? [
               {
-                type: "json",
+                type: "json" as const,
                 filename: "users-inventory.full.json",
                 contentType: "application/json",
                 content: fullInventoryArtefact
