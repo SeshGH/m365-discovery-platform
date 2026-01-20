@@ -34,7 +34,8 @@ app.addContentTypeParser(
 const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   entraUsers: "entra.users",
   enterpriseAppPermissions: "entra.enterpriseApps.permissions",
-  conditionalAccessPolicies: "entra.conditionalAccess.policies"
+  conditionalAccessPolicies: "entra.conditionalAccess.policies",
+  directoryRolesAssignments: "entra.directoryRoles.assignments"
 };
 
 // Always enqueue these report jobs at the end of a run
@@ -495,7 +496,7 @@ app.get("/demo", async (_req, reply) => {
       modulesEnabled: {
         entraUsers,
         enterpriseAppPermissions,
-        conditionalAccessPolicies
+        conditionalAccessPolicies,
         directoryRolesAssignments
       }
     };
@@ -506,10 +507,27 @@ app.get("/demo", async (_req, reply) => {
       body: JSON.stringify(payload)
     });
 
-    const json = await res.json();
+    // Always surface errors in the demo UI
+    let json = null;
+    let text = "";
+
+    try {
+      json = await res.json();
+    } catch {
+      try { text = await res.text(); } catch { /* ignore */ }
+    }
+
+    if (!res.ok) {
+      const details = json ? JSON.stringify(json, null, 2) : (text || \`HTTP \${res.status}\`);
+      alert("Create run failed:\\n\\n" + details);
+      return;
+    }
 
     const runId = json && json.runId;
-    if (!runId) return;
+    if (!runId) {
+      alert("Create run failed: no runId returned");
+      return;
+    }
 
     currentRunId = runId;
     $("statusCard").style.display = "block";
