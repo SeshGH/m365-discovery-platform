@@ -1101,7 +1101,7 @@ app.get("/runs/:runId/jobs", async (req, reply) => {
 
   const jobs = await prisma.job.findMany({
     where: { runId },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
     select: {
       id: true,
       runId: true,
