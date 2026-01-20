@@ -139,10 +139,12 @@ export const enterpriseAppPermissionsCollector: Collector = {
       const resourceSps: Record<string, ServicePrincipal> = {};
 
       for (const rid of resourceIds) {
-        // we need appRoles to map appRoleId -> value/displayName for application perms
+        // IMPORTANT:
+        // appRoles is a regular property, not a navigation property -> DO NOT $expand it.
+        // Request it via $select instead.
         const rspArr = await graphGetAllPages<ServicePrincipal>(
           token,
-          `https://graph.microsoft.com/v1.0/servicePrincipals/${encodeURIComponent(rid)}?$select=id,appId,displayName&$expand=appRoles`
+          `https://graph.microsoft.com/v1.0/servicePrincipals/${encodeURIComponent(rid)}?$select=id,appId,displayName,appRoles`
         );
         const rsp = rspArr[0];
         if (rsp) resourceSps[rid] = rsp;
