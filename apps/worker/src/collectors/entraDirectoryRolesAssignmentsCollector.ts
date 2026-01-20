@@ -1,7 +1,6 @@
 import type { Collector } from "./types";
 import { getGraphAccessToken, graphGetAllPages, GraphHttpError } from "./graph";
 
-
 /**
  * Phase C: Entra Directory Roles & Privileged Assignments
  *
@@ -97,6 +96,16 @@ function principalTypeFromOdata(odataType: unknown): PrincipalType | null {
   return null;
 }
 
+function isAuthzDenied(e: unknown): boolean {
+  // Prefer structured GraphHttpError if available
+  if (e instanceof GraphHttpError) {
+    const status = (e as any).status ?? (e as any).statusCode;
+    return status === 401 || status === 403;
+  }
+  const msg = (e as any)?.message ? String((e as any).message) : "";
+  return msg.includes("(401)") || msg.includes("(403)") || msg.includes(" 401 ") || msg.includes(" 403 ");
+}
+
 async function limitConcurrency<TIn, TOut>(
   items: TIn[],
   concurrency: number,
@@ -120,12 +129,11 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
   id: "entra.directoryRoles.assignments",
   displayName: "Entra Directory Roles & Assignments",
   async run(ctx) {
-    const dataProfile: DataProfile = isFullProfile(ctx.run.dataProfile) ? "full" : "safe";
+    const dataProfile: DataProfile = isFullProfile((ctx.run as any)?.dataProfile) ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
-
 
     const MAX_ROLES = Number(process.env.DIRROLES_MAX_ROLES ?? 50);
     const CONCURRENCY = Number(process.env.DIRROLES_CONCURRENCY ?? 5);
@@ -138,6 +146,23 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       slicesCompleted: [] as string[],
       notes: [] as string[]
     };
+
+    // Helper: remove any previous rows for this job/run/checkIds so retries don't duplicate
+    const OBS_IDS = [
+      "ENTRA_DIRROLES_OBS_001",
+      "ENTRA_DIRROLES_OBS_002",
+      "ENTRA_DIRROLES_OBS_003",
+      "ENTRA_DIRROLES_OBS_004",
+      "ENTRA_DIRROLES_OBS_005"
+    ] as const;
+
+    await ctx.prisma.observedCheck.deleteMany({
+      where: {
+        runId: ctx.run.id,
+        jobId: ctx.job?.id ?? null,
+        checkId: { in: [...OBS_IDS] }
+      }
+    });
 
     // -------------------------
     // Slice A: Role definitions (templates)
@@ -153,10 +178,10 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       completeness.slicesCompleted.push("roleDefinitions");
     } catch (e: any) {
       const msg = e?.message ?? "unknown error";
-      if (String(msg).includes("403")) completeness.permissionDenied.push("roleDefinitions");
+      if (isAuthzDenied(e)) completeness.permissionDenied.push("roleDefinitions");
       completeness.notes.push(`roleDefinitions failed: ${msg}`);
-      // Without roleDefinitions we cannot produce a useful inventory. Hard-fail.
-      throw new Error(`Directory role templates could not be enumerated: ${msg}`);
+      // IMPORTANT: do NOT hard-fail. We can still attempt directoryRoles and members.
+      roleTemplates = [];
     }
 
     const roleTemplateNameById = new Map<string, string>();
@@ -170,6 +195,8 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     completeness.slicesAttempted.push("activeAssignments");
 
     let directoryRoles: GraphDirectoryRole[] = [];
+    let directoryRolesDenied = false;
+
     try {
       directoryRoles = await graphGetAllPages<GraphDirectoryRole>(
         token,
@@ -178,103 +205,112 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       completeness.slicesCompleted.push("activeAssignments");
     } catch (e: any) {
       const msg = e?.message ?? "unknown error";
-      if (String(msg).includes("403")) completeness.permissionDenied.push("activeAssignments");
+      if (isAuthzDenied(e)) {
+        directoryRolesDenied = true;
+        if (!completeness.permissionDenied.includes("activeAssignments")) {
+          completeness.permissionDenied.push("activeAssignments");
+        }
+      }
       completeness.notes.push(`activeAssignments roles list failed: ${msg}`);
-      // If we cannot enumerate directoryRoles, we cannot meaningfully proceed.
-      throw new Error(`Directory roles could not be enumerated: ${msg}`);
+      // IMPORTANT: do NOT hard-fail. We can still emit completeness + artefact.
+      directoryRoles = [];
     }
 
     // Apply cap for demo predictability; surface truncation
     const wasTruncated = directoryRoles.length > MAX_ROLES;
     const targetRoles = wasTruncated ? directoryRoles.slice(0, MAX_ROLES) : directoryRoles;
+
     if (wasTruncated) {
       completeness.truncated = true;
       completeness.notes.push(`directoryRoles capped at ${MAX_ROLES} roles (demo guardrail)`);
     }
 
     // Fetch members per role (best-effort; per-role failure should not abort run)
-    const roleMemberResults = await limitConcurrency(targetRoles, CONCURRENCY, async (role) => {
-      const roleId = role.id;
-      const roleDisplayName =
-        role.displayName ??
-        roleTemplateNameById.get(role.roleTemplateId ?? "") ??
-        "(unknown)";
+    const roleMemberResults =
+      directoryRolesDenied || targetRoles.length === 0
+        ? []
+        : await limitConcurrency(targetRoles, CONCURRENCY, async (role) => {
+            const roleId = role.id;
+            const roleDisplayName =
+              role.displayName ??
+              roleTemplateNameById.get(role.roleTemplateId ?? "") ??
+              "(unknown)";
 
-      // In safe profile we still need principalType; we do NOT store identifiers.
-      const select = includeSensitive
-        ? "$select=id,displayName,userPrincipalName,mail,appId,servicePrincipalType"
-        : "$select=id,@odata.type";
+            // SAFE: do not request displayName/upn/mail/appId.
+            // We rely on @odata.type (typically present) to infer principal type.
+            const query = includeSensitive
+              ? "$select=id,displayName,userPrincipalName,mail,appId,servicePrincipalType"
+              : "$select=id";
 
-      let members: GraphDirectoryObject[] = [];
-      let rolePermissionDenied = false;
+            let members: GraphDirectoryObject[] = [];
+            let rolePermissionDenied = false;
 
-      try {
-        members = await graphGetAllPages<GraphDirectoryObject>(
-          token,
-          `https://graph.microsoft.com/v1.0/directoryRoles/${roleId}/members?${select}`
-        );
-      } catch (e: any) {
-        // Do not fail whole collector
-        const msg = e?.message ?? "unknown error";
-        if (String(msg).includes("403")) rolePermissionDenied = true;
-        completeness.notes.push(
-          `activeAssignments members failed for role ${roleId} (${roleDisplayName}): ${msg}`
-        );
-      }
-
-      const assignmentsFull: RoleAssignmentFull[] = [];
-      const assignmentsSafe: RoleAssignmentSafe[] = [];
-
-      const counts = {
-        total: 0,
-        user: 0,
-        group: 0,
-        servicePrincipal: 0,
-        unknown: 0
-      };
-
-      for (const m of members) {
-        const principalType: PrincipalType =
-          principalTypeFromOdata((m as any)?.["@odata.type"]) ?? "unknown";
-
-        counts.total++;
-        counts[principalType]++;
-
-        if (includeSensitive) {
-          assignmentsFull.push({
-            assignmentType: "active",
-            principalType,
-            principal: {
-              id: m.id,
-              odataType: (m as any)?.["@odata.type"],
-              displayName: m.displayName,
-              userPrincipalName: m.userPrincipalName,
-              mail: m.mail,
-              appId: m.appId,
-              servicePrincipalType: m.servicePrincipalType
+            try {
+              members = await graphGetAllPages<GraphDirectoryObject>(
+                token,
+                `https://graph.microsoft.com/v1.0/directoryRoles/${encodeURIComponent(roleId)}/members?${query}`
+              );
+            } catch (e: any) {
+              const msg = e?.message ?? "unknown error";
+              if (isAuthzDenied(e)) rolePermissionDenied = true;
+              completeness.notes.push(
+                `activeAssignments members failed for role ${roleId} (${roleDisplayName}): ${msg}`
+              );
             }
-          });
-        } else {
-          assignmentsSafe.push({
-            assignmentType: "active",
-            principalType
-          });
-        }
-      }
 
-      return {
-        roleId,
-        roleTemplateId: role.roleTemplateId,
-        roleDisplayName,
-        rolePermissionDenied,
-        assignmentsFull,
-        assignmentsSafe,
-        counts
-      };
-    });
+            const assignmentsFull: RoleAssignmentFull[] = [];
+            const assignmentsSafe: RoleAssignmentSafe[] = [];
+
+            const counts = {
+              total: 0,
+              user: 0,
+              group: 0,
+              servicePrincipal: 0,
+              unknown: 0
+            };
+
+            for (const m of members) {
+              const principalType: PrincipalType =
+                principalTypeFromOdata((m as any)?.["@odata.type"]) ?? "unknown";
+
+              counts.total++;
+              counts[principalType]++;
+
+              if (includeSensitive) {
+                assignmentsFull.push({
+                  assignmentType: "active",
+                  principalType,
+                  principal: {
+                    id: m.id,
+                    odataType: (m as any)?.["@odata.type"],
+                    displayName: m.displayName,
+                    userPrincipalName: m.userPrincipalName,
+                    mail: m.mail,
+                    appId: m.appId,
+                    servicePrincipalType: m.servicePrincipalType
+                  }
+                });
+              } else {
+                assignmentsSafe.push({
+                  assignmentType: "active",
+                  principalType
+                });
+              }
+            }
+
+            return {
+              roleId,
+              roleTemplateId: role.roleTemplateId,
+              roleDisplayName,
+              rolePermissionDenied,
+              assignmentsFull,
+              assignmentsSafe,
+              counts
+            };
+          });
 
     // If any role had permission denied at member enumeration, treat as permission gap on the slice
-    const anyRolePermissionDenied = roleMemberResults.some((r) => r.rolePermissionDenied);
+    const anyRolePermissionDenied = roleMemberResults.some((r: any) => r.rolePermissionDenied);
     if (anyRolePermissionDenied && !completeness.permissionDenied.includes("activeAssignments")) {
       completeness.permissionDenied.push("activeAssignments");
     }
@@ -302,6 +338,9 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         completeness.slicesCompleted.push("eligibleAssignments");
       } catch (e: any) {
         pimSucceeded = false;
+        if (isAuthzDenied(e) && !completeness.permissionDenied.includes("eligibleAssignments")) {
+          completeness.permissionDenied.push("eligibleAssignments");
+        }
         completeness.notes.push(
           `eligibleAssignments (PIM) not available or denied: ${e?.message ?? "unknown error"}`
         );
@@ -313,13 +352,13 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     // -------------------------
     const roleDefinitionsCount = roleTemplates.length;
 
-    const rolesWithAnyActiveAssignmentCount = roleMemberResults.filter((r) => r.counts.total > 0)
+    const rolesWithAnyActiveAssignmentCount = roleMemberResults.filter((r: any) => r.counts.total > 0)
       .length;
 
-    const activeAssignmentsCount = roleMemberResults.reduce((acc, r) => acc + r.counts.total, 0);
+    const activeAssignmentsCount = roleMemberResults.reduce((acc: number, r: any) => acc + r.counts.total, 0);
 
     const distribution = roleMemberResults.reduce(
-      (acc, r) => {
+      (acc: any, r: any) => {
         acc.user += r.counts.user;
         acc.group += r.counts.group;
         acc.servicePrincipal += r.counts.servicePrincipal;
@@ -333,6 +372,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     const groupBasedPresent = groupAssignmentsCount > 0;
 
     // "Core completeness" is about role definitions + active assignments only.
+    // NOTE: if roleDefinitions is denied, we treat core as incomplete (even if roles/members worked)
     const coreComplete =
       completeness.slicesCompleted.includes("roleDefinitions") &&
       completeness.slicesCompleted.includes("activeAssignments") &&
@@ -348,7 +388,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         runId: ctx.run.id,
         jobId: ctx.job.id,
         checkId: "ENTRA_DIRROLES_OBS_001",
-        collectorId: "entra.directoryRoles.assignments",
+        collectorId: entraDirectoryRolesAssignmentsCollector.id,
         ruleId: null,
         data: {
           roleDefinitionsCount,
@@ -356,7 +396,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
           activeAssignmentsCount,
           dataProfile,
           truncated: completeness.truncated
-        },
+        } as any,
         references: [] as any
       }
     });
@@ -366,7 +406,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         runId: ctx.run.id,
         jobId: ctx.job.id,
         checkId: "ENTRA_DIRROLES_OBS_002",
-        collectorId: "entra.directoryRoles.assignments",
+        collectorId: entraDirectoryRolesAssignmentsCollector.id,
         ruleId: null,
         data: {
           user: distribution.user,
@@ -375,7 +415,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
           unknown: distribution.unknown,
           dataProfile,
           truncated: completeness.truncated
-        },
+        } as any,
         references: [] as any
       }
     });
@@ -385,14 +425,14 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         runId: ctx.run.id,
         jobId: ctx.job.id,
         checkId: "ENTRA_DIRROLES_OBS_003",
-        collectorId: "entra.directoryRoles.assignments",
+        collectorId: entraDirectoryRolesAssignmentsCollector.id,
         ruleId: null,
         data: {
           present: groupBasedPresent,
           assignmentsCount: groupAssignmentsCount,
           dataProfile,
           truncated: completeness.truncated
-        },
+        } as any,
         references: [] as any
       }
     });
@@ -403,7 +443,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_DIRROLES_OBS_004",
-          collectorId: "entra.directoryRoles.assignments",
+          collectorId: entraDirectoryRolesAssignmentsCollector.id,
           ruleId: null,
           data: {
             attempted: true,
@@ -411,7 +451,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
             eligibleAssignmentsCount,
             dataProfile,
             truncated: completeness.truncated
-          },
+          } as any,
           references: [] as any
         }
       });
@@ -422,7 +462,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         runId: ctx.run.id,
         jobId: ctx.job.id,
         checkId: "ENTRA_DIRROLES_OBS_005",
-        collectorId: "entra.directoryRoles.assignments",
+        collectorId: entraDirectoryRolesAssignmentsCollector.id,
         ruleId: null,
         data: {
           isComplete: coreComplete,
@@ -432,7 +472,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
           slicesCompleted: completeness.slicesCompleted,
           notes: completeness.notes,
           dataProfile
-        },
+        } as any,
         references: [] as any
       }
     });
@@ -440,11 +480,6 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     // -------------------------
     // Finding (example): consumes multiple observed checks
     // -------------------------
-    // This is a decision-ready signal that also supports migration/take-on complexity:
-    // - Non-user principals (groups / service principals) in directory roles increases governance complexity.
-    //
-    // Guards:
-    // - Only emit when the *core* slice is complete (avoid false positives in demos / perms gaps).
     const nonUserAssignedCount = distribution.group + distribution.servicePrincipal;
     const hasNonUserAssignments = nonUserAssignedCount > 0;
 
@@ -502,7 +537,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       }
     };
 
-    const rolesSafe: RoleEntrySafe[] = roleMemberResults.map((r) => ({
+    const rolesSafe: RoleEntrySafe[] = roleMemberResults.map((r: any) => ({
       roleId: r.roleId,
       roleTemplateId: r.roleTemplateId,
       roleDisplayName: r.roleDisplayName,
@@ -548,7 +583,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     ];
 
     if (includeSensitive) {
-      const rolesFull: RoleEntryFull[] = roleMemberResults.map((r) => ({
+      const rolesFull: RoleEntryFull[] = roleMemberResults.map((r: any) => ({
         roleId: r.roleId,
         roleTemplateId: r.roleTemplateId,
         roleDisplayName: r.roleDisplayName,
@@ -584,7 +619,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     }
 
     return {
-      id: "entra.directoryRoles.assignments",
+      id: entraDirectoryRolesAssignmentsCollector.id,
       status: "ok",
       summary: {
         profile: dataProfile,
@@ -593,6 +628,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         activeAssignmentsCount,
         truncated: completeness.truncated,
         isComplete: coreComplete,
+        permissionDenied: completeness.permissionDenied.length > 0,
         findingEmitted: coreComplete && hasNonUserAssignments
       },
       artefacts
