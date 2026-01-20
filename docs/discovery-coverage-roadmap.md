@@ -68,7 +68,6 @@ Key properties:
 
 * Each observed check has a **stable `checkId` contract**.
 * Observed checks do **not**:
-
   * assign severity
   * make recommendations
   * imply compliance or non-compliance
@@ -106,7 +105,6 @@ Findings answer:
 Important distinctions:
 
 * The **implemented findings contract today** includes:
-
   * `checkId`
   * `severity`
   * descriptive fields (title, description, recommendation, evidence, references)
@@ -190,12 +188,13 @@ This lens is a **primary design driver** of the platform.
 
 ## Current discovery coverage (implemented)
 
-| Area                        | Collector ID                       | Evidence (Artefacts)                                      | Implemented Findings             |
-| --------------------------- | ---------------------------------- | --------------------------------------------------------- | -------------------------------- |
-| Entra ID users              | `entra.users`                      | Users inventory JSON (profile-aware variants)             | `ENTRA_USERS_001`                |
-| Enterprise app permissions  | `entra.enterpriseApps.permissions` | Enterprise app permissions JSON (profile-aware variants)  | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
-| Conditional Access policies | `entra.conditionalAccess.policies` | Conditional Access policies JSON (profile-aware variants) | `ENTRA_CA_001`                   |
-| Tenant auth validation      | `entra.auth.test`                  | none                                                      | none (status via `TenantAuth`)   |
+| Area                                  | Collector ID                         | Evidence (Artefacts)                                        | Implemented Findings             |
+| ------------------------------------- | ------------------------------------ | ----------------------------------------------------------- | -------------------------------- |
+| Entra ID users                        | `entra.users`                        | Users inventory JSON (profile-aware variants)               | `ENTRA_USERS_001`                |
+| Enterprise app permissions            | `entra.enterpriseApps.permissions`   | Enterprise app permissions JSON (profile-aware variants)    | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
+| Conditional Access policies           | `entra.conditionalAccess.policies`   | Conditional Access policies JSON (profile-aware variants)   | `ENTRA_CA_001`                   |
+| Directory roles & privileged access   | `entra.directoryRoles.assignments`   | Directory roles assignments JSON (profile-aware variants)   | none (observed-checks only)      |
+| Tenant auth validation                | `entra.auth.test`                    | none                                                        | none (status via `TenantAuth`)   |
 
 Notes:
 
@@ -219,6 +218,7 @@ Notes:
 * Report jobs are enqueued last by the API for demo and UX value.
 * Execution order is not guaranteed.
 * Report collectors validate run completeness at execution time.
+* XLSX is the primary human-facing output and may include additional per-module sheets (including Directory Roles).
 
 ---
 
@@ -271,7 +271,7 @@ The demo tenant and harness may apply limits that are **not long-term guarantees
 
 Examples:
 
-* enterprise app enumeration caps causing truncation findings
+* enterprise app enumeration caps causing truncation findings / notes
 
 Rule:
 
@@ -302,7 +302,6 @@ The following behaviours are **implemented, validated, and treated as stable con
 
 * Report collectors may run before other jobs complete
 * If unsafe to generate output:
-
   * no artefact is produced
   * the job is retried automatically
 

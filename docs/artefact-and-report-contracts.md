@@ -5,10 +5,10 @@
 This document defines **stable, enforceable contracts** for artefacts and reports produced by the M365 Discovery Platform. It is the **authoritative source of truth** for:
 
 * Artefact classification and lifecycle
-* Bucket/key naming guarantees
+* Bucket and key naming guarantees
 * Safe vs full data handling rules
 * Reporting outputs and consumption expectations
-* Demo-only behaviour
+* Demo-only behaviour boundaries
 
 This document describes **current behaviour as implemented**. It does **not** introduce new features or change runtime behaviour.
 
@@ -78,84 +78,60 @@ Absence of suffix implies **safe-mode compatible output**.
 
 ## Collector Artefact Contracts
 
-### `entra.users` (Raw / Derived)
+### `entra.users`
 
-| Profile | Filename                    | Class   | Notes                      |
-| ------- | --------------------------- | ------- | -------------------------- |
-| safe    | `users-inventory.json`      | Derived | Counts-only, no PII        |
-| full    | `users-inventory.safe.json` | Derived | Counts-only snapshot       |
-| full    | `users-inventory.full.json` | Raw     | PII-bearing user inventory |
+| Profile | Filename                    | Class   | Notes                |
+| ------- | --------------------------- | ------- | -------------------- |
+| safe    | `users-inventory.json`      | Derived | Counts-only, no PII  |
+| full    | `users-inventory.safe.json` | Derived | Counts-only snapshot |
+| full    | `users-inventory.full.json` | Raw     | PII-bearing          |
 
-**Important**:
+Rules:
 
 * Safe runs never emit PII
 * Full runs emit both safe and full artefacts
 
 ---
 
-### `entra.enterpriseApps.permissions` (Raw)
+### `entra.enterpriseApps.permissions`
 
 | Profile | Filename                               | Class |
 | ------- | -------------------------------------- | ----- |
 | safe    | `enterprise-app-permissions.json`      | Raw   |
 | full    | `enterprise-app-permissions.full.json` | Raw   |
 
-#### Demo-only behaviour
+Demo-only behaviour:
 
-* Application enumeration is capped via `ENTAPP_MAX_APPS` (default: 50)
-* Truncation is surfaced in artefact metadata and reports
-* Limits are **explicitly demo-only** and must not be relied upon long-term
-
----
-
-### `entra.conditionalAccess.policies` (Raw)
-
-| Profile | Filename                                | Class | Notes                                                                              |
-| ------- | --------------------------------------- | ----- | ---------------------------------------------------------------------------------- |
-| safe    | `conditional-access-policies.safe.json` | Raw   | Counts, states, control *types* only; no user, group, role, or location membership |
-| full    | `conditional-access-policies.full.json` | Raw   | Includes policy include/exclude assignments and named location references          |
-
-**Rules & guarantees**:
-
-* Safe runs **only** emit `conditional-access-policies.safe.json`
-* Full runs emit **both** safe and full artefacts
-* Safe artefact contains **no PII or membership identifiers**
-* Full artefact is explicitly PII-bearing and must never be implicitly consumed
-
-#### Data completeness & demo behaviour
-
-* API limits, demo guardrails, or permission constraints may result in partial enumeration
-
-* Any such condition **must be surfaced** via:
-
-  * `truncated = true` in observed checks
-  * appropriate reporting notes
-
-* Absence of policies is a valid, complete state and must not be treated as truncation
+* Enumeration capped via `ENTAPP_MAX_APPS` (default: 50)
+* Truncation is explicitly surfaced
 
 ---
 
-### `entra.directoryRoles.assignments` (Raw)
+### `entra.conditionalAccess.policies`
 
-| Profile | Filename                                | Class | Notes                                                                  |
-| ------- | --------------------------------------- | ----- | ---------------------------------------------------------------------- |
-| safe    | `directory-roles-assignments.safe.json` | Raw   | Role names + assignment counts and principal-type distribution; no PII |
-| full    | `directory-roles-assignments.full.json` | Raw   | PII-bearing: principal identifiers/properties where returned by Graph  |
+| Profile | Filename                                | Class | Notes                     |
+| ------- | --------------------------------------- | ----- | ------------------------- |
+| safe    | `conditional-access-policies.safe.json` | Raw   | No membership identifiers |
+| full    | `conditional-access-policies.full.json` | Raw   | PII-bearing               |
 
-**Rules & guarantees**:
+Rules:
 
-* Safe runs **only** emit `directory-roles-assignments.safe.json`
-* Full runs emit **both** safe and full artefacts
-* Safe artefact must not contain user identifiers, UPNs, mail, or membership identifiers
-* Full artefact is explicitly PII-bearing and must never be implicitly consumed
+* Safe runs emit only the safe artefact
+* Full runs emit both safe and full artefacts
 
-#### Data completeness & demo behaviour
+---
 
-* API limits, demo guardrails, or permission constraints may result in partial enumeration
-* Any such condition **must be surfaced** via:
+### `entra.directoryRoles.assignments`
 
-  * `truncated = true` in observed checks
-  * appropriate reporting notes
+| Profile | Filename                                | Class | Notes            |
+| ------- | --------------------------------------- | ----- | ---------------- |
+| safe    | `directory-roles-assignments.safe.json` | Raw   | Role counts only |
+| full    | `directory-roles-assignments.full.json` | Raw   | PII-bearing      |
+
+Rules:
+
+* Safe artefacts contain no user identifiers
+* Full artefacts may contain PII
 
 ---
 
@@ -168,11 +144,10 @@ Absence of suffix implies **safe-mode compatible output**.
 
 Includes:
 
-* run metadata
-* derived status
-* timestamps and durations
-* job and artefact counts
-* **dataProfile**
+* Run metadata
+* Derived run status
+* Job and artefact counts
+* `dataProfile`
 
 ---
 
@@ -181,57 +156,60 @@ Includes:
 * Filename: `run-summary.xlsx`
 * Class: **Terminal**
 
-Sheets:
+Primary human-facing report.
 
-* Overview
+Current sheets:
+
+* Run Summary
 * Jobs
+* Findings
+* Observed Checks
 * Artefacts
-* Users (if safe user artefact present)
-* Enterprise Apps (if artefact present)
-* Conditional Access (if artefact present)
-* Optional per-collector summary (demo-only convenience)
+* Users (Summary)
+* Users (Full)
+* Enterprise Apps (Perms)
+* Conditional Access
+* Directory Roles
 
-**Consumption rules**:
+Rules:
 
-* Only safe-compatible artefacts are auto-loaded
+* Reports degrade gracefully when artefacts are missing
+* Only safe-compatible artefacts are implicitly consumed
 * `.full.json` artefacts are never implicitly consumed
-* Missing or invalid artefacts degrade gracefully with notes
 
 ---
 
 ## Artefact Download API Contract
 
-### Routes
+Routes:
 
 * `GET /artefacts/:artefactId/download`
-* `GET /runs/:runId/artefacts/:artefactId/download` (backward compatibility)
+* `GET /runs/:runId/artefacts/:artefactId/download`
 
-### Behaviour
+Behaviour:
 
-* API responds with **HTTP 302 redirect** to a presigned S3/MinIO URL
-* Response includes `X-Download-Expires-At` header
-* No JSON body is returned
-
-This behaviour is **intentional and stable**.
+* API returns **HTTP 302 redirect** to a presigned URL
+* `X-Download-Expires-At` header is included
+* Artefact content is never streamed via API
 
 ---
 
 ## Stability Guarantees
 
-The following are considered **breaking changes** and must not be made without explicit versioning:
+The following are **breaking changes** and require explicit versioning:
 
 * Artefact key structure
 * Filename conventions
 * Safe vs full emission rules
-* Report column/sheet guarantees
+* Report sheet names or layout
 * Download redirect behaviour
 
 ---
 
-## Relationship to Other Docs
+## Related Documentation
 
-* `docs/artefacts.md` → descriptive overview only; defers to this contract
-* `docs/collectors.md` → collector responsibilities; defers to this contract
-* `README.md` → high-level summary; must not redefine behaviour
+* `docs/collectors.md`
+* `docs/findings-model.md`
+* `docs/discovery-coverage-roadmap.md`
 
-This document is the **single authoritative contract** for artefacts and reports.
+This document is the **single source of truth** for artefact and report contracts.
