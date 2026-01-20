@@ -46,6 +46,7 @@ async function readStreamToBuffer(stream: Readable): Promise<Buffer> {
 
 async function getObjectBytes(args: { s3: S3Client; bucket: string; key: string }): Promise<Buffer> {
   const { s3, bucket, key } = args;
+
   const resp = await s3.send(
     new GetObjectCommand({
       Bucket: bucket,
@@ -62,10 +63,15 @@ async function getObjectBytes(args: { s3: S3Client; bucket: string; key: string 
     return await readStreamToBuffer(body);
   }
 
+  // aws-sdk v3 in some runtimes provides a web-stream-ish body with helper methods
   if (typeof body.transformToByteArray === "function") {
     const arr = await body.transformToByteArray();
     return Buffer.from(arr);
   }
+
+  // Fallback: Uint8Array / ArrayBuffer-ish
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (body?.buffer instanceof ArrayBuffer) return Buffer.from(body.buffer);
 
   throw new Error("Unsupported S3 Body type");
 }
@@ -133,12 +139,12 @@ type EnterpriseAppPermissionsJson = {
     scannedEnterpriseApps?: number;
     truncated?: boolean;
     maxApps?: number;
+    riskyApps?: number;
   };
   apps?: Array<{
     appId?: string;
     displayName?: string;
     servicePrincipalId?: string;
-    // Note: this matches the existing report collector's expected shape
     applicationPermissions?: string[];
     delegatedPermissions?: string[];
     risky?: string[];
@@ -170,22 +176,16 @@ type ConditionalAccessPoliciesSafeJson = {
   };
   error?: unknown;
 
-  // Safe artefact may optionally include a policy list (without membership identifiers).
   policies?: Array<{
     id?: string;
     displayName?: string;
     state?: string;
-
-    // The safe collector may include derived booleans. If absent, we attempt light inference.
     targetsAllUsers?: boolean;
     excludesUsers?: boolean;
     hasMfaGrantControl?: boolean;
-
-    // We keep these as unknown and only derive safe fields for the report.
     conditions?: unknown;
     grantControls?: unknown;
     sessionControls?: unknown;
-
     hasSessionControls?: boolean;
   }>;
 };
@@ -336,7 +336,6 @@ function deriveCaTargetsAllUsers(policy: any): boolean | null {
     if (asStrings.includes("all")) return true;
   }
 
-  // Not enough info in safe artefact to infer reliably
   return null;
 }
 
@@ -370,7 +369,6 @@ function deriveCaSessionControlsPresent(policy: any): boolean | null {
 
   const sc = policy?.sessionControls;
   if (sc && typeof sc === "object") {
-    // Avoid dumping details; just indicate presence of any keys
     return Object.keys(sc as any).length > 0;
   }
   return null;
@@ -474,21 +472,17 @@ export const runSummaryExcelReportCollector: Collector = {
     };
 
     // -------------------------
-    // Load specific JSON artefacts (if present)
+    // Pick specific JSON artefacts (by filename) if present
     // -------------------------
-    const s3 = createS3ClientOrThrow();
-
     const pickArtefactByFilename = (filenames: string[]) => {
       for (const fn of filenames) {
-        const a = artefacts.find((x) => x.key.endsWith("/" + fn));
+        const a = artefacts.find((x) => String(x.key ?? "").endsWith("/" + fn));
         if (a) return { artefact: a, filename: fn };
       }
       return { artefact: null as any, filename: filenames[0] ?? "" };
     };
 
-    // Profile-aware artefact selection:
-    // - safe runs typically produce legacy filenames (no suffix)
-    // - full runs may produce profile-suffixed variants; prefer .full where applicable
+    // Profile-aware artefact selection
     const usersCandidates =
       run.dataProfile === "full"
         ? ["users-inventory.full.json", "users-inventory.safe.json", "users-inventory.json"]
@@ -503,48 +497,89 @@ export const runSummaryExcelReportCollector: Collector = {
           ]
         : ["enterprise-app-permissions.json", "enterprise-app-permissions.safe.json"];
 
-    // Conditional Access: report must only consume safe-compatible artefacts
     const caCandidates = ["conditional-access-policies.safe.json"];
 
     const { artefact: usersArtefact, filename: usersArtefactName } = pickArtefactByFilename(usersCandidates);
     const { artefact: eapArtefact, filename: eapArtefactName } = pickArtefactByFilename(eapCandidates);
     const { artefact: caArtefact, filename: caArtefactName } = pickArtefactByFilename(caCandidates);
 
+    // -------------------------
+    // Attempt S3 downloads (graceful degradation)
+    // -------------------------
+    let s3: S3Client | null = null;
+    let s3InitError: string | null = null;
+
+    const shouldAttemptS3 =
+      Boolean(usersArtefact) || Boolean(eapArtefact) || Boolean(caArtefact);
+
+    if (shouldAttemptS3) {
+      try {
+        s3 = createS3ClientOrThrow();
+      } catch (e: any) {
+        s3InitError = e?.message ? String(e.message) : String(e);
+        s3 = null;
+      }
+    }
+
     let usersJson: UsersInventoryJson | null = null;
     let usersJsonError: string | null = null;
 
     if (usersArtefact) {
-      const text = await downloadArtefactText({ s3, bucket: usersArtefact.bucket, key: usersArtefact.key });
-      const parsed = tryParseJson<UsersInventoryJson>(text);
-      if (parsed.ok) usersJson = parsed.value;
-      else usersJsonError = parsed.error;
+      if (!s3) {
+        usersJsonError = s3InitError ?? "S3 client unavailable";
+      } else {
+        try {
+          const text = await downloadArtefactText({ s3, bucket: usersArtefact.bucket, key: usersArtefact.key });
+          const parsed = tryParseJson<UsersInventoryJson>(text);
+          if (parsed.ok) usersJson = parsed.value;
+          else usersJsonError = parsed.error;
+        } catch (e: any) {
+          usersJsonError = e?.message ? String(e.message) : String(e);
+        }
+      }
     }
 
     let eapJson: EnterpriseAppPermissionsJson | null = null;
     let eapJsonError: string | null = null;
 
     if (eapArtefact) {
-      const text = await downloadArtefactText({ s3, bucket: eapArtefact.bucket, key: eapArtefact.key });
-      const parsed = tryParseJson<EnterpriseAppPermissionsJson>(text);
-      if (parsed.ok) eapJson = parsed.value;
-      else eapJsonError = parsed.error;
+      if (!s3) {
+        eapJsonError = s3InitError ?? "S3 client unavailable";
+      } else {
+        try {
+          const text = await downloadArtefactText({ s3, bucket: eapArtefact.bucket, key: eapArtefact.key });
+          const parsed = tryParseJson<EnterpriseAppPermissionsJson>(text);
+          if (parsed.ok) eapJson = parsed.value;
+          else eapJsonError = parsed.error;
+        } catch (e: any) {
+          eapJsonError = e?.message ? String(e.message) : String(e);
+        }
+      }
     }
 
     let caJson: ConditionalAccessPoliciesSafeJson | null = null;
     let caJsonError: string | null = null;
 
     if (caArtefact) {
-      const text = await downloadArtefactText({ s3, bucket: caArtefact.bucket, key: caArtefact.key });
-      const parsed = tryParseJson<ConditionalAccessPoliciesSafeJson>(text);
-      if (parsed.ok) caJson = parsed.value;
-      else caJsonError = parsed.error;
+      if (!s3) {
+        caJsonError = s3InitError ?? "S3 client unavailable";
+      } else {
+        try {
+          const text = await downloadArtefactText({ s3, bucket: caArtefact.bucket, key: caArtefact.key });
+          const parsed = tryParseJson<ConditionalAccessPoliciesSafeJson>(text);
+          if (parsed.ok) caJson = parsed.value;
+          else caJsonError = parsed.error;
+        } catch (e: any) {
+          caJsonError = e?.message ? String(e.message) : String(e);
+        }
+      }
     }
 
     const usersSummary = usersJson ? normalizeUsersSummary(usersJson) : null;
     const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
     const caSummary = caJson ? normalizeCaSummary(caJson) : null;
 
-    // Pull Directory Roles observed checks (do not assume artefact exists yet)
+    // Pull Directory Roles observed checks
     const dirRolesChecks = observedChecks
       .map((o: any) => ({ ...o, checkId: String(o?.checkId ?? "") }))
       .filter((o: any) => isKnownDirRolesCheckId(o.checkId));
@@ -590,19 +625,23 @@ export const runSummaryExcelReportCollector: Collector = {
       ws.addRow({ field: "findings.info", value: sevCounts.info });
       ws.addRow({ field: "findings.unknown", value: sevCounts.unknown });
 
-      // Optional: surface artefact parsing summaries (handy for debugging)
+      if (shouldAttemptS3 && s3InitError) {
+        ws.addRow({ field: "s3.status", value: "unavailable" });
+        ws.addRow({ field: "s3.error", value: s3InitError });
+      }
+
       if (usersSummary) {
         ws.addRow({ field: "users.total", value: usersSummary.totalUsers });
         ws.addRow({ field: "users.guest", value: usersSummary.guestUsers ?? "" });
       } else if (usersJsonError) {
-        ws.addRow({ field: "users.parseError", value: usersJsonError });
+        ws.addRow({ field: "users.sourceError", value: usersJsonError });
       }
 
       if (eapSummary) {
         ws.addRow({ field: "eap.totalEnterpriseApps", value: eapSummary.totalEnterpriseApps });
         ws.addRow({ field: "eap.riskyApps", value: eapSummary.riskyApps ?? "" });
       } else if (eapJsonError) {
-        ws.addRow({ field: "eap.parseError", value: eapJsonError });
+        ws.addRow({ field: "eap.sourceError", value: eapJsonError });
       }
 
       if (caSummary) {
@@ -610,10 +649,9 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({ field: "ca.permissionDenied", value: caSummary.permissionDenied ?? "" });
         ws.addRow({ field: "ca.truncated", value: caSummary.truncated ?? "" });
       } else if (caJsonError) {
-        ws.addRow({ field: "ca.parseError", value: caJsonError });
+        ws.addRow({ field: "ca.sourceError", value: caJsonError });
       }
 
-      // Directory roles: small summary signal (observed-check based)
       if (dr001 && dr001.data && typeof dr001.data === "object") {
         const d = dr001.data as DirRolesObs001;
         ws.addRow({ field: "dirRoles.roleDefinitionsCount", value: d.roleDefinitionsCount ?? "" });
@@ -811,7 +849,7 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({
           field: "status",
           value: "error",
-          notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
+          notes: `Unable to load ${usersArtefactName}: ${usersJsonError}`
         });
       } else {
         ws.addRow({ field: "generatedAt", value: usersJson?.generatedAt ?? "", notes: "" });
@@ -829,7 +867,6 @@ export const runSummaryExcelReportCollector: Collector = {
     {
       const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
 
-      // This sheet is intentionally PII-bearing and only emitted for full profile runs.
       if (run.dataProfile !== "full") {
         ws.columns = [
           { header: "field", key: "field", width: 38 },
@@ -864,7 +901,7 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({
           field: "status",
           value: "error",
-          notes: `Failed to parse ${usersArtefactName}: ${usersJsonError}`
+          notes: `Unable to load ${usersArtefactName}: ${usersJsonError}`
         });
       } else {
         ws.columns = [
@@ -915,9 +952,9 @@ export const runSummaryExcelReportCollector: Collector = {
         { header: "displayName", key: "displayName", width: 44 },
         { header: "appId", key: "appId", width: 36 },
         { header: "accountEnabled", key: "accountEnabled", width: 14 },
-        { header: "applicationPermissions", key: "applicationPermissions", width: 24 }, // count
-        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 }, // count
-        { header: "riskyPermissions", key: "riskyPermissions", width: 16 }, // count
+        { header: "applicationPermissions", key: "applicationPermissions", width: 24 },
+        { header: "delegatedPermissions", key: "delegatedPermissions", width: 24 },
+        { header: "riskyPermissions", key: "riskyPermissions", width: 16 },
         { header: "riskFlag", key: "riskFlag", width: 10 }
       ];
 
@@ -938,7 +975,7 @@ export const runSummaryExcelReportCollector: Collector = {
           accountEnabled: "",
           applicationPermissions: "",
           delegatedPermissions: "",
-          riskyPermissions: `Failed to parse ${eapArtefactName}: ${eapJsonError}`,
+          riskyPermissions: `Unable to load ${eapArtefactName}: ${eapJsonError}`,
           riskFlag: "n/a"
         });
       } else {
@@ -996,7 +1033,7 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({
           field: "status",
           value: "error",
-          notes: `Failed to parse ${caArtefactName}: ${caJsonError}`
+          notes: `Unable to load ${caArtefactName}: ${caJsonError}`
         });
       } else {
         const permissionDenied = caSummary?.permissionDenied === true;
@@ -1049,8 +1086,6 @@ export const runSummaryExcelReportCollector: Collector = {
           ws.addRow({ field: "error", value: "present", notes: safeJsonCell(caJson.error, 2400) });
         }
 
-        // --- Top policies table (safe-friendly) ---
-        // We only render this if safe artefact includes a policies[] list (no membership identifiers).
         ws.addRow({ field: "", value: "", notes: "" });
         ws.addRow({
           field: "topPolicies",
@@ -1067,11 +1102,9 @@ export const runSummaryExcelReportCollector: Collector = {
             notes: "No policies[] list was present in the safe artefact. Summary counts above are still authoritative for this lens."
           });
         } else {
-          // Add a second table underneath with its own headers
           const headerRowIndex = ws.rowCount + 1;
           ws.addRow({ field: "displayName", value: "state", notes: "targetsAllUsers | hasMfaGrantControl | grantControlTypes | sessionControls" });
 
-          // Bold the header row for readability
           const headerRow = ws.getRow(headerRowIndex);
           headerRow.font = { bold: true };
 
@@ -1139,7 +1172,6 @@ export const runSummaryExcelReportCollector: Collector = {
           notes: "This sheet is derived from observed checks (not findings). It is safe to render and does not imply judgement."
         });
 
-        // OBS_005: completeness first (data quality / demo signals)
         if (o5 && o5.data && typeof o5.data === "object") {
           const d = o5.data as DirRolesObs005;
           ws.addRow({ field: "completeness.isComplete", value: String(d.isComplete ?? ""), notes: "" });
@@ -1174,7 +1206,6 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "", value: "", notes: "" });
 
-        // OBS_001: inventory summary
         if (o1 && o1.data && typeof o1.data === "object") {
           const d = o1.data as DirRolesObs001;
           ws.addRow({ field: "inventory.roleDefinitionsCount", value: String(d.roleDefinitionsCount ?? ""), notes: "" });
@@ -1196,7 +1227,6 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "", value: "", notes: "" });
 
-        // OBS_002: principal type distribution
         if (o2 && o2.data && typeof o2.data === "object") {
           const d = o2.data as DirRolesObs002;
           ws.addRow({ field: "principalTypes.user", value: String(d.user ?? ""), notes: "" });
@@ -1214,7 +1244,6 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "", value: "", notes: "" });
 
-        // OBS_003: group-based assignment presence
         if (o3 && o3.data && typeof o3.data === "object") {
           const d = o3.data as DirRolesObs003;
           ws.addRow({ field: "groupAssignments.present", value: String(d.present ?? ""), notes: "" });
@@ -1230,7 +1259,6 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "", value: "", notes: "" });
 
-        // OBS_004: eligible/PIM signal
         if (o4 && o4.data && typeof o4.data === "object") {
           const d = o4.data as DirRolesObs004;
           ws.addRow({ field: "eligible.attempted", value: String(d.attempted ?? ""), notes: "" });
@@ -1251,7 +1279,6 @@ export const runSummaryExcelReportCollector: Collector = {
 
         ws.addRow({ field: "", value: "", notes: "" });
 
-        // Raw dump (bounded) - useful during iteration
         ws.addRow({
           field: "raw.observedChecks",
           value: String(dirRolesChecks.length),
@@ -1273,7 +1300,8 @@ export const runSummaryExcelReportCollector: Collector = {
       }
     }
 
-        const buf = await wb.xlsx.writeBuffer();
+    const buf = await wb.xlsx.writeBuffer();
+    const content = Buffer.isBuffer(buf) ? buf : Buffer.from(buf as any);
 
     return {
       id: "report.runSummary.xlsx",
@@ -1294,10 +1322,9 @@ export const runSummaryExcelReportCollector: Collector = {
           type: "raw",
           filename: "run-summary.xlsx",
           contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          content: Buffer.from(buf)
+          content
         }
       ]
     };
   }
 };
-

@@ -155,7 +155,6 @@ export const enterpriseAppPermissionsCollector: Collector = {
         if (!resource || !a.appRoleId) continue;
 
         // Only interpret Graph perms if resource is Graph (appId well-known)
-        // Note: still safe to list values even when not Graph, but for now scope to Graph.
         const isGraph = String(resource.appId ?? "").toLowerCase() === "00000003-0000-0000-c000-000000000000";
         if (!isGraph) continue;
 
@@ -232,7 +231,7 @@ export const enterpriseAppPermissionsCollector: Collector = {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_001",
-          category: "identity",
+          category: "application_permissions",
           severity: "high",
           confidence: "medium",
           status: "open",
@@ -258,7 +257,7 @@ export const enterpriseAppPermissionsCollector: Collector = {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_002",
-          category: "assessment",
+          category: "other",
           severity: "info",
           confidence: "high",
           status: "open",
