@@ -53,6 +53,7 @@ Examples:
 ### `ENTRA_USERS_001` — Guest users present
 
 * **Collector:** `entra.users`
+* **Derived from observed check(s):** `ENTRA_USERS_OBS_001`
 * **Severity (implemented):** `info`
 * **Meaning:** One or more guest users exist in the tenant.
 * **Notes:**
@@ -67,6 +68,7 @@ Examples:
 ### `ENTRA_EAP_001` — High-privilege Graph permissions detected
 
 * **Collector:** `entra.enterpriseApps.permissions`
+* **Derived from observed check(s):** `ENTRA_EAP_OBS_001`
 * **Severity (implemented):** `high`
 * **Meaning:** At least one enterprise application has high-privilege Microsoft Graph **application** permissions that materially increase tenant risk.
 * **Notes:**
@@ -77,6 +79,7 @@ Examples:
 ### `ENTRA_EAP_002` — Scan truncated (results may be incomplete)
 
 * **Collector:** `entra.enterpriseApps.permissions`
+* **Derived from observed check(s):** `ENTRA_EAP_OBS_001`
 * **Severity (implemented):** `info`
 * **Meaning:** The scan was intentionally limited (e.g. demo cap / throttling controls), so results may not reflect the full tenant.
 * **Demo-only:** Yes (current demo guardrails such as `ENTAPP_MAX_APPS`).
@@ -89,6 +92,8 @@ Examples:
 ### `ENTRA_CA_001` — No enabled Conditional Access policies detected
 
 * **Collector:** `entra.conditionalAccess.policies`
+
+* **Derived from observed check(s):** `ENTRA_CA_OBS_001`
 
 * **Severity (implemented):** `low`
 
@@ -103,3 +108,30 @@ Examples:
 
   * This is a hygiene / baseline signal and can be interpreted differently depending on tenant maturity and licensing.
   * Detailed policy configuration remains in Conditional Access artefacts; the finding is a summary signal.
+
+---
+
+## Entra — Directory Roles (`ENTRA_DIRROLES_*`)
+
+### `ENTRA_DIRROLES_001` — Non-user principals assigned to directory roles
+
+* **Collector:** `entra.directoryRoles.assignments`
+
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `low`
+
+* **Meaning:** At least one directory role assignment targets a **group** and/or **service principal**.
+
+* **Guards (to avoid false signals):**
+
+  * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true`).
+  * Do **not** emit when role enumeration is truncated or permission-denied.
+
+* **Notes:**
+
+  * This is not automatically “bad”, but it is a strong governance and operational complexity signal.
+  * It supports both lenses:
+
+    * **Security posture** (attack surface / privileged non-user principals)
+    * **Take-on / migration scoping** (governance maturity and access model complexity)
