@@ -376,6 +376,68 @@ function deriveCaSessionControlsPresent(policy: any): boolean | null {
   return null;
 }
 
+// -------------------------
+// Directory Roles Observed Checks helpers
+// -------------------------
+const DIRROLES_CHECK_IDS = [
+  "ENTRA_DIRROLES_OBS_001",
+  "ENTRA_DIRROLES_OBS_002",
+  "ENTRA_DIRROLES_OBS_003",
+  "ENTRA_DIRROLES_OBS_004",
+  "ENTRA_DIRROLES_OBS_005"
+] as const;
+
+type DirRolesObs001 = {
+  roleDefinitionsCount: number;
+  rolesWithAnyActiveAssignmentCount: number;
+  activeAssignmentsCount: number;
+  dataProfile: "safe" | "full";
+  truncated: boolean;
+};
+
+type DirRolesObs002 = {
+  user: number;
+  group: number;
+  servicePrincipal: number;
+  unknown: number;
+  dataProfile: "safe" | "full";
+  truncated: boolean;
+};
+
+type DirRolesObs003 = {
+  present: boolean;
+  assignmentsCount: number;
+  dataProfile: "safe" | "full";
+  truncated: boolean;
+};
+
+type DirRolesObs004 = {
+  attempted: boolean;
+  succeeded: boolean;
+  eligibleAssignmentsCount?: number;
+  dataProfile: "safe" | "full";
+  truncated: boolean;
+};
+
+type DirRolesObs005 = {
+  isComplete: boolean;
+  truncated: boolean;
+  permissionDenied: string[];
+  slicesAttempted: string[];
+  slicesCompleted: string[];
+  notes: string[];
+  dataProfile: "safe" | "full";
+};
+
+function isKnownDirRolesCheckId(id: string): id is typeof DIRROLES_CHECK_IDS[number] {
+  return (DIRROLES_CHECK_IDS as readonly string[]).includes(id);
+}
+
+function pickObservedByCheckId(observedChecks: any[], checkId: string): any | null {
+  const found = observedChecks.find((o) => String(o?.checkId ?? "") === checkId);
+  return found ?? null;
+}
+
 export const runSummaryExcelReportCollector: Collector = {
   id: "report.runSummary.xlsx",
   displayName: "Run Summary (Excel)",
@@ -482,6 +544,14 @@ export const runSummaryExcelReportCollector: Collector = {
     const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
     const caSummary = caJson ? normalizeCaSummary(caJson) : null;
 
+    // Pull Directory Roles observed checks (do not assume artefact exists yet)
+    const dirRolesChecks = observedChecks
+      .map((o: any) => ({ ...o, checkId: String(o?.checkId ?? "") }))
+      .filter((o: any) => isKnownDirRolesCheckId(o.checkId));
+
+    const dr001 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_001") as any | null;
+    const dr005 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_005") as any | null;
+
     const wb = new ExcelJS.Workbook();
     wb.creator = "m365-discovery-platform";
     wb.created = new Date();
@@ -541,6 +611,21 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({ field: "ca.truncated", value: caSummary.truncated ?? "" });
       } else if (caJsonError) {
         ws.addRow({ field: "ca.parseError", value: caJsonError });
+      }
+
+      // Directory roles: small summary signal (observed-check based)
+      if (dr001 && dr001.data && typeof dr001.data === "object") {
+        const d = dr001.data as DirRolesObs001;
+        ws.addRow({ field: "dirRoles.roleDefinitionsCount", value: d.roleDefinitionsCount ?? "" });
+        ws.addRow({ field: "dirRoles.activeAssignmentsCount", value: d.activeAssignmentsCount ?? "" });
+        ws.addRow({ field: "dirRoles.truncated", value: String(d.truncated ?? "") });
+      } else {
+        ws.addRow({ field: "dirRoles.status", value: "not-available" });
+      }
+
+      if (dr005 && dr005.data && typeof dr005.data === "object") {
+        const d = dr005.data as DirRolesObs005;
+        ws.addRow({ field: "dirRoles.isComplete", value: String(d.isComplete ?? "") });
       }
     }
 
@@ -1019,6 +1104,172 @@ export const runSummaryExcelReportCollector: Collector = {
             });
           }
         }
+      }
+    }
+
+    // -------------------------
+    // Sheet 9: Directory Roles (Observed)
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Directory Roles"));
+
+      ws.columns = [
+        { header: "field", key: "field", width: 42 },
+        { header: "value", key: "value", width: 24 },
+        { header: "notes", key: "notes", width: 110 }
+      ];
+
+      if (!dirRolesChecks.length) {
+        ws.addRow({
+          field: "status",
+          value: "not-available",
+          notes:
+            "No Directory Roles observed checks were recorded in this run. This usually means the module was not enabled, the collector did not run, or evidence could not be collected."
+        });
+      } else {
+        const o1 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_001");
+        const o2 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_002");
+        const o3 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_003");
+        const o4 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_004");
+        const o5 = pickObservedByCheckId(dirRolesChecks as any[], "ENTRA_DIRROLES_OBS_005");
+
+        ws.addRow({
+          field: "source",
+          value: "observedChecks",
+          notes: "This sheet is derived from observed checks (not findings). It is safe to render and does not imply judgement."
+        });
+
+        // OBS_005: completeness first (data quality / demo signals)
+        if (o5 && o5.data && typeof o5.data === "object") {
+          const d = o5.data as DirRolesObs005;
+          ws.addRow({ field: "completeness.isComplete", value: String(d.isComplete ?? ""), notes: "" });
+          ws.addRow({ field: "completeness.truncated", value: String(d.truncated ?? ""), notes: "" });
+          ws.addRow({
+            field: "completeness.permissionDenied",
+            value: Array.isArray(d.permissionDenied) ? String(d.permissionDenied.length) : "",
+            notes: Array.isArray(d.permissionDenied) && d.permissionDenied.length ? d.permissionDenied.join(", ") : ""
+          });
+          ws.addRow({
+            field: "completeness.slicesAttempted",
+            value: Array.isArray(d.slicesAttempted) ? String(d.slicesAttempted.length) : "",
+            notes: Array.isArray(d.slicesAttempted) && d.slicesAttempted.length ? d.slicesAttempted.join(", ") : ""
+          });
+          ws.addRow({
+            field: "completeness.slicesCompleted",
+            value: Array.isArray(d.slicesCompleted) ? String(d.slicesCompleted.length) : "",
+            notes: Array.isArray(d.slicesCompleted) && d.slicesCompleted.length ? d.slicesCompleted.join(", ") : ""
+          });
+          ws.addRow({
+            field: "completeness.notes",
+            value: Array.isArray(d.notes) ? String(d.notes.length) : "",
+            notes: Array.isArray(d.notes) && d.notes.length ? d.notes.join(" | ") : ""
+          });
+        } else {
+          ws.addRow({
+            field: "completeness",
+            value: "missing",
+            notes: "ENTRA_DIRROLES_OBS_005 was not present."
+          });
+        }
+
+        ws.addRow({ field: "", value: "", notes: "" });
+
+        // OBS_001: inventory summary
+        if (o1 && o1.data && typeof o1.data === "object") {
+          const d = o1.data as DirRolesObs001;
+          ws.addRow({ field: "inventory.roleDefinitionsCount", value: String(d.roleDefinitionsCount ?? ""), notes: "" });
+          ws.addRow({
+            field: "inventory.rolesWithAnyActiveAssignmentCount",
+            value: String(d.rolesWithAnyActiveAssignmentCount ?? ""),
+            notes: ""
+          });
+          ws.addRow({ field: "inventory.activeAssignmentsCount", value: String(d.activeAssignmentsCount ?? ""), notes: "" });
+          ws.addRow({ field: "inventory.truncated", value: String(d.truncated ?? ""), notes: "" });
+          ws.addRow({ field: "inventory.dataProfile", value: String(d.dataProfile ?? ""), notes: "" });
+        } else {
+          ws.addRow({
+            field: "inventory",
+            value: "missing",
+            notes: "ENTRA_DIRROLES_OBS_001 was not present."
+          });
+        }
+
+        ws.addRow({ field: "", value: "", notes: "" });
+
+        // OBS_002: principal type distribution
+        if (o2 && o2.data && typeof o2.data === "object") {
+          const d = o2.data as DirRolesObs002;
+          ws.addRow({ field: "principalTypes.user", value: String(d.user ?? ""), notes: "" });
+          ws.addRow({ field: "principalTypes.group", value: String(d.group ?? ""), notes: "" });
+          ws.addRow({ field: "principalTypes.servicePrincipal", value: String(d.servicePrincipal ?? ""), notes: "" });
+          ws.addRow({ field: "principalTypes.unknown", value: String(d.unknown ?? ""), notes: "" });
+          ws.addRow({ field: "principalTypes.truncated", value: String(d.truncated ?? ""), notes: "" });
+        } else {
+          ws.addRow({
+            field: "principalTypes",
+            value: "missing",
+            notes: "ENTRA_DIRROLES_OBS_002 was not present."
+          });
+        }
+
+        ws.addRow({ field: "", value: "", notes: "" });
+
+        // OBS_003: group-based assignment presence
+        if (o3 && o3.data && typeof o3.data === "object") {
+          const d = o3.data as DirRolesObs003;
+          ws.addRow({ field: "groupAssignments.present", value: String(d.present ?? ""), notes: "" });
+          ws.addRow({ field: "groupAssignments.assignmentsCount", value: String(d.assignmentsCount ?? ""), notes: "" });
+          ws.addRow({ field: "groupAssignments.truncated", value: String(d.truncated ?? ""), notes: "" });
+        } else {
+          ws.addRow({
+            field: "groupAssignments",
+            value: "missing",
+            notes: "ENTRA_DIRROLES_OBS_003 was not present."
+          });
+        }
+
+        ws.addRow({ field: "", value: "", notes: "" });
+
+        // OBS_004: eligible/PIM signal
+        if (o4 && o4.data && typeof o4.data === "object") {
+          const d = o4.data as DirRolesObs004;
+          ws.addRow({ field: "eligible.attempted", value: String(d.attempted ?? ""), notes: "" });
+          ws.addRow({ field: "eligible.succeeded", value: String(d.succeeded ?? ""), notes: "" });
+          ws.addRow({
+            field: "eligible.eligibleAssignmentsCount",
+            value: typeof d.eligibleAssignmentsCount === "number" ? String(d.eligibleAssignmentsCount) : "",
+            notes: "Only populated when eligible assignment evidence was successfully collected."
+          });
+          ws.addRow({ field: "eligible.truncated", value: String(d.truncated ?? ""), notes: "" });
+        } else {
+          ws.addRow({
+            field: "eligible",
+            value: "missing",
+            notes: "ENTRA_DIRROLES_OBS_004 was not present."
+          });
+        }
+
+        ws.addRow({ field: "", value: "", notes: "" });
+
+        // Raw dump (bounded) - useful during iteration
+        ws.addRow({
+          field: "raw.observedChecks",
+          value: String(dirRolesChecks.length),
+          notes: "Bounded JSON dump below (for debugging / iteration)."
+        });
+        ws.addRow({
+          field: "raw.data",
+          value: "",
+          notes: safeJsonCell(
+            dirRolesChecks.map((o: any) => ({
+              checkId: o.checkId,
+              observedAt: o.observedAt,
+              collectorId: o.collectorId,
+              data: o.data
+            })),
+            2400
+          )
+        });
       }
     }
 
