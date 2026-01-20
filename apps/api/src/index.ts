@@ -30,12 +30,23 @@ app.addContentTypeParser(
 // --------------------
 // Module -> Collector mapping
 // --------------------
-// IMPORTANT: The keys here must match CreateRunSchema input.modulesEnabled keys
+// IMPORTANT:
+// modulesEnabled keys may be:
+// - legacy module keys from the demo UI (entraUsers, enterpriseAppPermissions, ...)
+// - canonical collector IDs (entra.users, entra.enterpriseApps.permissions, ...)
+// We accept BOTH to avoid drift between UI and API.
 const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
+  // Legacy keys (demo UI / earlier contract)
   entraUsers: "entra.users",
   enterpriseAppPermissions: "entra.enterpriseApps.permissions",
   conditionalAccessPolicies: "entra.conditionalAccess.policies",
-  directoryRolesAssignments: "entra.directoryRoles.assignments"
+  directoryRolesAssignments: "entra.directoryRoles.assignments",
+
+  // Canonical keys (preferred stable contract)
+  "entra.users": "entra.users",
+  "entra.enterpriseApps.permissions": "entra.enterpriseApps.permissions",
+  "entra.conditionalAccess.policies": "entra.conditionalAccess.policies",
+  "entra.directoryRoles.assignments": "entra.directoryRoles.assignments"
 };
 
 // Always enqueue these report jobs at the end of a run
@@ -56,12 +67,14 @@ type JobSpec = {
 /**
  * modulesEnabled is an object of boolean flags, e.g:
  * { entraUsers: true, enterpriseAppPermissions: false }
+ * OR
+ * { "entra.users": true, "entra.enterpriseApps.permissions": true }
  *
  * This returns JobSpecs (collectorId + module key). Payload is added later once we know tenantId/tenantGuid.
  */
 function resolveCollectorJobs(modulesEnabled: unknown): JobSpec[] {
   // Default behaviour: at least one job
-  const fallback: JobSpec[] = [{ collectorId: "entra.users", module: "entraUsers" }];
+  const fallback: JobSpec[] = [{ collectorId: "entra.users", module: "entra.users" }];
 
   if (!isPlainObject(modulesEnabled)) return fallback;
 
@@ -742,7 +755,7 @@ app.get("/tenants/:tenantId/auth", async (req, reply) => {
   const { tenantId } = req.params as { tenantId: string };
 
   const tenant = await prisma.tenant.findUnique({
-    where: { tenantId },
+    where: { id: tenantId }, // FIX: tenant primary key is id
     select: {
       id: true,
       tenantGuid: true,
