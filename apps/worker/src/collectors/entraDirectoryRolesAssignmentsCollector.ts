@@ -1,43 +1,49 @@
 import type { Collector } from "./types";
-import { getGraphAccessToken, graphGetAllPages } from "./graph";
+import { getGraphAccessToken, graphGetAllPages, GraphHttpError } from "./graph";
+
 
 /**
- * Phase C (Step 1): evidence + observed checks only.
- * - No findings emitted in this first iteration.
- * - Profile boundary is enforced at the artefact layer:
- *   - safe: no principal identifiers / UPN / mail / displayName / membership identifiers
- *   - full: include principal identifiers/properties returned by Graph
+ * Phase C: Entra Directory Roles & Privileged Assignments
+ *
+ * Intent:
+ * - evidence + observed checks first (preferred pattern)
+ * - findings are added incrementally (decision-ready signals)
+ * - support both security posture and take-on / migration scoping lenses
+ *
+ * Data profile contract:
+ * - safe: must not emit PII-bearing artefacts (no identifiers, no UPN/mail/displayName)
+ * - full: may emit PII-bearing artefacts (explicit .full.json)
  */
 
-type DirectoryRoleTemplate = {
-  id: string;
-  displayName?: string;
-};
+type DataProfile = "safe" | "full";
+type PrincipalType = "user" | "group" | "servicePrincipal" | "unknown";
 
-type DirectoryRole = {
+type GraphDirectoryRole = {
   id: string;
   displayName?: string;
   roleTemplateId?: string;
 };
 
-type GraphDirectoryObject = {
-  id?: string;
-  "@odata.type"?: string;
+type GraphRoleTemplate = {
+  id: string;
+  displayName?: string;
+};
 
-  // user-ish
-  userPrincipalName?: string;
-  mail?: string;
+type GraphDirectoryObject = {
+  id: string;
   displayName?: string;
 
-  // servicePrincipal-ish
+  // User-ish
+  userPrincipalName?: string;
+  mail?: string;
+
+  // Service principal-ish
   appId?: string;
   servicePrincipalType?: string;
 };
 
-type PrincipalType = "user" | "group" | "servicePrincipal" | "unknown";
-
 type RoleAssignmentFull = {
-  assignmentType: "active" | "eligible" | "unknown";
+  assignmentType: "active" | "eligible";
   principalType: PrincipalType;
   principal: {
     id?: string;
@@ -51,7 +57,7 @@ type RoleAssignmentFull = {
 };
 
 type RoleAssignmentSafe = {
-  assignmentType: "active" | "eligible" | "unknown";
+  assignmentType: "active" | "eligible";
   principalType: PrincipalType;
 };
 
@@ -75,76 +81,61 @@ type RoleEntryFull = {
   assignments: RoleAssignmentFull[];
 };
 
-function limitConcurrency<T, R>(
-  items: T[],
+function isFullProfile(v: unknown): v is "full" {
+  return v === "full";
+}
+
+function principalTypeFromOdata(odataType: unknown): PrincipalType | null {
+  const s = typeof odataType === "string" ? odataType.toLowerCase() : "";
+  // Common types:
+  // - #microsoft.graph.user
+  // - #microsoft.graph.group
+  // - #microsoft.graph.servicePrincipal
+  if (s.includes("microsoft.graph.user")) return "user";
+  if (s.includes("microsoft.graph.group")) return "group";
+  if (s.includes("microsoft.graph.serviceprincipal")) return "servicePrincipal";
+  return null;
+}
+
+async function limitConcurrency<TIn, TOut>(
+  items: TIn[],
   concurrency: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  let currentIndex = 0;
-  let active = 0;
+  fn: (item: TIn) => Promise<TOut>
+): Promise<TOut[]> {
+  const results: TOut[] = [];
+  let index = 0;
 
-  return new Promise((resolve, reject) => {
-    const next = () => {
-      if (currentIndex >= items.length && active === 0) {
-        resolve(results);
-        return;
-      }
-
-      while (active < concurrency && currentIndex < items.length) {
-        const idx = currentIndex++;
-        active++;
-
-        fn(items[idx])
-          .then((r) => {
-            results[idx] = r;
-            active--;
-            next();
-          })
-          .catch(reject);
-      }
-    };
-
-    next();
+  const workers = Array.from({ length: Math.max(1, concurrency) }).map(async () => {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
   });
-}
 
-function principalTypeFromOdata(odataType: string | undefined | null): PrincipalType {
-  const t = (odataType ?? "").toLowerCase();
-  if (t.endsWith("user")) return "user";
-  if (t.endsWith("group")) return "group";
-  if (t.endsWith("serviceprincipal")) return "servicePrincipal";
-  return "unknown";
-}
-
-function safeProfileFromRun(run: any): "safe" | "full" {
-  const raw = run?.dataProfile;
-  return raw === "full" ? "full" : "safe";
+  await Promise.all(workers);
+  return results;
 }
 
 export const entraDirectoryRolesAssignmentsCollector: Collector = {
   id: "entra.directoryRoles.assignments",
-  displayName: "Entra directory roles & privileged assignments",
+  displayName: "Entra Directory Roles & Assignments",
   async run(ctx) {
+    const dataProfile: DataProfile = isFullProfile(ctx.run.dataProfile) ? "full" : "safe";
+    const includeSensitive = dataProfile === "full";
+
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
-    // Profile boundary (stable contract):
-    // Only explicit "full" allows sensitive artefact exports.
-    // Unknown/missing is treated as safe.
-    const dataProfile = safeProfileFromRun(ctx.run as any);
-    const includeSensitive = dataProfile === "full";
 
-    // Demo guardrails (optional caps) — must surface as completeness/truncation.
-    const MAX_ROLES = Number(process.env.DIRROLES_MAX_ROLES ?? 200);
-    const CONCURRENCY = Number(process.env.DIRROLES_CONCURRENCY ?? 8);
+    const MAX_ROLES = Number(process.env.DIRROLES_MAX_ROLES ?? 50);
+    const CONCURRENCY = Number(process.env.DIRROLES_CONCURRENCY ?? 5);
 
-    // Completeness tracking (evidence truthfulness)
+    // Track completeness as a first-class signal (demo guardrails / API / perms)
     const completeness = {
+      truncated: false,
+      permissionDenied: [] as string[],
       slicesAttempted: [] as string[],
       slicesCompleted: [] as string[],
-      permissionDenied: [] as string[],
-      truncated: false,
       notes: [] as string[]
     };
 
@@ -153,48 +144,44 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     // -------------------------
     completeness.slicesAttempted.push("roleDefinitions");
 
-    let roleTemplates: DirectoryRoleTemplate[] = [];
+    let roleTemplates: GraphRoleTemplate[] = [];
     try {
-      roleTemplates = await graphGetAllPages<DirectoryRoleTemplate>(
+      roleTemplates = await graphGetAllPages<GraphRoleTemplate>(
         token,
         "https://graph.microsoft.com/v1.0/directoryRoleTemplates?$select=id,displayName"
       );
       completeness.slicesCompleted.push("roleDefinitions");
     } catch (e: any) {
-      // Keep running; surface in completeness
-      completeness.notes.push(
-        `roleDefinitions failed: ${e?.message ?? "unknown error"}`
-      );
-      // If you want to classify 403 specifically, do it defensively:
-      if (String(e?.message ?? "").includes("403")) {
-        completeness.permissionDenied.push("roleDefinitions");
-      }
+      const msg = e?.message ?? "unknown error";
+      if (String(msg).includes("403")) completeness.permissionDenied.push("roleDefinitions");
+      completeness.notes.push(`roleDefinitions failed: ${msg}`);
+      // Without roleDefinitions we cannot produce a useful inventory. Hard-fail.
+      throw new Error(`Directory role templates could not be enumerated: ${msg}`);
     }
 
     const roleTemplateNameById = new Map<string, string>();
-    for (const t of roleTemplates) {
-      if (t?.id) roleTemplateNameById.set(t.id, t.displayName ?? "(unknown)");
+    for (const rt of roleTemplates) {
+      if (rt?.id) roleTemplateNameById.set(rt.id, rt.displayName ?? "(unknown)");
     }
 
     // -------------------------
-    // Slice B: Active role assignments (directoryRoles + members)
+    // Slice B: Active directory roles + members
     // -------------------------
     completeness.slicesAttempted.push("activeAssignments");
 
-    let directoryRoles: DirectoryRole[] = [];
+    let directoryRoles: GraphDirectoryRole[] = [];
     try {
-      directoryRoles = await graphGetAllPages<DirectoryRole>(
+      directoryRoles = await graphGetAllPages<GraphDirectoryRole>(
         token,
         "https://graph.microsoft.com/v1.0/directoryRoles?$select=id,displayName,roleTemplateId"
       );
       completeness.slicesCompleted.push("activeAssignments");
     } catch (e: any) {
-      completeness.notes.push(
-        `activeAssignments role list failed: ${e?.message ?? "unknown error"}`
-      );
-      if (String(e?.message ?? "").includes("403")) {
-        completeness.permissionDenied.push("activeAssignments");
-      }
+      const msg = e?.message ?? "unknown error";
+      if (String(msg).includes("403")) completeness.permissionDenied.push("activeAssignments");
+      completeness.notes.push(`activeAssignments roles list failed: ${msg}`);
+      // If we cannot enumerate directoryRoles, we cannot meaningfully proceed.
+      throw new Error(`Directory roles could not be enumerated: ${msg}`);
     }
 
     // Apply cap for demo predictability; surface truncation
@@ -202,9 +189,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     const targetRoles = wasTruncated ? directoryRoles.slice(0, MAX_ROLES) : directoryRoles;
     if (wasTruncated) {
       completeness.truncated = true;
-      completeness.notes.push(
-        `directoryRoles capped at ${MAX_ROLES} roles (demo guardrail)`
-      );
+      completeness.notes.push(`directoryRoles capped at ${MAX_ROLES} roles (demo guardrail)`);
     }
 
     // Fetch members per role (best-effort; per-role failure should not abort run)
@@ -215,12 +200,10 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         roleTemplateNameById.get(role.roleTemplateId ?? "") ??
         "(unknown)";
 
-      // In safe profile we still need to determine principalType; we do NOT store identifiers.
-      // Keep selects minimal to reduce accidental PII exposure.
-      const select =
-        includeSensitive
-          ? "$select=id,displayName,userPrincipalName,mail,appId,servicePrincipalType"
-          : "$select=id,@odata.type";
+      // In safe profile we still need principalType; we do NOT store identifiers.
+      const select = includeSensitive
+        ? "$select=id,displayName,userPrincipalName,mail,appId,servicePrincipalType"
+        : "$select=id,@odata.type";
 
       let members: GraphDirectoryObject[] = [];
       let rolePermissionDenied = false;
@@ -251,10 +234,8 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       };
 
       for (const m of members) {
-        // @odata.type is not always present in every response shape; try to infer safely
         const principalType: PrincipalType =
-          principalTypeFromOdata((m as any)?.["@odata.type"]) ??
-          "unknown";
+          principalTypeFromOdata((m as any)?.["@odata.type"]) ?? "unknown";
 
         counts.total++;
         counts[principalType]++;
@@ -295,20 +276,16 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     // If any role had permission denied at member enumeration, treat as permission gap on the slice
     const anyRolePermissionDenied = roleMemberResults.some((r) => r.rolePermissionDenied);
     if (anyRolePermissionDenied && !completeness.permissionDenied.includes("activeAssignments")) {
-      // Keep stable string identifiers
       completeness.permissionDenied.push("activeAssignments");
     }
 
     // -------------------------
     // Slice C: Eligible / PIM assignments (best-effort, optional)
     // -------------------------
-    // This slice is optional and should not make the "core" set incomplete by itself.
-    // We still surface attempted/succeeded via ENTRA_DIRROLES_OBS_004 and completeness notes.
     let pimAttempted = false;
     let pimSucceeded = false;
     let eligibleAssignmentsCount: number | undefined = undefined;
 
-    // Allow disabling in environments where Graph beta/roleManagement endpoints aren't desired
     const ENABLE_PIM_SLICE = String(process.env.DIRROLES_ENABLE_PIM_SLICE ?? "1") === "1";
 
     if (ENABLE_PIM_SLICE) {
@@ -316,9 +293,6 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       completeness.slicesAttempted.push("eligibleAssignments");
 
       try {
-        // Use v1.0 where possible; if your environment requires beta, switch here.
-        // We only need counts in safe; full can export detail later if desired.
-        // For this iteration we keep it as a count only.
         const schedules = await graphGetAllPages<any>(
           token,
           "https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules?$select=id"
@@ -339,9 +313,8 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     // -------------------------
     const roleDefinitionsCount = roleTemplates.length;
 
-    const rolesWithAnyActiveAssignmentCount = roleMemberResults.filter(
-      (r) => r.counts.total > 0
-    ).length;
+    const rolesWithAnyActiveAssignmentCount = roleMemberResults.filter((r) => r.counts.total > 0)
+      .length;
 
     const activeAssignmentsCount = roleMemberResults.reduce((acc, r) => acc + r.counts.total, 0);
 
@@ -424,7 +397,6 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       }
     });
 
-    // PIM/eligible coverage (only if attempted)
     if (pimAttempted) {
       await ctx.prisma.observedCheck.create({
         data: {
@@ -466,6 +438,44 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     });
 
     // -------------------------
+    // Finding (example): consumes multiple observed checks
+    // -------------------------
+    // This is a decision-ready signal that also supports migration/take-on complexity:
+    // - Non-user principals (groups / service principals) in directory roles increases governance complexity.
+    //
+    // Guards:
+    // - Only emit when the *core* slice is complete (avoid false positives in demos / perms gaps).
+    const nonUserAssignedCount = distribution.group + distribution.servicePrincipal;
+    const hasNonUserAssignments = nonUserAssignedCount > 0;
+
+    if (coreComplete && hasNonUserAssignments) {
+      await ctx.prisma.finding.create({
+        data: {
+          runId: ctx.run.id,
+          jobId: ctx.job.id,
+          checkId: "ENTRA_DIRROLES_001",
+          severity: "low",
+          title: "Non-user principals assigned to directory roles",
+          description:
+            "One or more directory role assignments target groups and/or service principals. This increases governance and operational complexity compared to user-only assignments.",
+          recommendation:
+            "Review group and service principal assignments to directory roles. Confirm business ownership, document access governance, and ensure assignments are intentional and monitored.",
+          evidence: {
+            assignmentPrincipalTypeCounts: {
+              user: distribution.user,
+              group: distribution.group,
+              servicePrincipal: distribution.servicePrincipal,
+              unknown: distribution.unknown
+            },
+            groupBasedAssignmentsPresent: groupBasedPresent,
+            observedChecks: ["ENTRA_DIRROLES_OBS_002", "ENTRA_DIRROLES_OBS_003", "ENTRA_DIRROLES_OBS_005"]
+          } as any,
+          references: [] as any
+        }
+      });
+    }
+
+    // -------------------------
     // Build artefacts (profile-aware)
     // -------------------------
     const capturedAt = new Date().toISOString();
@@ -492,7 +502,6 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       }
     };
 
-    // Safe roles array: counts only, no principal IDs or identifying properties
     const rolesSafe: RoleEntrySafe[] = roleMemberResults.map((r) => ({
       roleId: r.roleId,
       roleTemplateId: r.roleTemplateId,
@@ -583,7 +592,8 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         rolesScanned: targetRoles.length,
         activeAssignmentsCount,
         truncated: completeness.truncated,
-        isComplete: coreComplete
+        isComplete: coreComplete,
+        findingEmitted: coreComplete && hasNonUserAssignments
       },
       artefacts
     };
