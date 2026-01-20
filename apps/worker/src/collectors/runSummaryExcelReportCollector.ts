@@ -1273,9 +1273,11 @@ export const runSummaryExcelReportCollector: Collector = {
       }
     }
 
-    const buf = await wb.xlsx.writeBuffer();
+        const buf = await wb.xlsx.writeBuffer();
 
     return {
+      id: "report.runSummary.xlsx",
+      status: "ok",
       summary: {
         generatedAt: new Date().toISOString(),
         runId: run.id,
@@ -1298,3 +1300,4 @@ export const runSummaryExcelReportCollector: Collector = {
     };
   }
 };
+

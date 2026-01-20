@@ -1,282 +1,315 @@
 ﻿﻿import type { Collector } from "./types";
 import { getGraphAccessToken, graphGetAllPages } from "./graph";
 
-type ServicePrincipal = {
-  id: string;
-  appId?: string;
-  displayName?: string;
-  servicePrincipalType?: string;
-  accountEnabled?: boolean | null;
-};
-
 type GraphSp = {
-  appRoles?: Array<{ id?: string; value?: string }>;
-  id?: string;
+  id: string;
+  appId?: string | null;
+  displayName?: string | null;
+  accountEnabled?: boolean | null;
 };
 
 type AppRoleAssignment = {
   id: string;
-  appRoleId?: string;
-  resourceId?: string;
-  principalId?: string;
-  createdDateTime?: string;
+  principalId?: string | null;
+  resourceId?: string | null;
+  appRoleId?: string | null;
 };
 
 type OAuth2PermissionGrant = {
   id: string;
-  clientId?: string;
-  consentType?: string;
+  clientId?: string | null;
+  consentType?: string | null;
   principalId?: string | null;
-  resourceId?: string;
-  scope?: string;
+  resourceId?: string | null;
+  scope?: string | null;
 };
 
-function parseScopes(scope: string | undefined | null): string[] {
+type ServicePrincipal = GraphSp & {
+  appRoles?: Array<{
+    id: string;
+    value?: string | null;
+    displayName?: string | null;
+    description?: string | null;
+    isEnabled?: boolean | null;
+    origin?: string | null;
+    allowedMemberTypes?: string[] | null;
+  }>;
+};
+
+function uniqStrings(values: Array<string | null | undefined>): string[] {
+  const set = new Set<string>();
+  for (const v of values) {
+    if (!v) continue;
+    const s = String(v).trim();
+    if (s) set.add(s);
+  }
+  return Array.from(set.values()).sort((a, b) => a.localeCompare(b));
+}
+
+function splitScopes(scope: string | null | undefined): string[] {
   if (!scope) return [];
   return scope
     .split(" ")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((s) => s.length > 0);
 }
 
-function limitConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  let currentIndex = 0;
-  let active = 0;
-
-  return new Promise((resolve, reject) => {
-    const next = () => {
-      if (currentIndex >= items.length && active === 0) {
-        resolve(results);
-        return;
-      }
-
-      while (active < concurrency && currentIndex < items.length) {
-        const idx = currentIndex++;
-        active++;
-
-        fn(items[idx])
-          .then((r) => {
-            results[idx] = r;
-            active--;
-            next();
-          })
-          .catch(reject);
-      }
-    };
-
-    next();
-  });
-}
-
-const RISKY_PERMS = new Set<string>([
-  // Common “high impact” delegated scopes (representative, not exhaustive)
-  "Directory.ReadWrite.All",
-  "Directory.AccessAsUser.All",
-  "RoleManagement.ReadWrite.Directory",
-  "User.ReadWrite.All",
-  "Group.ReadWrite.All",
-  "Policy.ReadWrite.ConditionalAccess",
+// Extremely lightweight “risky” heuristic list (demo-friendly).
+// Contract is that this is only a bounded signal, not a full risk engine.
+const RISKY_GRAPH_APP_PERMS = new Set<string>([
   "Application.ReadWrite.All",
   "AppRoleAssignment.ReadWrite.All",
+  "Directory.ReadWrite.All",
+  "Group.ReadWrite.All",
+  "RoleManagement.ReadWrite.Directory",
+  "User.ReadWrite.All",
+  "Policy.ReadWrite.ConditionalAccess",
+  "Policy.ReadWrite.AuthenticationMethod",
   "AuditLog.Read.All",
-  "AuditLog.ReadWrite.All",
-  "SecurityEvents.Read.All",
-  "Mail.Read",
-  "Mail.ReadWrite",
-  "Mail.Send"
+  "SecurityEvents.Read.All"
 ]);
+
+function classifyRisky(applicationPermissions: string[], delegatedPermissions: string[]): string[] {
+  const risky = new Set<string>();
+
+  for (const p of applicationPermissions) {
+    if (RISKY_GRAPH_APP_PERMS.has(p)) risky.add(p);
+  }
+
+  // Delegated can still be powerful, but we keep it conservative for now.
+  for (const p of delegatedPermissions) {
+    if (RISKY_GRAPH_APP_PERMS.has(p)) risky.add(p);
+  }
+
+  return Array.from(risky.values()).sort((a, b) => a.localeCompare(b));
+}
 
 export const enterpriseAppPermissionsCollector: Collector = {
   id: "entra.enterpriseApps.permissions",
-  displayName: "Enterprise App Permissions",
+  displayName: "Entra Enterprise Apps (Permissions)",
   async run(ctx) {
-    // Demo-only test hook: slow this collector down to force report job retry/backoff behaviour.
-    // Default is 0 (disabled). Set DEMO_DELAY_EAP_MS to e.g. 15000 to delay 15 seconds.
-    const DEMO_DELAY_EAP_MS = Number(process.env.DEMO_DELAY_EAP_MS ?? 0);
-    if (DEMO_DELAY_EAP_MS > 0) {
-      await new Promise((r) => setTimeout(r, DEMO_DELAY_EAP_MS));
-    }
-
     const tenantId = ctx.tenant.tenantGuid;
     const token = await getGraphAccessToken({ tenantId });
 
-    // Collector-level hardening:
-    // Only an explicit "full" enables sensitive inventory exports.
-    // Any unknown/missing value is treated as "safe".
     const rawProfile = (ctx.run as any)?.dataProfile;
     const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
-    // 1) Load Microsoft Graph service principal (to resolve appRoleId -> permission value)
-    const graphSp = await graphGetAllPages<GraphSp>(
-      token,
-      "https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '00000003-0000-0000-c000-000000000000'&$select=id,appRoles"
-    ).then((arr) => arr[0]);
+    const maxAppsEnv = process.env.EAP_MAX_APPS;
+    const maxApps = maxAppsEnv ? Number(maxAppsEnv) : 100;
+    const cap = Number.isFinite(maxApps) && maxApps > 0 ? maxApps : 100;
 
-    const graphRoleMap = new Map<string, string>();
-    for (const role of graphSp?.appRoles ?? []) {
-      if (role?.id && role?.value) graphRoleMap.set(role.id, role.value);
-    }
-
-    // 2) List service principals (enterprise apps)
-    const sps = await graphGetAllPages<ServicePrincipal>(
+    const allSps = await graphGetAllPages<GraphSp>(
       token,
-      "https://graph.microsoft.com/v1.0/servicePrincipals?$select=id,appId,displayName,servicePrincipalType,accountEnabled"
+      "https://graph.microsoft.com/v1.0/servicePrincipals?$select=id,appId,displayName,accountEnabled"
     );
 
-    const enterpriseApps = sps.filter(
-      (sp) => (sp.servicePrincipalType ?? "").toLowerCase() === "application"
-    );
+    // Optional cap (demo guardrails)
+    const scanned = allSps.slice(0, cap);
+    const truncated = allSps.length > scanned.length;
 
-    // Demo-only cap to keep runtimes predictable in CDX and surface truncation as a signal
-    const MAX_APPS = Number(process.env.ENTAPP_MAX_APPS ?? 200);
-    const CONCURRENCY = Number(process.env.ENTAPP_CONCURRENCY ?? 8);
-
-    const wasTruncated = enterpriseApps.length > MAX_APPS;
-    const targetApps = wasTruncated ? enterpriseApps.slice(0, MAX_APPS) : enterpriseApps;
-
-    const totalEnterpriseApps = enterpriseApps.length;
-
-    type AppPermissionReport = {
-      id: string;
-      displayName: string;
+    const apps: Array<{
       appId: string;
-      accountEnabled: boolean | null;
+      displayName: string;
+      servicePrincipalId: string;
       applicationPermissions: string[];
       delegatedPermissions: string[];
-      raw: {
-        graphAppRoleAssignments: AppRoleAssignment[];
-        graphOauth2Grants: OAuth2PermissionGrant[];
-      };
       risky: string[];
-    };
+      accountEnabled: boolean | null;
+    }> = [];
 
-    const reports = await limitConcurrency(targetApps, CONCURRENCY, async (sp) => {
+    for (const sp of scanned) {
+      // Pull assignments and grants for each service principal (bounded by cap)
       const appRoleAssignments = await graphGetAllPages<AppRoleAssignment>(
         token,
-        `https://graph.microsoft.com/v1.0/servicePrincipals/${sp.id}/appRoleAssignments?$select=id,appRoleId,resourceId,principalId,createdDateTime`
+        `https://graph.microsoft.com/v1.0/servicePrincipals/${encodeURIComponent(sp.id)}/appRoleAssignedTo?$select=id,principalId,resourceId,appRoleId`
       );
-
-      const graphAssignments = appRoleAssignments.filter(
-        (a) =>
-          (a.resourceId ?? "").toLowerCase() === (graphSp?.id ?? "").toLowerCase()
-      );
-
-      const appPerms = graphAssignments
-        .map((a) => graphRoleMap.get(a.appRoleId ?? "") ?? "")
-        .filter(Boolean);
 
       const oauth2Grants = await graphGetAllPages<OAuth2PermissionGrant>(
         token,
-        `https://graph.microsoft.com/v1.0/servicePrincipals/${sp.id}/oauth2PermissionGrants?$select=id,clientId,consentType,principalId,resourceId,scope`
+        `https://graph.microsoft.com/v1.0/servicePrincipals/${encodeURIComponent(sp.id)}/oauth2PermissionGrants?$select=id,clientId,consentType,principalId,resourceId,scope`
       );
 
-      const graphGrants = oauth2Grants.filter(
-        (g) =>
-          (g.resourceId ?? "").toLowerCase() === (graphSp?.id ?? "").toLowerCase()
-      );
+      // Resolve resource service principals referenced in assignments/grants.
+      const resourceIds = uniqStrings([
+        ...appRoleAssignments.map((a) => a.resourceId),
+        ...oauth2Grants.map((g) => g.resourceId)
+      ]);
 
-      const delegated = graphGrants.flatMap((g) => parseScopes(g.scope));
+      const resourceSps: Record<string, ServicePrincipal> = {};
 
-      const risky = [...new Set([...appPerms, ...delegated])].filter((p) =>
-        RISKY_PERMS.has(p)
-      );
+      for (const rid of resourceIds) {
+        // we need appRoles to map appRoleId -> value/displayName for application perms
+        const rspArr = await graphGetAllPages<ServicePrincipal>(
+          token,
+          `https://graph.microsoft.com/v1.0/servicePrincipals/${encodeURIComponent(rid)}?$select=id,appId,displayName&$expand=appRoles`
+        );
+        const rsp = rspArr[0];
+        if (rsp) resourceSps[rid] = rsp;
+      }
 
-      return {
-        id: sp.id,
-        displayName: sp.displayName ?? "(unknown)",
+      // Application permissions: appRoleAssignedTo where resource is Graph and role maps to value
+      const applicationPermissions: string[] = [];
+      for (const a of appRoleAssignments) {
+        const resource = a.resourceId ? resourceSps[a.resourceId] : undefined;
+        if (!resource || !a.appRoleId) continue;
+
+        // Only interpret Graph perms if resource is Graph (appId well-known)
+        // Note: still safe to list values even when not Graph, but for now scope to Graph.
+        const isGraph = String(resource.appId ?? "").toLowerCase() === "00000003-0000-0000-c000-000000000000";
+        if (!isGraph) continue;
+
+        const role = Array.isArray(resource.appRoles)
+          ? resource.appRoles.find((r) => String(r.id).toLowerCase() === String(a.appRoleId).toLowerCase())
+          : undefined;
+
+        if (role?.value) applicationPermissions.push(role.value);
+      }
+
+      // Delegated permissions: oauth2PermissionGrants scope strings, scoped to Graph only
+      const delegatedPermissions: string[] = [];
+      for (const g of oauth2Grants) {
+        const resource = g.resourceId ? resourceSps[g.resourceId] : undefined;
+        if (!resource) continue;
+
+        const isGraph = String(resource.appId ?? "").toLowerCase() === "00000003-0000-0000-c000-000000000000";
+        if (!isGraph) continue;
+
+        delegatedPermissions.push(...splitScopes(g.scope));
+      }
+
+      const appPerms = uniqStrings(applicationPermissions);
+      const delPerms = uniqStrings(delegatedPermissions);
+      const risky = classifyRisky(appPerms, delPerms);
+
+      apps.push({
         appId: sp.appId ?? "",
-        accountEnabled: sp.accountEnabled ?? null,
-        applicationPermissions: [...new Set(appPerms)].sort(),
-        delegatedPermissions: [...new Set(delegated)].sort(),
-        raw: {
-          graphAppRoleAssignments: graphAssignments,
-          graphOauth2Grants: graphGrants
-        },
-        risky
-      } satisfies AppPermissionReport;
-    });
+        displayName: sp.displayName ?? "",
+        servicePrincipalId: sp.id,
+        applicationPermissions: appPerms,
+        delegatedPermissions: delPerms,
+        risky,
+        accountEnabled: sp.accountEnabled ?? null
+      });
+    }
 
-    const riskyApps = reports.filter((r) => r.risky.length > 0);
+    const riskyApps = apps.filter((a) => a.risky.length > 0).length;
 
-    // -------------------------
-    // Observed check (preferred pattern)
-    // -------------------------
-    await ctx.prisma.observedCheck.create({
-      data: {
+    // Observed check (counts only)
+    await ctx.prisma.observedCheck.deleteMany({
+      where: {
         runId: ctx.run.id,
-        jobId: ctx.job.id,
-        checkId: "ENTRA_EAP_OBS_001",
-        collectorId: "entra.enterpriseApps.permissions",
-        ruleId: null,
-        data: {
-          profile: dataProfile,
-          totalEnterpriseApps,
-          scannedApps: reports.length,
-          riskyApps: riskyApps.length,
-          truncated: wasTruncated,
-          maxApps: MAX_APPS,
-          concurrency: CONCURRENCY,
-          fullExported: includeSensitive
-        },
-        references: [] as any
+        jobId: ctx.job?.id ?? null,
+        checkId: { in: ["ENTRA_EAP_OBS_001"] }
       }
     });
 
-    // 3) Findings
-    // ENTRA_EAP_001 — risky permissions exist
-    if (riskyApps.length > 0) {
+    await ctx.prisma.observedCheck.createMany({
+      data: [
+        {
+          runId: ctx.run.id,
+          jobId: ctx.job?.id ?? null,
+          checkId: "ENTRA_EAP_OBS_001",
+          collectorId: enterpriseAppPermissionsCollector.id,
+          ruleId: null,
+          data: {
+            profile: dataProfile,
+            totalEnterpriseApps: allSps.length,
+            scannedApps: scanned.length,
+            riskyApps,
+            truncated,
+            maxApps: cap
+          } as any,
+          references: [] as any
+        }
+      ]
+    });
+
+    // Findings (bounded)
+    if (riskyApps > 0) {
       await ctx.prisma.finding.create({
         data: {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_001",
+          category: "identity",
           severity: "high",
-          title: "Risky enterprise application permissions detected",
+          confidence: "medium",
+          status: "open",
+          score: 0,
+          title: "High-privilege Graph permissions detected",
           description:
-            "One or more enterprise applications have been granted high-impact delegated or application permissions.",
+            "One or more enterprise applications have high-privilege Microsoft Graph permissions. These permissions can represent significant tenant-wide impact depending on how the application is secured and used.",
           recommendation:
-            "Review enterprise application consent and permissions. Remove unnecessary grants, validate least privilege, and enforce admin consent policies.",
+            "Review high-privilege application permissions: validate business justification, ensure application ownership is known, confirm credential hygiene (certificates/secrets), and remove unused permissions.",
           evidence: {
-            riskyApps: riskyApps.length,
-            scannedApps: reports.length,
-            maxApps: MAX_APPS,
-            truncated: wasTruncated
-          },
-          references: [] as any
+            riskyApps,
+            scannedApps: scanned.length,
+            totalEnterpriseApps: allSps.length,
+            truncated
+          }
         }
       });
     }
 
-    // ENTRA_EAP_002 — demo-only truncation signal
-    if (wasTruncated) {
+    if (truncated) {
       await ctx.prisma.finding.create({
         data: {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_EAP_002",
+          category: "assessment",
           severity: "info",
-          title: "Enterprise app enumeration truncated (demo-only limit)",
+          confidence: "high",
+          status: "open",
+          score: 0,
+          title: "Enterprise app scan truncated",
           description:
-            "Enterprise app enumeration exceeded the configured maximum and was truncated. Results may be incomplete.",
+            "The enterprise application permissions scan was truncated due to configured guardrails. Results may be incomplete and should be interpreted as a subset.",
           recommendation:
-            "Increase ENTAPP_MAX_APPS or run in an environment where full enumeration is feasible. Treat outputs as incomplete until resolved.",
+            "If you need a complete view, increase the scan cap in a controlled environment and re-run discovery.",
           evidence: {
-            totalEnterpriseApps,
-            maxApps: MAX_APPS
-          },
-          references: [] as any
+            scannedApps: scanned.length,
+            totalEnterpriseApps: allSps.length,
+            maxApps: cap
+          }
         }
       });
     }
 
-    // 5) Return a JSON artefact for the report (profile-aware)
-    const artefactContent = includeSensitive
+    const safeArtefact = JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        profile: "safe",
+        tenant: {
+          tenantGuid: ctx.tenant.tenantGuid,
+          primaryDomain: ctx.tenant.primaryDomain,
+          displayName: ctx.tenant.displayName
+        },
+        summary: {
+          totalEnterpriseApps: allSps.length,
+          scannedApps: scanned.length,
+          riskyApps,
+          truncated,
+          maxApps: cap
+        },
+        // Safe-by-design: we include only permission names and app identifiers (no owners/creds)
+        apps: apps.map((a) => ({
+          appId: a.appId,
+          displayName: a.displayName,
+          servicePrincipalId: a.servicePrincipalId,
+          applicationPermissions: a.applicationPermissions,
+          delegatedPermissions: a.delegatedPermissions,
+          risky: a.risky,
+          accountEnabled: a.accountEnabled
+        }))
+      },
+      null,
+      2
+    );
+
+    // For now, full artefact is the same shape; future work can enrich with additional evidence.
+    const fullArtefact = includeSensitive
       ? JSON.stringify(
           {
             generatedAt: new Date().toISOString(),
@@ -287,68 +320,48 @@ export const enterpriseAppPermissionsCollector: Collector = {
               displayName: ctx.tenant.displayName
             },
             summary: {
-              totalEnterpriseApps,
-              scannedApps: reports.length,
-              riskyApps: riskyApps.length,
-              truncated: wasTruncated,
-              maxApps: MAX_APPS,
-              concurrency: CONCURRENCY
+              totalEnterpriseApps: allSps.length,
+              scannedApps: scanned.length,
+              riskyApps,
+              truncated,
+              maxApps: cap
             },
-            apps: reports
+            apps
           },
           null,
           2
         )
-      : JSON.stringify(
-          {
-            generatedAt: new Date().toISOString(),
-            profile: "safe",
-            tenant: {
-              tenantGuid: ctx.tenant.tenantGuid,
-              primaryDomain: ctx.tenant.primaryDomain,
-              displayName: ctx.tenant.displayName
-            },
-            summary: {
-              totalEnterpriseApps,
-              scannedApps: reports.length,
-              riskyApps: riskyApps.length,
-              truncated: wasTruncated,
-              maxApps: MAX_APPS,
-              concurrency: CONCURRENCY
-            },
-            // Safe profile: only export a minimal list of risky apps (no full permission inventory).
-            riskyApps: riskyApps.map((app) => ({
-              id: app.id,
-              displayName: app.displayName,
-              appId: app.appId,
-              accountEnabled: app.accountEnabled,
-              riskyPermissions: app.risky
-            }))
-          },
-          null,
-          2
-        );
+      : null;
 
     return {
-      id: "entra.enterpriseApps.permissions",
+      id: enterpriseAppPermissionsCollector.id,
       status: "ok",
       summary: {
         profile: dataProfile,
-        totalEnterpriseApps,
-        scannedApps: reports.length,
-        riskyApps: riskyApps.length,
-        truncated: wasTruncated,
-        maxApps: MAX_APPS
+        totalEnterpriseApps: allSps.length,
+        scannedApps: scanned.length,
+        riskyApps,
+        truncated,
+        maxApps: cap,
+        fullExported: includeSensitive
       },
       artefacts: [
         {
-          type: "json",
-          filename: includeSensitive
-            ? "enterprise-app-permissions.full.json"
-            : "enterprise-app-permissions.json",
+          type: "json" as const,
+          filename: includeSensitive ? "enterprise-app-permissions.safe.json" : "enterprise-app-permissions.json",
           contentType: "application/json",
-          content: artefactContent
-        }
+          content: Buffer.from(safeArtefact, "utf-8")
+        },
+        ...(includeSensitive && fullArtefact
+          ? [
+              {
+                type: "json" as const,
+                filename: "enterprise-app-permissions.full.json",
+                contentType: "application/json",
+                content: Buffer.from(fullArtefact, "utf-8")
+              }
+            ]
+          : [])
       ]
     };
   }

@@ -26,6 +26,7 @@ export const runSummaryCsvReportCollector: Collector = {
         tenant: true,
         jobs: true,
         findings: true,
+        observedChecks: true,
         artefacts: true
       }
     });
@@ -40,10 +41,12 @@ export const runSummaryCsvReportCollector: Collector = {
 
     const jobs = run.jobs ?? [];
     const findings = run.findings ?? [];
+    const observedChecks = run.observedChecks ?? [];
     const artefacts = run.artefacts ?? [];
 
     const derivedStatus = deriveRunStatus(jobs);
     const generatedAt = new Date().toISOString();
+    const dataProfile = (run.dataProfile ?? "safe") as string;
 
     const sevCounts = {
       critical: findings.filter((f) => f.severity === "critical").length,
@@ -61,12 +64,14 @@ export const runSummaryCsvReportCollector: Collector = {
       "tenantGuid",
       "primaryDomain",
       "tenantDisplayName",
+      "dataProfile",
       "runStatus",
       "runCreatedAt",
       "runStartedAt",
       "runEndedAt",
       "jobsTotal",
       "findingsTotal",
+      "observedChecksTotal",
       "artefactsTotal",
       "sevCritical",
       "sevHigh",
@@ -105,12 +110,14 @@ export const runSummaryCsvReportCollector: Collector = {
         run.tenant.tenantGuid,
         run.tenant.primaryDomain,
         run.tenant.displayName ?? "",
+        dataProfile,
         derivedStatus,
         run.createdAt?.toISOString?.() ?? String(run.createdAt),
         run.startedAt ? run.startedAt.toISOString() : "",
         run.endedAt ? run.endedAt.toISOString() : "",
         jobs.length,
         findings.length,
+        observedChecks.length,
         artefacts.length,
         sevCounts.critical,
         sevCounts.high,
@@ -133,12 +140,14 @@ export const runSummaryCsvReportCollector: Collector = {
           run.tenant.tenantGuid,
           run.tenant.primaryDomain,
           run.tenant.displayName ?? "",
+          dataProfile,
           derivedStatus,
           run.createdAt?.toISOString?.() ?? String(run.createdAt),
           run.startedAt ? run.startedAt.toISOString() : "",
           run.endedAt ? run.endedAt.toISOString() : "",
           jobs.length,
           findings.length,
+          observedChecks.length,
           artefacts.length,
           sevCounts.critical,
           sevCounts.high,
@@ -172,12 +181,14 @@ export const runSummaryCsvReportCollector: Collector = {
           run.tenant.tenantGuid,
           run.tenant.primaryDomain,
           run.tenant.displayName ?? "",
+          dataProfile,
           derivedStatus,
           run.createdAt?.toISOString?.() ?? String(run.createdAt),
           run.startedAt ? run.startedAt.toISOString() : "",
           run.endedAt ? run.endedAt.toISOString() : "",
           jobs.length,
           findings.length,
+          observedChecks.length,
           artefacts.length,
           sevCounts.critical,
           sevCounts.high,

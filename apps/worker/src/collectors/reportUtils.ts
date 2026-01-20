@@ -9,7 +9,7 @@ export function isReportCollectorId(collectorId: string): boolean {
 }
 
 export function deriveRunStatus(
-  jobs: { status: string }[]
+  jobs: Array<{ status: string }>
 ): "queued" | "running" | "succeeded" | "failed" {
   if (jobs.some((j) => j.status === "failed")) return "failed";
   if (jobs.length > 0 && jobs.every((j) => j.status === "succeeded")) return "succeeded";
@@ -18,16 +18,22 @@ export function deriveRunStatus(
   return "queued";
 }
 
+type PrismaLike = {
+  job: {
+    findMany: (args: {
+      where: { runId: string };
+      select: { status: true; collectorId: true };
+    }) => Promise<Array<{ status: string; collectorId: string }>>;
+  };
+};
+
 /**
  * Report collectors must not run until all *non-report* jobs are in a terminal state.
  * This avoids generating partial summaries when report jobs are picked up early in a concurrent worker model.
  *
  * Throws an Error if any non-report jobs are still pending (queued/running/etc).
  */
-export async function assertReportReadyOrThrow(args: {
-  prisma: any;
-  runId: string;
-}): Promise<void> {
+export async function assertReportReadyOrThrow(args: { prisma: PrismaLike; runId: string }): Promise<void> {
   const { prisma, runId } = args;
 
   const jobs = await prisma.job.findMany({
@@ -36,8 +42,7 @@ export async function assertReportReadyOrThrow(args: {
   });
 
   const pendingNonReportJobs = jobs.filter(
-    (j: { status: string; collectorId: string }) =>
-      !isReportCollectorId(j.collectorId) && !isTerminalJobStatus(j.status)
+    (j) => !isReportCollectorId(j.collectorId) && !isTerminalJobStatus(j.status)
   );
 
   if (pendingNonReportJobs.length > 0) {
@@ -45,6 +50,7 @@ export async function assertReportReadyOrThrow(args: {
       acc[j.status] = (acc[j.status] ?? 0) + 1;
       return acc;
     }, {});
+
     const summary = Object.entries(counts)
       .map(([k, v]) => `${k}=${v}`)
       .join(", ");

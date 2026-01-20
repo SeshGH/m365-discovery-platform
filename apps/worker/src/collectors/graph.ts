@@ -159,7 +159,7 @@ export async function graphGetAllPages<TItem>(token: string, url: string): Promi
   let next: string | undefined = url;
 
   while (next) {
-    const page = await graphGet<Page<TItem>>(token, next);
+    const page: any = await graphGet<Page<TItem>>(token, next);
     items.push(...(page.value ?? []));
     next = page["@odata.nextLink"];
   }
