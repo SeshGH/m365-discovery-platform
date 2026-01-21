@@ -307,6 +307,30 @@ The following behaviours are **implemented, validated, and treated as stable con
 
 This prevents misleading partial summaries and does not introduce a new source of truth.
 
+### Permission-denied as completeness signal
+
+For selected collectors that enumerate privileged or restricted Microsoft Graph surfaces (for example: Directory Roles and Conditional Access), **Graph permission gaps are treated as data completeness signals, not execution failures**.
+
+Behavioural contract:
+
+* A Graph `403` response indicates **missing or insufficient permissions**, not a runtime fault.
+* Collectors **continue execution where possible** rather than failing the job.
+* Missing coverage is surfaced explicitly via:
+  * observed checks (e.g. `isComplete=false`)
+  * recorded `permissionDenied` slices
+  * completeness notes and flags
+* Artefacts and summaries **may still be emitted**, even when data is incomplete.
+* Findings that rely on full coverage **must not be emitted** when completeness is not satisfied.
+
+This behaviour is intentional and supports:
+
+* least-privilege execution
+* demo-safe operation
+* migration and take-on scoping
+* transparent communication of unknowns and assumptions
+
+Permission-denied handling is therefore a **first-class discovery signal**, not an error condition.
+
 ---
 
 ## Direction of travel (future-facing)
