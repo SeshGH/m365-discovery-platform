@@ -69,7 +69,6 @@ Examples:
 
 * **Collector:** `entra.enterpriseApps.permissions`
 * **Derived from observed check(s):** `ENTRA_EAP_OBS_001`
-* **Category (implemented):** `application_permissions`
 * **Severity (implemented):** `high`
 * **Meaning:** At least one enterprise application has high-privilege Microsoft Graph **application** permissions that materially increase tenant risk.
 * **Notes:**
@@ -81,10 +80,9 @@ Examples:
 
 * **Collector:** `entra.enterpriseApps.permissions`
 * **Derived from observed check(s):** `ENTRA_EAP_OBS_001`
-* **Category (implemented):** `other`
 * **Severity (implemented):** `info`
 * **Meaning:** The scan was intentionally limited (e.g. demo cap / throttling controls), so results may not reflect the full tenant.
-* **Demo-only:** Yes (current demo guardrails such as `ENTAPP_MAX_APPS`).
+* **Demo-only:** Yes (current demo guardrails such as `EAP_MAX_APPS` — default cap is 100).
 * **UI/reporting note:** Treat as a completeness warning; avoid implying the tenant is “clean” if truncation occurred.
 
 ---
