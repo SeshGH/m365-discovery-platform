@@ -460,7 +460,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
     });
 
     // -------------------------
-    // Finding (example): consumes multiple observed checks
+    // Findings: derived from observed checks (completeness-gated)
     // -------------------------
     const nonUserAssignedCount = distribution.group + distribution.servicePrincipal;
     const hasNonUserAssignments = nonUserAssignedCount > 0;
@@ -485,6 +485,34 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
               unknown: distribution.unknown
             },
             groupBasedAssignmentsPresent: groupBasedPresent,
+            observedChecks: ["ENTRA_DIRROLES_OBS_002", "ENTRA_DIRROLES_OBS_003", "ENTRA_DIRROLES_OBS_005"]
+          } as any,
+          references: [] as any
+        }
+      });
+    }
+
+    if (coreComplete && groupBasedPresent) {
+      await ctx.prisma.finding.create({
+        data: {
+          runId: ctx.run.id,
+          jobId: ctx.job.id,
+          checkId: "ENTRA_DIRROLES_002",
+          severity: "info",
+          title: "Directory roles assigned to groups",
+          description:
+            "One or more directory roles are assigned to groups rather than directly to individual users. This can be a valid governance pattern, but it increases change-control and troubleshooting complexity.",
+          recommendation:
+            "Confirm group-based role assignments are intentional and governed. Ensure group ownership is documented, membership changes are controlled, and role assignment groups are monitored.",
+          evidence: {
+            groupAssignmentsCount,
+            groupBasedAssignmentsPresent: groupBasedPresent,
+            assignmentPrincipalTypeCounts: {
+              user: distribution.user,
+              group: distribution.group,
+              servicePrincipal: distribution.servicePrincipal,
+              unknown: distribution.unknown
+            },
             observedChecks: ["ENTRA_DIRROLES_OBS_002", "ENTRA_DIRROLES_OBS_003", "ENTRA_DIRROLES_OBS_005"]
           } as any,
           references: [] as any
@@ -610,7 +638,7 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
         activeAssignmentsCount,
         truncated: completeness.truncated,
         isComplete: coreComplete,
-        findingEmitted: coreComplete && hasNonUserAssignments
+        findingEmitted: coreComplete && (hasNonUserAssignments || groupBasedPresent)
       },
       artefacts
     };
