@@ -60,19 +60,25 @@ Observed checks MUST NOT:
 
 ## Naming conventions
 
-Observed checks use dot-notation:
+Observed check identifiers are **stable contracts**.
+
+Current convention (implemented):
 
 ```
-<area>.<entity>.<condition>
+<AREA>_<DOMAIN>_OBS_<NNN>
 ```
 
 Examples:
 
-* `entra.users.total`
-* `entra.users.guests.present`
-* `entra.enterpriseApps.permissions.present`
+* `ENTRA_USERS_OBS_001`
+* `ENTRA_EAP_OBS_001`
+* `ENTRA_CA_OBS_001`
+* `ENTRA_DIRROLES_OBS_005`
 
-Identifiers are **stable contracts**.
+Notes:
+
+* Earlier draft dot-notation examples (e.g. `entra.users.total`) are **conceptual only** and are not emitted by the worker today.
+* Do not invent new ID formats without updating this registry and the relevant contracts.
 
 ---
 
@@ -93,7 +99,7 @@ An observed check:
 A finding:
 
 * interprets one or more observed checks
-* assigns severity, confidence, and guidance
+* assigns severity and guidance
 * may change over time as interpretation logic evolves
 
 ---
@@ -107,10 +113,10 @@ A single observed check may:
 
 Example:
 
-* Observed check: `entra.enterpriseApps.risky.present`
-* Possible findings:
+* Observed check: `ENTRA_EAP_OBS_001`
+* Possible findings (now or future):
 
-  * “High-risk delegated permissions detected”
+  * “High-risk Graph permissions detected”
   * “Third-party app governance required”
 
 The observed check itself **never changes meaning**, even if findings do.
@@ -133,27 +139,31 @@ This allows:
 
 ---
 
-## Initial observed checks
+## Implemented observed checks
 
 ### Entra Users
 
-| checkId                      | Description           | Data payload                          |
-| ---------------------------- | --------------------- | ------------------------------------- |
-| `entra.users.total`          | Total number of users | `{ count: number }`                   |
-| `entra.users.enabled`        | Enabled users         | `{ count: number }`                   |
-| `entra.users.disabled`       | Disabled users        | `{ count: number }`                   |
-| `entra.users.guests.present` | Guest users present   | `{ present: boolean, count: number }` |
+| checkId               | Description         | Data payload                                                                                                                                |
+| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_USERS_OBS_001` | User counts summary | `{ total: number, member: number, guest: number, enabled: number, disabled: number, dataProfile: "safe" or "full", fullExported: boolean }` |
+
+Notes:
+
+* This observed check summarises the **state** of users at discovery time.
+* It contains **counts and booleans only** — no evaluation or judgement.
 
 ---
 
 ### Enterprise Applications
 
-| checkId                                    | Description                | Data payload                          |
-| ------------------------------------------ | -------------------------- | ------------------------------------- |
-| `entra.enterpriseApps.total`               | Total enterprise apps      | `{ count: number }`                   |
-| `entra.enterpriseApps.scanned`             | Apps scanned by collector  | `{ count: number }`                   |
-| `entra.enterpriseApps.permissions.present` | App permissions detected   | `{ present: boolean }`                |
-| `entra.enterpriseApps.risky.present`       | Risky permissions detected | `{ present: boolean, count: number }` |
+| checkId             | Description  | Data payload                                                                                                                             |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_EAP_OBS_001` | Scan summary | `{ totalApps: number, scannedApps: number, riskyAppsCount: number, truncated: boolean, maxApps: number, dataProfile: "safe" or "full" }` |
+
+Notes:
+
+* This observed check summarises enterprise app scan coverage and bounded signals.
+* Demo tenant or API limits must surface via `truncated = true`.
 
 ---
 
