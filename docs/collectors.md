@@ -75,6 +75,7 @@ This is the **runtime contract** that keeps worker → API → UI/reporting stab
 * `status`: `ok` | `error`
 * `summary?`: small JSON object (counts/flags, stable keys)
 * `artefacts?`: array of `CollectorArtefact` where:
+
   * `type`: **Prisma enum** `ArtefactType` (`json` | `csv` | `raw`)
   * `filename`: stable, documented filename
   * `contentType`: MIME type (e.g. `application/json`, `text/csv`)
@@ -236,6 +237,7 @@ Important:
 **Findings (current)**
 
 * `ENTRA_CA_001` — No enabled Conditional Access policies detected (severity: `low`)
+
   * Emitted only when Conditional Access evidence is complete
   * (not truncated and not permission-denied)
 
@@ -302,8 +304,9 @@ Notes:
 
 Notes:
 
-* No risk interpretation is performed at this stage
-* Demo or permission limits must surface via completeness signals
+* Permission gaps (Graph 403) on any slice are treated as **completeness signals**, not hard failures
+* The collector continues execution and emits observed checks + artefacts with `isComplete=false`
+* Demo or permission limits must surface via completeness signals (see `ENTRA_DIRROLES_OBS_005`)
 
 ---
 
