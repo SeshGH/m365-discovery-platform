@@ -143,14 +143,18 @@ This allows:
 
 ### Entra Users
 
-| checkId               | Description         | Data payload                                                                                                                                |
-| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_USERS_OBS_001` | User counts summary | `{ total: number, member: number, guest: number, enabled: number, disabled: number, dataProfile: "safe" or "full", fullExported: boolean }` |
+| checkId               | Description                                    | Data payload       |                                                                                              |                            |                             |                           |                          |                                |
+| --------------------- | ---------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- | -------------------------- | --------------------------- | ------------------------- | ------------------------ | ------------------------------ |
+| `ENTRA_USERS_OBS_001` | User inventory summary (counts & completeness) | `{ profile: "safe" | "full", isComplete: boolean, permissionDenied: string[], notes: string[], totalUsers: number | null, enabledUsers: number | null, disabledUsers: number | null, memberUsers: number | null, guestUsers: number | null, fullExported: boolean }` |
 
 Notes:
 
-* This observed check summarises the **state** of users at discovery time.
-* It contains **counts and booleans only** — no evaluation or judgement.
+* This observed check summarises the **state and completeness** of Entra user inventory at discovery time.
+* All per-user data is **counts only**; no PII is included in observed checks.
+* If Graph permissions are missing (HTTP 403), `isComplete = false` and affected counts MAY be `null`.
+* `permissionDenied` records stable identifiers describing which Graph slices were blocked (e.g. `"microsoft.graph/users:list"`).
+* `notes` provides human-readable context explaining any completeness gaps.
+* Findings derived from this check (e.g. guest user presence) MUST be guarded by `isComplete === true`.
 
 ---
 
