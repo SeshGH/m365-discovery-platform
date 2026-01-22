@@ -68,6 +68,7 @@ Key properties:
 
 * Each observed check has a **stable `checkId` contract**.
 * Observed checks do **not**:
+
   * assign severity
   * make recommendations
   * imply compliance or non-compliance
@@ -105,6 +106,7 @@ Findings answer:
 Important distinctions:
 
 * The **implemented findings contract today** includes:
+
   * `checkId`
   * `severity`
   * descriptive fields (title, description, recommendation, evidence, references)
@@ -188,20 +190,24 @@ This lens is a **primary design driver** of the platform.
 
 ## Current discovery coverage (implemented)
 
-| Area                                  | Collector ID                         | Evidence (Artefacts)                                        | Implemented Findings             |
-| ------------------------------------- | ------------------------------------ | ----------------------------------------------------------- | -------------------------------- |
-| Entra ID users                        | `entra.users`                        | Users inventory JSON (profile-aware variants)               | `ENTRA_USERS_001`                |
-| Enterprise app permissions            | `entra.enterpriseApps.permissions`   | Enterprise app permissions JSON (profile-aware variants)    | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
-| Conditional Access policies           | `entra.conditionalAccess.policies`   | Conditional Access policies JSON (profile-aware variants)   | `ENTRA_CA_001`                   |
-| Directory roles & privileged access   | `entra.directoryRoles.assignments`   | Directory roles assignments JSON (profile-aware variants)   | `ENTRA_DIRROLES_001`             |
- variants)   | none (observed-checks only)      |
-| Tenant auth validation                | `entra.auth.test`                    | none                                                        | none (status via `TenantAuth`)   |
+| Area                                | Collector ID                       | Evidence (Artefacts)                                      | Implemented Findings             |
+| ----------------------------------- | ---------------------------------- | --------------------------------------------------------- | -------------------------------- |
+| Entra ID users                      | `entra.users`                      | Users inventory JSON (profile-aware variants)             | `ENTRA_USERS_001`                |
+| Enterprise app permissions          | `entra.enterpriseApps.permissions` | Enterprise app permissions JSON (profile-aware variants)  | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
+| Conditional Access policies         | `entra.conditionalAccess.policies` | Conditional Access policies JSON (profile-aware variants) | `ENTRA_CA_001`                   |
+| Directory roles & privileged access | `entra.directoryRoles.assignments` | Directory roles assignments JSON (profile-aware variants) | `ENTRA_DIRROLES_001`             |
+| Tenant auth validation              | `entra.auth.test`                  | none                                                      | none (status via `TenantAuth`)   |
 
 Notes:
 
 * Implemented finding IDs and meanings are tracked in `docs/findings-registry.md`.
 * Observed checks emitted by collectors are tracked in `docs/findings-observed-checks.md`.
 * Artefact filenames and profile behaviour are defined in `docs/artefact-and-report-contracts.md`.
+* Completeness signals:
+
+  * Users emits completeness via `ENTRA_USERS_OBS_001` (counts MAY be null when Graph access is denied; findings MUST be guarded by `isComplete === true`).
+  * Directory Roles emits completeness via `ENTRA_DIRROLES_OBS_005` (permission gaps recorded as `permissionDenied` slices; findings guarded by completeness).
+  * Conditional Access treats Graph 403 as a completeness signal (collector continues where possible).
 
 ---
 
@@ -303,6 +309,7 @@ The following behaviours are **implemented, validated, and treated as stable con
 
 * Report collectors may run before other jobs complete
 * If unsafe to generate output:
+
   * no artefact is produced
   * the job is retried automatically
 
@@ -317,6 +324,7 @@ Behavioural contract:
 * A Graph `403` response indicates **missing or insufficient permissions**, not a runtime fault.
 * Collectors **continue execution where possible** rather than failing the job.
 * Missing coverage is surfaced explicitly via:
+
   * observed checks (e.g. `isComplete=false`)
   * recorded `permissionDenied` slices
   * completeness notes and flags
