@@ -1,5 +1,5 @@
 import type { Collector } from "./types";
-import { getGraphAccessToken, graphGetAllPages } from "./graph";
+import { getGraphAccessToken, graphGetAllPages, GraphHttpError } from "./graph";
 
 type GraphUserSafe = {
   id: string;
@@ -22,6 +22,10 @@ type ObservedCheckInput = {
   data: unknown;
   references?: unknown; // stored as Json, usually [] or [{...}]
 };
+
+function isGraph403(e: unknown): boolean {
+  return e instanceof GraphHttpError && e.status === 403;
+}
 
 /**
  * Record observed checks in an idempotent way.
@@ -78,27 +82,67 @@ export const entraUsersCollector: Collector = {
     const dataProfile: "safe" | "full" = rawProfile === "full" ? "full" : "safe";
     const includeSensitive = dataProfile === "full";
 
-    // Safe profile: minimal fields for counts (no PII-bearing per-user export).
-    const inventoryUsers = await graphGetAllPages<GraphUserSafe>(
-      token,
-      "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled,userType"
-    );
+    // Completeness tracking
+    let isComplete = true;
+    const permissionDenied: string[] = [];
+    const notes: string[] = [];
 
-    // Full profile (explicit opt-in): export a PII-bearing inventory artefact.
-    // Safe profile: we still fetch minimal fields for counts, but do not export per-user rows.
-    const fullUsers = includeSensitive
-      ? await graphGetAllPages<GraphUserFull>(
+    let inventoryUsers: GraphUserSafe[] = [];
+    try {
+      // Safe profile: minimal fields for counts (no PII-bearing per-user export).
+      inventoryUsers = await graphGetAllPages<GraphUserSafe>(
+        token,
+        "https://graph.microsoft.com/v1.0/users?$select=id,accountEnabled,userType"
+      );
+    } catch (e: unknown) {
+      if (isGraph403(e)) {
+        isComplete = false;
+        permissionDenied.push("microsoft.graph/users:list");
+        notes.push(
+          "Graph returned 403 when listing users. This is treated as a data completeness gap (missing app permissions/admin consent), not a hard failure."
+        );
+        inventoryUsers = [];
+      } else {
+        throw e;
+      }
+    }
+
+    let fullUsers: GraphUserFull[] = [];
+    let fullExported = false;
+
+    if (includeSensitive) {
+      try {
+        fullUsers = await graphGetAllPages<GraphUserFull>(
           token,
           "https://graph.microsoft.com/v1.0/users?$select=id,displayName,userPrincipalName,mail,userType,accountEnabled,createdDateTime"
-        )
-      : [];
+        );
+        fullExported = true;
+      } catch (e: unknown) {
+        if (isGraph403(e)) {
+          // Safe counts may still be present; full export specifically is blocked.
+          isComplete = false;
+          permissionDenied.push("microsoft.graph/users:list(full)");
+          notes.push(
+            "Graph returned 403 when listing users with full fields. Safe-by-default counts may still be available, but full export is blocked without required permissions/admin consent."
+          );
+          fullUsers = [];
+          fullExported = false;
+        } else {
+          throw e;
+        }
+      }
+    }
 
-    const total = inventoryUsers.length;
-    const enabled = inventoryUsers.filter((u) => u.accountEnabled !== false).length;
-    const disabled = total - enabled;
+    // Counts
+    // If inventoryUsers couldn't be fetched (403), these will remain null.
+    const total: number | null = isComplete || inventoryUsers.length > 0 ? inventoryUsers.length : null;
+    const enabled: number | null =
+      total === null ? null : inventoryUsers.filter((u) => u.accountEnabled !== false).length;
+    const disabled: number | null = total === null || enabled === null ? null : total - enabled;
 
-    const guests = inventoryUsers.filter((u) => (u.userType ?? "") === "Guest").length;
-    const members = total - guests;
+    const guests: number | null =
+      total === null ? null : inventoryUsers.filter((u) => (u.userType ?? "") === "Guest").length;
+    const members: number | null = total === null || guests === null ? null : total - guests;
 
     // -------------------------
     // Observed checks (counts-only; safe-by-default)
@@ -113,12 +157,15 @@ export const entraUsersCollector: Collector = {
           checkId: "ENTRA_USERS_OBS_001",
           data: {
             profile: dataProfile,
+            isComplete,
+            permissionDenied,
+            notes,
             totalUsers: total,
             enabledUsers: enabled,
             disabledUsers: disabled,
             memberUsers: members,
             guestUsers: guests,
-            fullExported: includeSensitive
+            fullExported
           },
           references: []
         }
@@ -126,8 +173,8 @@ export const entraUsersCollector: Collector = {
     });
 
     // Finding: Guest users present (counts only; safe-by-default)
-    // Contract: stable checkId, small evidence, no inventory/PII.
-    if (guests > 0) {
+    // Only emit if we have complete data for the safe inventory.
+    if (isComplete && typeof guests === "number" && guests > 0) {
       await ctx.prisma.finding.create({
         data: {
           runId: ctx.run.id,
@@ -163,6 +210,11 @@ export const entraUsersCollector: Collector = {
           primaryDomain: ctx.tenant.primaryDomain,
           displayName: ctx.tenant.displayName
         },
+        completeness: {
+          isComplete,
+          permissionDenied,
+          notes
+        },
         summary: {
           totalUsers: total,
           enabledUsers: enabled,
@@ -175,34 +227,35 @@ export const entraUsersCollector: Collector = {
       2
     );
 
-    const fullInventoryArtefact = includeSensitive
-      ? JSON.stringify(
-          {
-            generatedAt: new Date().toISOString(),
-            profile: "full",
-            tenant: {
-              tenantGuid: ctx.tenant.tenantGuid,
-              primaryDomain: ctx.tenant.primaryDomain,
-              displayName: ctx.tenant.displayName
+    const fullInventoryArtefact =
+      includeSensitive && fullExported
+        ? JSON.stringify(
+            {
+              generatedAt: new Date().toISOString(),
+              profile: "full",
+              tenant: {
+                tenantGuid: ctx.tenant.tenantGuid,
+                primaryDomain: ctx.tenant.primaryDomain,
+                displayName: ctx.tenant.displayName
+              },
+              summary: {
+                totalUsers: fullUsers.length,
+                guestUsers: fullUsers.filter((u) => (u.userType ?? "") === "Guest").length
+              },
+              users: fullUsers.map((u) => ({
+                id: u.id,
+                displayName: u.displayName ?? "",
+                userPrincipalName: u.userPrincipalName ?? "",
+                mail: u.mail ?? "",
+                userType: u.userType ?? "",
+                accountEnabled: u.accountEnabled ?? null,
+                createdDateTime: u.createdDateTime ?? ""
+              }))
             },
-            summary: {
-              totalUsers: fullUsers.length,
-              guestUsers: fullUsers.filter((u) => (u.userType ?? "") === "Guest").length
-            },
-            users: fullUsers.map((u) => ({
-              id: u.id,
-              displayName: u.displayName ?? "",
-              userPrincipalName: u.userPrincipalName ?? "",
-              mail: u.mail ?? "",
-              userType: u.userType ?? "",
-              accountEnabled: u.accountEnabled ?? null,
-              createdDateTime: u.createdDateTime ?? ""
-            }))
-          },
-          null,
-          2
-        )
-      : null;
+            null,
+            2
+          )
+        : null;
 
     // Filenames:
     // - safe run: users-inventory.json
@@ -214,11 +267,12 @@ export const entraUsersCollector: Collector = {
       status: "ok",
       summary: {
         profile: dataProfile,
+        isComplete,
         totalUsers: total,
         enabledUsers: enabled,
         disabledUsers: disabled,
         guestUsers: guests,
-        fullExported: includeSensitive
+        fullExported
       },
       artefacts: [
         {
