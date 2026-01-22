@@ -5,6 +5,46 @@ function asNonEmptyString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length > 0 ? x.trim() : null;
 }
 
+function getHttpStatus(err: unknown): number | null {
+  // Support a few common shapes without relying on string matching:
+  // - our own typed errors might use `.status`
+  // - some libs use `.response.status`
+  // - some libs use `.statusCode`
+  const e = err as any;
+  const direct = typeof e?.status === "number" ? e.status : null;
+  if (direct) return direct;
+
+  const statusCode = typeof e?.statusCode === "number" ? e.statusCode : null;
+  if (statusCode) return statusCode;
+
+  const responseStatus =
+    typeof e?.response?.status === "number" ? e.response.status : null;
+  if (responseStatus) return responseStatus;
+
+  return null;
+}
+
+function getErrorMessage(err: unknown): string {
+  const status = getHttpStatus(err);
+
+  // Deterministic handling for permission/consent gaps (no string matching).
+  if (status === 403) {
+    return "Graph returned 403 Forbidden. The app likely lacks required application permissions and/or admin consent in the tenant.";
+  }
+
+  const e = err as any;
+  if (typeof e?.message === "string" && e.message.trim().length > 0) {
+    return e.message.trim();
+  }
+
+  // If the error is not an Error but is string-like, keep it.
+  if (typeof err === "string" && err.trim().length > 0) {
+    return err.trim();
+  }
+
+  return "Unknown error testing Graph connection";
+}
+
 export const entraAuthTestCollector: Collector = {
   id: "entra.auth.test",
   displayName: "Entra Auth Test (app-only Graph)",
@@ -94,11 +134,8 @@ export const entraAuthTestCollector: Collector = {
           orgId
         }
       };
-    } catch (err: any) {
-      const message =
-        typeof err?.message === "string" && err.message.length > 0
-          ? err.message
-          : "Unknown error testing Graph connection";
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
 
       await ctx.prisma.tenantAuth.upsert({
         where: { tenantId },
