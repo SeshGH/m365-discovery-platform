@@ -291,9 +291,9 @@ Notes:
 * `ENTRA_DIRROLES_OBS_004` — Eligible / PIM coverage signal
 * `ENTRA_DIRROLES_OBS_005` — Data completeness for role assignment set
 
-**Findings**
+**Findings (current)**
 
-* None (initial iteration)
+* `ENTRA_DIRROLES_001` — Non-user principals assigned to directory roles (severity: `low`)
 
 **Artefacts (current)**
 

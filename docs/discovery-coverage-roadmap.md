@@ -193,7 +193,8 @@ This lens is a **primary design driver** of the platform.
 | Entra ID users                        | `entra.users`                        | Users inventory JSON (profile-aware variants)               | `ENTRA_USERS_001`                |
 | Enterprise app permissions            | `entra.enterpriseApps.permissions`   | Enterprise app permissions JSON (profile-aware variants)    | `ENTRA_EAP_001`, `ENTRA_EAP_002` |
 | Conditional Access policies           | `entra.conditionalAccess.policies`   | Conditional Access policies JSON (profile-aware variants)   | `ENTRA_CA_001`                   |
-| Directory roles & privileged access   | `entra.directoryRoles.assignments`   | Directory roles assignments JSON (profile-aware variants)   | none (observed-checks only)      |
+| Directory roles & privileged access   | `entra.directoryRoles.assignments`   | Directory roles assignments JSON (profile-aware variants)   | `ENTRA_DIRROLES_001`             |
+ variants)   | none (observed-checks only)      |
 | Tenant auth validation                | `entra.auth.test`                    | none                                                        | none (status via `TenantAuth`)   |
 
 Notes:
