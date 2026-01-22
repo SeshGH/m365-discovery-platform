@@ -3,8 +3,8 @@ import { entraUsersCollector } from "./entraUsersCollector";
 import { enterpriseAppPermissionsCollector } from "./enterpriseAppPermissionsCollector";
 import { entraConditionalAccessPoliciesCollector } from "./entraConditionalAccessPoliciesCollector";
 import { entraDirectoryRolesAssignmentsCollector } from "./entraDirectoryRolesAssignmentsCollector";
-import { exchangeMailboxesInventoryCollector } from "./exchangeMailboxesInventoryCollector";
 import { entraAuthTestCollector } from "./entraAuthTestCollector";
+import { exchangeMailboxesInventoryCollector } from "./exchangeMailboxesInventoryCollector";
 import { runSummaryCsvReportCollector } from "./runSummaryCsvReportCollector";
 import { runSummaryExcelReportCollector } from "./runSummaryExcelReportCollector";
 
@@ -13,11 +13,8 @@ const collectors: Collector[] = [
   enterpriseAppPermissionsCollector,
   entraConditionalAccessPoliciesCollector,
   entraDirectoryRolesAssignmentsCollector,
-
-  // Exchange Online
-  exchangeMailboxesInventoryCollector,
-
   entraAuthTestCollector,
+  exchangeMailboxesInventoryCollector,
 
   // Reports (enqueued last by API)
   runSummaryCsvReportCollector,

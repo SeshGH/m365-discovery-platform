@@ -1,5 +1,6 @@
 import type { Collector } from "./types";
 import { getGraphAccessToken, GraphHttpError } from "./graph";
+import { runPwshJson } from "../lib/pwsh";
 
 type ObservedCheckInput = {
   checkId: string;
@@ -7,12 +8,6 @@ type ObservedCheckInput = {
   references?: unknown; // stored as Json, usually [] or [{...}]
 };
 
-/**
- * Record observed checks in an idempotent way.
- * Since ObservedCheck has no unique constraint, we enforce idempotency by:
- * - deleting existing rows for the same (runId, jobId, checkId)
- * - inserting fresh rows
- */
 async function recordObservedChecks(params: {
   prisma: any;
   runId: string;
@@ -41,7 +36,6 @@ async function recordObservedChecks(params: {
       checkId: c.checkId,
       collectorId,
       ruleId: null,
-      // observedAt uses default(now()) in schema
       data: (c.data ?? {}) as any,
       references: (c.references ?? []) as any
     }))
@@ -50,6 +44,12 @@ async function recordObservedChecks(params: {
 
 function normalizeDataProfile(v: unknown): "safe" | "full" {
   return v === "full" ? "full" : "safe";
+}
+
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || v.trim().length === 0) throw new Error(`[exchange.mailboxes.inventory] Missing env var: ${name}`);
+  return v.trim();
 }
 
 /**
@@ -182,14 +182,95 @@ async function graphGetText(token: string, url: string): Promise<string> {
   return text;
 }
 
+type ExoMailboxCounts = {
+  totalMailboxes: number;
+  byType: { user: number; shared: number; room: number; equipment: number };
+  byState: { enabled: number; disabled: number };
+};
+
+function buildExoMailboxCountsScript(params: { appId: string; organization: string; certThumbprint: string }) {
+  // IMPORTANT:
+  // - Never output mailbox identifiers.
+  // - Return counts only as JSON.
+  // - Force errors to become a non-zero exit, with message to stderr.
+  //
+  // Note:
+  // RecipientTypeDetails values we count:
+  // - UserMailbox
+  // - SharedMailbox
+  // - RoomMailbox
+  // - EquipmentMailbox
+  return `
+$ErrorActionPreference = "Stop"
+
+# Ensure module is available
+if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+  throw "ExchangeOnlineManagement module is not installed. Install-Module ExchangeOnlineManagement (CurrentUser) on the worker host."
+}
+
+Import-Module ExchangeOnlineManagement -ErrorAction Stop
+
+try {
+  Connect-ExchangeOnline -AppId "${params.appId}" -Organization "${params.organization}" -CertificateThumbprint "${params.certThumbprint}" -ShowBanner:$false | Out-Null
+
+  # Inventory: no PII output, counts only
+  $mbxs = Get-EXOMailbox -ResultSize Unlimited -Properties RecipientTypeDetails,AccountDisabled
+
+  $user = 0
+  $shared = 0
+  $room = 0
+  $equipment = 0
+
+  $enabled = 0
+  $disabled = 0
+
+  foreach ($m in $mbxs) {
+    $rtd = [string]$m.RecipientTypeDetails
+
+    switch ($rtd) {
+      "UserMailbox" { $user++ }
+      "SharedMailbox" { $shared++ }
+      "RoomMailbox" { $room++ }
+      "EquipmentMailbox" { $equipment++ }
+      default { }
+    }
+
+    # AccountDisabled is available for many mailbox objects; treat missing as $null => enabled (best effort)
+    if ($m.PSObject.Properties.Name -contains "AccountDisabled" -and $m.AccountDisabled -eq $true) {
+      $disabled++
+    } else {
+      $enabled++
+    }
+  }
+
+  $out = [pscustomobject]@{
+    totalMailboxes = [int]$mbxs.Count
+    byType = [pscustomobject]@{
+      user = [int]$user
+      shared = [int]$shared
+      room = [int]$room
+      equipment = [int]$equipment
+    }
+    byState = [pscustomobject]@{
+      enabled = [int]$enabled
+      disabled = [int]$disabled
+    }
+  }
+
+  $out | ConvertTo-Json -Depth 6 -Compress
+}
+finally {
+  try { Disconnect-ExchangeOnline -Confirm:$false | Out-Null } catch { }
+}
+`.trim();
+}
+
 /**
  * Exchange Online – Mailbox Inventory (v1)
  *
- * Step B:
- * - Uses Microsoft Graph reports to fetch mailbox usage detail (CSV)
- * - Computes size buckets (safe-by-default)
- * - Adds an extra near-limit bucket: 40–50GB (append-only; does not change existing buckets)
- * - Does NOT yet implement mailbox type breakdown (shared/room/equipment) or enabled/disabled
+ * Step A (EXO-by-design):
+ * - Uses Exchange Online PowerShell (app-only cert auth) to compute mailbox type + state distribution
+ * - Still uses Graph reports for size buckets (for now)
  * - Emits observed checks + safe artefact
  * - No findings in v1
  */
@@ -200,19 +281,16 @@ export const exchangeMailboxesInventoryCollector: Collector = {
   run: async (ctx) => {
     const dataProfile = normalizeDataProfile((ctx.run as any)?.dataProfile);
 
-    // Completeness tracking (collector-level)
-    let isComplete = false; // remains false until we can populate mailbox type/state distribution too
-    let implemented = true; // implemented for the mailbox usage (size) slice
+    let isComplete = true;
     let truncated = false;
+    let implemented = true;
 
     const permissionDenied: string[] = [];
     const slicesAttempted: string[] = [];
     const slicesCompleted: string[] = [];
     const notes: string[] = [];
 
-    const period = "D7";
-    slicesAttempted.push("mailboxUsageDetail");
-
+    // Start with nulls, fill as slices succeed
     let totalMailboxes: number | null = null;
 
     const sizeBuckets: Record<
@@ -226,7 +304,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       over50GB: null
     };
 
-    // These remain unknown in this step.
     const byType = {
       user: null as number | null,
       shared: null as number | null,
@@ -238,6 +315,87 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       enabled: null as number | null,
       disabled: null as number | null
     };
+
+    // -------------------------
+    // Slice: EXO mailbox inventory (type + state)
+    // -------------------------
+    slicesAttempted.push("mailboxes");
+
+    try {
+      const appId = requireEnv("EXO_APP_ID");
+      const organization =
+        process.env.EXO_ORGANIZATION?.trim() ||
+        (typeof ctx.tenant?.primaryDomain === "string" && ctx.tenant.primaryDomain.trim().length > 0
+          ? ctx.tenant.primaryDomain.trim()
+          : null);
+
+      if (!organization) {
+        throw new Error(
+          "[exchange.mailboxes.inventory] Missing EXO_ORGANIZATION and tenant.primaryDomain; cannot connect to Exchange Online"
+        );
+      }
+
+      const certThumbprint = requireEnv("EXO_CERT_THUMBPRINT");
+
+      const script = buildExoMailboxCountsScript({
+        appId,
+        organization,
+        certThumbprint
+      });
+
+      const res = await runPwshJson<ExoMailboxCounts>({
+        script,
+        timeoutMs: 240_000
+      });
+
+      if (!res.ok) {
+        // EXO failures are treated as completeness gaps only if they look like auth/permission problems.
+        // Otherwise, treat as hard failure (throw) so job status becomes error and we can investigate.
+        const stderr = (res.details.stderr ?? "").toLowerCase();
+
+        if (
+          stderr.includes("unauthorized") ||
+          stderr.includes("forbidden") ||
+          stderr.includes("access denied") ||
+          stderr.includes("is not recognized") || // cmdlet missing due to module not loaded/role issues
+          stderr.includes("connect-exchangeonline")
+        ) {
+          isComplete = false;
+          permissionDenied.push("exo:connect");
+          permissionDenied.push("exo:mailboxes:list");
+          notes.push(
+            "Exchange Online app-only connection or mailbox enumeration failed. This is treated as a data completeness gap (missing permissions/role assignment/certificate trust), not a hard failure."
+          );
+          implemented = false;
+        } else {
+          throw new Error(
+            `[exchange.mailboxes.inventory] EXO pwsh failed: ${res.error}\nstdout=${res.details.stdout}\nstderr=${res.details.stderr}`
+          );
+        }
+      } else {
+        const v = res.value;
+
+        totalMailboxes = v.totalMailboxes;
+        byType.user = v.byType.user;
+        byType.shared = v.byType.shared;
+        byType.room = v.byType.room;
+        byType.equipment = v.byType.equipment;
+
+        byState.enabled = v.byState.enabled;
+        byState.disabled = v.byState.disabled;
+
+        slicesCompleted.push("mailboxes");
+      }
+    } catch (e: unknown) {
+      // Missing env vars or other worker misconfig should fail the job.
+      throw e;
+    }
+
+    // -------------------------
+    // Slice: Graph mailbox usage detail (size buckets) — keep for now
+    // -------------------------
+    const period = "D7";
+    slicesAttempted.push("mailboxUsageDetail");
 
     try {
       const tenantId = ctx.tenant.tenantGuid;
@@ -268,13 +426,13 @@ export const exchangeMailboxesInventoryCollector: Collector = {
         const gb = bytesToGb(bytes);
         bucketCounts[bucketForGb(gb)]++;
 
-        // Extra bucket for licensing decisions: 40 <= size < 50 GB
         if (gb >= 40 && gb < 50) nearLimit40to50++;
 
         seen++;
       }
 
-      totalMailboxes = seen;
+      // Keep totalMailboxes as EXO-sourced if available; otherwise fall back to Graph-derived count.
+      if (totalMailboxes === null) totalMailboxes = seen;
 
       sizeBuckets.under1GB = bucketCounts.under1GB;
       sizeBuckets["1to10GB"] = bucketCounts["1to10GB"];
@@ -282,27 +440,27 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       sizeBuckets["40to50GB"] = nearLimit40to50;
       sizeBuckets.over50GB = bucketCounts.over50GB;
 
-      // This slice represents user mailboxes only.
-      byType.user = totalMailboxes;
-
       slicesCompleted.push("mailboxUsageDetail");
 
       notes.push(
         "Mailbox size buckets are derived from Microsoft Graph mailbox usage reports (CSV). This dataset may be delayed relative to real time."
       );
-
-      isComplete = false;
     } catch (e: unknown) {
       if (e instanceof GraphHttpError && e.status === 403) {
+        isComplete = false;
         permissionDenied.push("microsoft.graph/reports:getMailboxUsageDetail");
         notes.push(
           "Graph returned 403 when requesting mailbox usage detail report. This is treated as a data completeness gap (missing app permissions/admin consent), not a hard failure."
         );
-        implemented = false;
-        isComplete = false;
       } else {
         throw e;
       }
+    }
+
+    // Completeness: require both slices for “complete”
+    const requiredSlices = ["mailboxes", "mailboxUsageDetail"];
+    for (const s of requiredSlices) {
+      if (!slicesCompleted.includes(s)) isComplete = false;
     }
 
     const fullExported = false;
