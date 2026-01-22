@@ -206,6 +206,25 @@ Notes:
 
 ---
 
+### Exchange Online – Mailboxes
+
+Collector: `exchange.mailboxes.inventory`
+
+| checkId                 | Description                    | Data payload                                                                                                                                                                    |                              |                      |                    |                         |                                    |                        |                                         |                       |                        |                        |                                                                                     |
+| ----------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------- | ------------------ | ----------------------- | ---------------------------------- | ---------------------- | --------------------------------------- | --------------------- | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------- |
+| `EXO_MAILBOXES_OBS_001` | Mailbox inventory summary      | `{ totalMailboxes: number                                                                                                                                                       | null, byType: { user: number | null, shared: number | null, room: number | null, equipment: number | null }, byState: { enabled: number | null, disabled: number | null }, sizeBuckets: { under1GB: number | null, 1to10GB: number | null, 10to50GB: number | null, over50GB: number | null }, dataProfile: "safe" or "full", fullExported: boolean, truncated: boolean }` |
+| `EXO_MAILBOXES_OBS_002` | Mailbox inventory completeness | `{ isComplete: boolean, truncated: boolean, permissionDenied: string[], slicesAttempted: string[], slicesCompleted: string[], notes: string[], dataProfile: "safe" or "full" }` |                              |                      |                    |                         |                                    |                        |                                         |                       |                        |                        |                                                                                     |
+
+Notes:
+
+* These checks are **counts, buckets, and completeness signals only** — no mailbox identifiers or addresses are included.
+* If Exchange data cannot be fully enumerated due to missing permissions or access restrictions, `isComplete = false` and relevant counts MAY be `null`.
+* `permissionDenied` must contain stable identifiers describing blocked slices (e.g. `"exo:mailboxes:list"`, `"exo:mailboxStatistics:read"`).
+* `slicesAttempted` and `slicesCompleted` should reflect the collector’s internal slices (e.g. `"mailboxes"`, `"mailboxStatistics"`).
+* Demo tenant / API limits must surface via `truncated = true` and/or `isComplete = false`.
+
+---
+
 ## Collector responsibilities
 
 Collectors MUST:

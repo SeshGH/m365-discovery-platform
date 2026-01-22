@@ -202,6 +202,27 @@ Notes:
 
 ---
 
+### Exchange Online – Mailbox Inventory
+
+Collector ID: `exchange.mailboxes.inventory`
+
+Artefacts:
+
+| Filename                                 | Profile | Notes                       |
+| ---------------------------------------- | ------- | --------------------------- |
+| `exchange-mailboxes-inventory.safe.json` | safe    | Counts, types, size buckets |
+| `exchange-mailboxes-inventory.full.json` | full    | Per-mailbox inventory (PII) |
+
+Contract guarantees:
+
+* JSON root is an object
+* `summary` MUST be present
+* Safe artefact contains **no mailbox identifiers**
+* Full artefact is emitted **only** when `dataProfile=full`
+* Partial or permission-limited data MUST surface via completeness signals
+
+---
+
 ## Report artefact contracts
 
 Reports are implemented as **report collectors**.
@@ -244,7 +265,7 @@ Sheets MAY include:
 * Findings
 * Observed Checks
 * Artefacts
-* Module-specific sheets (Users, Enterprise Apps, CA, Directory Roles)
+* Module-specific sheets (Users, Enterprise Apps, CA, Directory Roles, Exchange)
 
 ---
 
