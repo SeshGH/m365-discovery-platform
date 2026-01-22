@@ -1,34 +1,13 @@
 import type { Collector } from "./types";
-import { graphGetJsonWithClientCredentials } from "../lib/graph";
+import { graphGetJsonWithClientCredentials, GraphHttpError } from "../lib/graph";
 
 function asNonEmptyString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length > 0 ? x.trim() : null;
 }
 
-function getHttpStatus(err: unknown): number | null {
-  // Support a few common shapes without relying on string matching:
-  // - our own typed errors might use `.status`
-  // - some libs use `.response.status`
-  // - some libs use `.statusCode`
-  const e = err as any;
-  const direct = typeof e?.status === "number" ? e.status : null;
-  if (direct) return direct;
-
-  const statusCode = typeof e?.statusCode === "number" ? e.statusCode : null;
-  if (statusCode) return statusCode;
-
-  const responseStatus =
-    typeof e?.response?.status === "number" ? e.response.status : null;
-  if (responseStatus) return responseStatus;
-
-  return null;
-}
-
 function getErrorMessage(err: unknown): string {
-  const status = getHttpStatus(err);
-
   // Deterministic handling for permission/consent gaps (no string matching).
-  if (status === 403) {
+  if (err instanceof GraphHttpError && err.status === 403) {
     return "Graph returned 403 Forbidden. The app likely lacks required application permissions and/or admin consent in the tenant.";
   }
 
