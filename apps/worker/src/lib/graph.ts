@@ -4,6 +4,28 @@ type TokenResponse = {
   expires_in?: number;
 };
 
+export class GraphHttpError extends Error {
+  public readonly status: number;
+  public readonly url: string;
+  public readonly method: string;
+  public readonly bodyText?: string;
+
+  constructor(params: {
+    message: string;
+    status: number;
+    url: string;
+    method: string;
+    bodyText?: string;
+  }) {
+    super(params.message);
+    this.name = "GraphHttpError";
+    this.status = params.status;
+    this.url = params.url;
+    this.method = params.method;
+    this.bodyText = params.bodyText;
+  }
+}
+
 function truncate(s: string, max: number) {
   if (s.length <= max) return s;
   return s.slice(0, max) + "…";
@@ -15,6 +37,15 @@ async function readTextSafe(res: Response) {
   } catch {
     return "";
   }
+}
+
+function buildUrl(pathOrUrl: string, base: string) {
+  // Accept both absolute URLs and Graph-relative paths.
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+    return pathOrUrl;
+  }
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${base}${path}`;
 }
 
 export async function getClientCredentialsToken(params: {
@@ -41,7 +72,14 @@ export async function getClientCredentialsToken(params: {
   const text = await readTextSafe(res);
 
   if (!res.ok) {
-    throw new Error(`Token request failed (${res.status}): ${truncate(text, 800)}`);
+    // Typed, status-based error (no string parsing required by callers).
+    throw new GraphHttpError({
+      message: `Token request failed (${res.status})`,
+      status: res.status,
+      url: tokenUrl,
+      method: "POST",
+      bodyText: truncate(text, 800)
+    });
   }
 
   let json: TokenResponse;
@@ -71,9 +109,7 @@ export async function graphGetJsonWithClientCredentials<T>(params: {
     clientSecret: params.clientSecret
   });
 
-  const url = `https://graph.microsoft.com${params.path.startsWith("/") ? "" : "/"}${
-    params.path
-  }`;
+  const url = buildUrl(params.path, "https://graph.microsoft.com");
 
   const res = await fetch(url, {
     method: "GET",
@@ -86,7 +122,13 @@ export async function graphGetJsonWithClientCredentials<T>(params: {
   const text = await readTextSafe(res);
 
   if (!res.ok) {
-    throw new Error(`Graph GET failed (${res.status}): ${truncate(text, 1200)}`);
+    throw new GraphHttpError({
+      message: `Graph GET failed (${res.status})`,
+      status: res.status,
+      url,
+      method: "GET",
+      bodyText: truncate(text, 1200)
+    });
   }
 
   try {
