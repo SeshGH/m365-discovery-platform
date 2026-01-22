@@ -141,11 +141,36 @@ This allows:
 
 ## Implemented observed checks
 
+> **Important formatting rule**
+>
+> Markdown tables break if a cell contains the `|` character (even inside inline code).
+> To keep this registry readable and stable, tables list only `checkId` and a short description.
+> Full payload shapes are documented under each check in a fenced code block.
+
+---
+
 ### Entra Users
 
-| checkId               | Description                                    | Data payload       |                                                                                              |                            |                             |                           |                          |                                |
-| --------------------- | ---------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- | -------------------------- | --------------------------- | ------------------------- | ------------------------ | ------------------------------ |
-| `ENTRA_USERS_OBS_001` | User inventory summary (counts & completeness) | `{ profile: "safe" | "full", isComplete: boolean, permissionDenied: string[], notes: string[], totalUsers: number | null, enabledUsers: number | null, disabledUsers: number | null, memberUsers: number | null, guestUsers: number | null, fullExported: boolean }` |
+| checkId               | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `ENTRA_USERS_OBS_001` | User inventory summary (counts & completeness) |
+
+**Payload shape**
+
+```json
+{
+  "profile": "safe" or "full",
+  "isComplete": boolean,
+  "permissionDenied": string[],
+  "notes": string[],
+  "totalUsers": number (nullable),
+  "enabledUsers": number (nullable),
+  "disabledUsers": number (nullable),
+  "memberUsers": number (nullable),
+  "guestUsers": number (nullable),
+  "fullExported": boolean
+}
+```
 
 Notes:
 
@@ -160,9 +185,22 @@ Notes:
 
 ### Enterprise Applications
 
-| checkId             | Description  | Data payload                                                                                                                             |
-| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_EAP_OBS_001` | Scan summary | `{ totalApps: number, scannedApps: number, riskyAppsCount: number, truncated: boolean, maxApps: number, dataProfile: "safe" or "full" }` |
+| checkId             | Description  |
+| ------------------- | ------------ |
+| `ENTRA_EAP_OBS_001` | Scan summary |
+
+**Payload shape**
+
+```json
+{
+  "totalApps": number,
+  "scannedApps": number,
+  "riskyAppsCount": number,
+  "truncated": boolean,
+  "maxApps": number,
+  "dataProfile": "safe" or "full"
+}
+```
 
 Notes:
 
@@ -173,9 +211,28 @@ Notes:
 
 ### Conditional Access
 
-| checkId            | Description                       | Data payload                                                                                                                                                                                                                                                                                                                                                         |
-| ------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_CA_OBS_001` | Conditional Access policy summary | `{ totalPolicies: number, enabledPolicies: number, reportOnlyPolicies: number, disabledPolicies: number, policiesTargetingAllUsers: number, policiesWithMfaGrantControl: number, policiesExcludingUsersCount: number, hasLegacyAuthPolicyDetected: boolean, namedLocationsCount: number, dataProfile: "safe" or "full", fullExported: boolean, truncated: boolean }` |
+| checkId            | Description                       |
+| ------------------ | --------------------------------- |
+| `ENTRA_CA_OBS_001` | Conditional Access policy summary |
+
+**Payload shape**
+
+```json
+{
+  "totalPolicies": number,
+  "enabledPolicies": number,
+  "reportOnlyPolicies": number,
+  "disabledPolicies": number,
+  "policiesTargetingAllUsers": number,
+  "policiesWithMfaGrantControl": number,
+  "policiesExcludingUsersCount": number,
+  "hasLegacyAuthPolicyDetected": boolean,
+  "namedLocationsCount": number,
+  "dataProfile": "safe" or "full",
+  "fullExported": boolean,
+  "truncated": boolean
+}
+```
 
 Notes:
 
@@ -190,13 +247,77 @@ Notes:
 
 These observed checks support both **security posture** and **take-on / migration scoping** lenses by recording scale, complexity, and completeness of role assignment evidence.
 
-| checkId                  | Description                               | Data payload                                                                                                                                                                    |
-| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_DIRROLES_OBS_001` | Directory roles inventory summary         | `{ roleDefinitionsCount: number, rolesWithAnyActiveAssignmentCount: number, activeAssignmentsCount: number, dataProfile: "safe" or "full", truncated: boolean }`                |
-| `ENTRA_DIRROLES_OBS_002` | Assignment principal type distribution    | `{ user: number, group: number, servicePrincipal: number, unknown: number, dataProfile: "safe" or "full", truncated: boolean }`                                                 |
-| `ENTRA_DIRROLES_OBS_003` | Group-based role assignments present      | `{ present: boolean, assignmentsCount: number, dataProfile: "safe" or "full", truncated: boolean }`                                                                             |
-| `ENTRA_DIRROLES_OBS_004` | Eligible / PIM coverage signal            | `{ attempted: boolean, succeeded: boolean, eligibleAssignmentsCount?: number, dataProfile: "safe" or "full", truncated: boolean }`                                              |
-| `ENTRA_DIRROLES_OBS_005` | Data completeness for role assignment set | `{ isComplete: boolean, truncated: boolean, permissionDenied: string[], slicesAttempted: string[], slicesCompleted: string[], notes: string[], dataProfile: "safe" or "full" }` |
+| checkId                  | Description                               |
+| ------------------------ | ----------------------------------------- |
+| `ENTRA_DIRROLES_OBS_001` | Directory roles inventory summary         |
+| `ENTRA_DIRROLES_OBS_002` | Assignment principal type distribution    |
+| `ENTRA_DIRROLES_OBS_003` | Group-based role assignments present      |
+| `ENTRA_DIRROLES_OBS_004` | Eligible / PIM coverage signal            |
+| `ENTRA_DIRROLES_OBS_005` | Data completeness for role assignment set |
+
+**Payload shapes**
+
+`ENTRA_DIRROLES_OBS_001`
+
+```json
+{
+  "roleDefinitionsCount": number,
+  "rolesWithAnyActiveAssignmentCount": number,
+  "activeAssignmentsCount": number,
+  "dataProfile": "safe" or "full",
+  "truncated": boolean
+}
+```
+
+`ENTRA_DIRROLES_OBS_002`
+
+```json
+{
+  "user": number,
+  "group": number,
+  "servicePrincipal": number,
+  "unknown": number,
+  "dataProfile": "safe" or "full",
+  "truncated": boolean
+}
+```
+
+`ENTRA_DIRROLES_OBS_003`
+
+```json
+{
+  "present": boolean,
+  "assignmentsCount": number,
+  "dataProfile": "safe" or "full",
+  "truncated": boolean
+}
+```
+
+`ENTRA_DIRROLES_OBS_004`
+
+```json
+{
+  "attempted": boolean,
+  "succeeded": boolean,
+  "eligibleAssignmentsCount": number (optional),
+  "dataProfile": "safe" or "full",
+  "truncated": boolean
+}
+```
+
+`ENTRA_DIRROLES_OBS_005`
+
+```json
+{
+  "isComplete": boolean,
+  "truncated": boolean,
+  "permissionDenied": string[],
+  "slicesAttempted": string[],
+  "slicesCompleted": string[],
+  "notes": string[],
+  "dataProfile": "safe" or "full"
+}
+```
 
 Notes:
 
@@ -210,17 +331,61 @@ Notes:
 
 Collector: `exchange.mailboxes.inventory`
 
-| checkId                 | Description                    | Data payload                                                                                                                                                                    |                              |                      |                    |                         |                                    |                        |                                         |                       |                        |                        |                                                                                     |
-| ----------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | -------------------- | ------------------ | ----------------------- | ---------------------------------- | ---------------------- | --------------------------------------- | --------------------- | ---------------------- | ---------------------- | ----------------------------------------------------------------------------------- |
-| `EXO_MAILBOXES_OBS_001` | Mailbox inventory summary      | `{ totalMailboxes: number                                                                                                                                                       | null, byType: { user: number | null, shared: number | null, room: number | null, equipment: number | null }, byState: { enabled: number | null, disabled: number | null }, sizeBuckets: { under1GB: number | null, 1to10GB: number | null, 10to50GB: number | null, over50GB: number | null }, dataProfile: "safe" or "full", fullExported: boolean, truncated: boolean }` |
-| `EXO_MAILBOXES_OBS_002` | Mailbox inventory completeness | `{ isComplete: boolean, truncated: boolean, permissionDenied: string[], slicesAttempted: string[], slicesCompleted: string[], notes: string[], dataProfile: "safe" or "full" }` |                              |                      |                    |                         |                                    |                        |                                         |                       |                        |                        |                                                                                     |
+| checkId                 | Description                    |
+| ----------------------- | ------------------------------ |
+| `EXO_MAILBOXES_OBS_001` | Mailbox inventory summary      |
+| `EXO_MAILBOXES_OBS_002` | Mailbox inventory completeness |
+
+**Payload shapes**
+
+`EXO_MAILBOXES_OBS_001`
+
+```json
+{
+  "totalMailboxes": number (nullable),
+  "byType": {
+    "user": number (nullable),
+    "shared": number (nullable),
+    "room": number (nullable),
+    "equipment": number (nullable)
+  },
+  "byState": {
+    "enabled": number (nullable),
+    "disabled": number (nullable)
+  },
+  "sizeBuckets": {
+    "under1GB": number (nullable),
+    "1to10GB": number (nullable),
+    "10to50GB": number (nullable),
+    "40to50GB": number (nullable),
+    "over50GB": number (nullable)
+  },
+  "dataProfile": "safe" or "full",
+  "fullExported": boolean,
+  "truncated": boolean
+}
+```
+
+`EXO_MAILBOXES_OBS_002`
+
+```json
+{
+  "isComplete": boolean,
+  "truncated": boolean,
+  "permissionDenied": string[],
+  "slicesAttempted": string[],
+  "slicesCompleted": string[],
+  "notes": string[],
+  "dataProfile": "safe" or "full"
+}
+```
 
 Notes:
 
 * These checks are **counts, buckets, and completeness signals only** — no mailbox identifiers or addresses are included.
 * If Exchange data cannot be fully enumerated due to missing permissions or access restrictions, `isComplete = false` and relevant counts MAY be `null`.
-* `permissionDenied` must contain stable identifiers describing blocked slices (e.g. `"exo:mailboxes:list"`, `"exo:mailboxStatistics:read"`).
-* `slicesAttempted` and `slicesCompleted` should reflect the collector’s internal slices (e.g. `"mailboxes"`, `"mailboxStatistics"`).
+* `permissionDenied` must contain stable identifiers describing blocked slices (e.g. `"exo:mailboxes:list"`, `"exo:mailboxStatistics:read"`, `"microsoft.graph/reports:getMailboxUsageDetail"`).
+* `slicesAttempted` and `slicesCompleted` should reflect the collector’s internal slices (e.g. `"mailboxes"`, `"mailboxStatistics"`, `"mailboxUsageDetail"`).
 * Demo tenant / API limits must surface via `truncated = true` and/or `isComplete = false`.
 
 ---
