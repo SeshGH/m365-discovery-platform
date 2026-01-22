@@ -53,9 +53,18 @@ Examples:
 ### `ENTRA_USERS_001` — Guest users present
 
 * **Collector:** `entra.users`
+
 * **Derived from observed check(s):** `ENTRA_USERS_OBS_001`
+
 * **Severity (implemented):** `info`
+
 * **Meaning:** One or more guest users exist in the tenant.
+
+* **Guards (to avoid false signals):**
+
+  * Only emit when user inventory evidence is complete (`ENTRA_USERS_OBS_001.isComplete === true`).
+  * Do **not** emit when Graph access to list users was permission-denied (completeness gap).
+
 * **Notes:**
 
   * This is not inherently “bad”, but it is a governance and access complexity signal.
@@ -117,7 +126,7 @@ Examples:
 
 * **Collector:** `entra.directoryRoles.assignments`
 
-* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_005`
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_003`, `ENTRA_DIRROLES_OBS_005`
 
 * **Severity (implemented):** `low`
 
@@ -135,3 +144,25 @@ Examples:
 
     * **Security posture** (attack surface / privileged non-user principals)
     * **Take-on / migration scoping** (governance maturity and access model complexity)
+
+---
+
+### `ENTRA_DIRROLES_002` — Directory roles assigned to groups
+
+* **Collector:** `entra.directoryRoles.assignments`
+
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_003`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `info`
+
+* **Meaning:** One or more directory roles are assigned to **groups** (group-based role assignment is present).
+
+* **Guards (to avoid false signals):**
+
+  * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true`).
+  * Do **not** emit when role enumeration is truncated or permission-denied.
+
+* **Notes:**
+
+  * This can be a valid governance pattern, but it increases change-control and troubleshooting complexity.
+  * Evidence remains counts-only; inventory detail remains in the directory roles artefact.
