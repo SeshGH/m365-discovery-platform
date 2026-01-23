@@ -1,3 +1,5 @@
+// apps/worker/src/collectors/runSummaryExcelReportCollector.ts
+
 import type { Collector } from "./types";
 import ExcelJS from "exceljs";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -98,6 +100,124 @@ function safeJsonCell(v: unknown, maxLen = 1200): string {
   } catch {
     return "";
   }
+}
+
+// -------------------------
+// Styling helpers (quick-win polish)
+// -------------------------
+const ARGB = {
+  border: "FFE5E7EB",
+  headerFill: "FFF3F4F6",
+  mutedFill: "FFF9FAFB",
+  okFill: "FFECFDF5",
+  okText: "FF065F46",
+  warnFill: "FFFFFBEB",
+  warnText: "FF92400E",
+  badFill: "FFFEF2F2",
+  badText: "FF991B1B"
+} as const;
+
+function thinBorder() {
+  return {
+    top: { style: "thin" as const, color: { argb: ARGB.border } },
+    left: { style: "thin" as const, color: { argb: ARGB.border } },
+    bottom: { style: "thin" as const, color: { argb: ARGB.border } },
+    right: { style: "thin" as const, color: { argb: ARGB.border } }
+  };
+}
+
+function applyHeaderRowStyle(ws: ExcelJS.Worksheet, headerRowNumber = 1) {
+  const row = ws.getRow(headerRowNumber);
+  row.font = { bold: true };
+  row.alignment = { vertical: "middle", wrapText: true };
+  row.height = 18;
+
+  row.eachCell((cell) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ARGB.headerFill } };
+    cell.border = thinBorder();
+  });
+}
+
+function applyGridBorders(ws: ExcelJS.Worksheet, fromRow = 1) {
+  const lastRow = ws.rowCount;
+  const lastCol = ws.columnCount;
+  for (let r = fromRow; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      // only border within used columns
+      if (colNumber <= lastCol) cell.border = thinBorder();
+    });
+  }
+}
+
+function freezeTopRowAndFilter(ws: ExcelJS.Worksheet) {
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+
+  const lastCol = ws.columnCount;
+  if (lastCol <= 0) return;
+
+  const lastColLetter = ws.getColumn(lastCol).letter;
+  ws.autoFilter = `A1:${lastColLetter}1`;
+}
+
+function applyDefaultRowAlignment(ws: ExcelJS.Worksheet) {
+  ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    // Keep header tighter
+    if (rowNumber === 1) return;
+    row.alignment = { vertical: "top", wrapText: true };
+  });
+}
+
+function applyBasicTableLook(ws: ExcelJS.Worksheet) {
+  applyHeaderRowStyle(ws, 1);
+  freezeTopRowAndFilter(ws);
+  applyDefaultRowAlignment(ws);
+  applyGridBorders(ws, 1);
+}
+
+function applyKeyValueLook(ws: ExcelJS.Worksheet) {
+  // still uses header row ("field","value","notes" etc)
+  applyHeaderRowStyle(ws, 1);
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  applyDefaultRowAlignment(ws);
+  applyGridBorders(ws, 1);
+
+  // Emphasise "field" column
+  const fieldCol = ws.getColumn(1);
+  fieldCol.font = { bold: true };
+
+  // Gentle zebra on data rows for readability
+  for (let r = 2; r <= ws.rowCount; r++) {
+    if (r % 2 === 0) {
+      const row = ws.getRow(r);
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        if (!cell.fill) {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ARGB.mutedFill } };
+        }
+      });
+    }
+  }
+}
+
+function setCellPill(cell: ExcelJS.Cell, kind: "ok" | "warn" | "bad") {
+  const map = {
+    ok: { fill: ARGB.okFill, font: ARGB.okText },
+    warn: { fill: ARGB.warnFill, font: ARGB.warnText },
+    bad: { fill: ARGB.badFill, font: ARGB.badText }
+  } as const;
+
+  const c = map[kind];
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: c.fill } };
+  cell.font = { bold: true, color: { argb: c.font } };
+  cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+}
+
+function findRowByField(ws: ExcelJS.Worksheet, fieldValue: string): ExcelJS.Row | null {
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const v = ws.getRow(r).getCell(1).value;
+    if (String(v ?? "") === fieldValue) return ws.getRow(r);
+  }
+  return null;
 }
 
 type UsersInventoryJson = {
@@ -509,8 +629,7 @@ export const runSummaryExcelReportCollector: Collector = {
     let s3: S3Client | null = null;
     let s3InitError: string | null = null;
 
-    const shouldAttemptS3 =
-      Boolean(usersArtefact) || Boolean(eapArtefact) || Boolean(caArtefact);
+    const shouldAttemptS3 = Boolean(usersArtefact) || Boolean(eapArtefact) || Boolean(caArtefact);
 
     if (shouldAttemptS3) {
       try {
@@ -593,7 +712,7 @@ export const runSummaryExcelReportCollector: Collector = {
     wb.modified = new Date();
 
     // -------------------------
-    // Sheet 1: Run Summary
+    // Sheet 1: Run Summary (key/value)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Run Summary"));
@@ -665,139 +784,29 @@ export const runSummaryExcelReportCollector: Collector = {
         const d = dr005.data as DirRolesObs005;
         ws.addRow({ field: "dirRoles.isComplete", value: String(d.isComplete ?? "") });
       }
-    }
 
-    // -------------------------
-    // Sheet 2: Jobs
-    // -------------------------
-    {
-      const ws = wb.addWorksheet(safeSheetName("Jobs"));
+      applyKeyValueLook(ws);
 
-      ws.columns = [
-        { header: "collectorId", key: "collectorId", width: 34 },
-        { header: "status", key: "status", width: 12 },
-        { header: "attempts", key: "attempts", width: 10 },
-        { header: "startedAt", key: "startedAt", width: 26 },
-        { header: "endedAt", key: "endedAt", width: 26 },
-        { header: "lockedBy", key: "lockedBy", width: 22 },
-        { header: "lockedAt", key: "lockedAt", width: 26 },
-        { header: "lastError", key: "lastError", width: 80 }
-      ];
-
-      for (const j of jobs) {
-        ws.addRow({
-          collectorId: j.collectorId,
-          status: j.status,
-          attempts: j.attempts,
-          startedAt: iso((j as any).startedAt ?? j.lockedAt),
-          endedAt: iso((j as any).endedAt),
-          lockedBy: j.lockedBy ?? "",
-          lockedAt: iso(j.lockedAt),
-          lastError: j.lastError ?? ""
-        });
+      // Make derivedStatus stand out
+      const dsRow = findRowByField(ws, "derivedStatus");
+      if (dsRow) {
+        const c = dsRow.getCell(2);
+        const s = String(c.value ?? "");
+        if (s === "succeeded") setCellPill(c, "ok");
+        else if (s === "failed") setCellPill(c, "bad");
+        else setCellPill(c, "warn");
       }
     }
 
     // -------------------------
-    // Sheet 3: Findings
-    // -------------------------
-    {
-      const ws = wb.addWorksheet(safeSheetName("Findings"));
-
-      ws.columns = [
-        { header: "checkId", key: "checkId", width: 22 },
-        { header: "severity", key: "severity", width: 12 },
-        { header: "title", key: "title", width: 44 },
-        { header: "description", key: "description", width: 90 },
-        { header: "recommendation", key: "recommendation", width: 90 },
-        { header: "evidence", key: "evidence", width: 90 },
-        { header: "references", key: "references", width: 70 },
-        { header: "createdAt", key: "createdAt", width: 26 }
-      ];
-
-      for (const f of findings) {
-        ws.addRow({
-          checkId: f.checkId,
-          severity: f.severity,
-          title: f.title,
-          description: f.description,
-          recommendation: (f as any).recommendation ?? "",
-          evidence: safeJsonCell((f as any).evidence, 1800),
-          references: safeJsonCell((f as any).references, 1200),
-          createdAt: iso(f.createdAt)
-        });
-      }
-
-      if (!findings.length) {
-        ws.addRow({
-          checkId: "status",
-          severity: "empty",
-          title: "",
-          description: "No findings for this run.",
-          recommendation: "",
-          evidence: "",
-          references: "",
-          createdAt: ""
-        });
-      }
-    }
-
-    // -------------------------
-    // Sheet 4: Observed Checks
-    // -------------------------
-    {
-      const ws = wb.addWorksheet(safeSheetName("Observed Checks"));
-
-      ws.columns = [
-        { header: "observedAt", key: "observedAt", width: 26 },
-        { header: "checkId", key: "checkId", width: 28 },
-        { header: "collectorId", key: "collectorId", width: 34 },
-        { header: "jobId", key: "jobId", width: 28 },
-        { header: "ruleId", key: "ruleId", width: 22 },
-        { header: "data", key: "data", width: 110 },
-        { header: "references", key: "references", width: 90 }
-      ];
-
-      const sorted = [...observedChecks].sort((a: any, b: any) => {
-        const ta = new Date(a?.observedAt ?? 0).getTime();
-        const tb = new Date(b?.observedAt ?? 0).getTime();
-        return ta - tb;
-      });
-
-      for (const o of sorted as any[]) {
-        ws.addRow({
-          observedAt: iso(o.observedAt),
-          checkId: String(o.checkId ?? ""),
-          collectorId: String(o.collectorId ?? ""),
-          jobId: String(o.jobId ?? ""),
-          ruleId: String(o.ruleId ?? ""),
-          data: safeJsonCell(o.data, 2400),
-          references: safeJsonCell(o.references, 1200)
-        });
-      }
-
-      if (!sorted.length) {
-        ws.addRow({
-          observedAt: "",
-          checkId: "status",
-          collectorId: "empty",
-          jobId: "",
-          ruleId: "",
-          data: "No observed checks for this run.",
-          references: ""
-        });
-      }
-    }
-
-    // -------------------------
-    // Sheet 5: Artefacts
+    // Sheet 2: Artefacts (kept lightweight)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Artefacts"));
 
       ws.columns = [
-        { header: "type", key: "type", width: 12 },
-        { header: "bucket", key: "bucket", width: 12 },
+        { header: "type", key: "type", width: 14 },
+        { header: "bucket", key: "bucket", width: 16 },
         { header: "key", key: "key", width: 90 },
         { header: "sizeBytes", key: "sizeBytes", width: 12 },
         { header: "hash", key: "hash", width: 70 },
@@ -825,10 +834,12 @@ export const runSummaryExcelReportCollector: Collector = {
           createdAt: ""
         });
       }
+
+      applyBasicTableLook(ws);
     }
 
     // -------------------------
-    // Sheet 6: Users (Summary)
+    // Sheet 3: Users (Summary)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Users (Summary)"));
@@ -859,10 +870,20 @@ export const runSummaryExcelReportCollector: Collector = {
         ws.addRow({ field: "memberUsers", value: usersSummary?.memberUsers ?? "n/a", notes: "" });
         ws.addRow({ field: "guestUsers", value: usersSummary?.guestUsers ?? "n/a", notes: "" });
       }
+
+      applyKeyValueLook(ws);
+
+      const statusRow = findRowByField(ws, "status");
+      if (statusRow) {
+        const v = String(statusRow.getCell(2).value ?? "");
+        if (v === "error") setCellPill(statusRow.getCell(2), "bad");
+        else if (v === "not-available") setCellPill(statusRow.getCell(2), "warn");
+        else setCellPill(statusRow.getCell(2), "ok");
+      }
     }
 
     // -------------------------
-    // Sheet 6b: Users (Full)  (FULL profile only)
+    // Sheet 4: Users (Full)  (FULL profile only)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Users (Full)"));
@@ -879,6 +900,11 @@ export const runSummaryExcelReportCollector: Collector = {
           value: "not-available",
           notes: "Users (Full) is only generated when dataProfile is 'full'."
         });
+
+        applyKeyValueLook(ws);
+
+        const statusRow = findRowByField(ws, "status");
+        if (statusRow) setCellPill(statusRow.getCell(2), "warn");
       } else if (!usersArtefact) {
         ws.columns = [
           { header: "field", key: "field", width: 38 },
@@ -891,6 +917,11 @@ export const runSummaryExcelReportCollector: Collector = {
           value: "not-available",
           notes: `${usersArtefactName} artefact was not present in this run.`
         });
+
+        applyKeyValueLook(ws);
+
+        const statusRow = findRowByField(ws, "status");
+        if (statusRow) setCellPill(statusRow.getCell(2), "warn");
       } else if (usersJsonError) {
         ws.columns = [
           { header: "field", key: "field", width: 38 },
@@ -903,6 +934,11 @@ export const runSummaryExcelReportCollector: Collector = {
           value: "error",
           notes: `Unable to load ${usersArtefactName}: ${usersJsonError}`
         });
+
+        applyKeyValueLook(ws);
+
+        const statusRow = findRowByField(ws, "status");
+        if (statusRow) setCellPill(statusRow.getCell(2), "bad");
       } else {
         ws.columns = [
           { header: "id", key: "id", width: 38 },
@@ -939,11 +975,22 @@ export const runSummaryExcelReportCollector: Collector = {
             });
           }
         }
+
+        applyBasicTableLook(ws);
+
+        // Highlight accountEnabled false
+        const enabledCol = 6; // accountEnabled
+        for (let r = 2; r <= ws.rowCount; r++) {
+          const cell = ws.getRow(r).getCell(enabledCol);
+          const v = String(cell.value ?? "").toLowerCase();
+          if (v === "true") setCellPill(cell, "ok");
+          else if (v === "false") setCellPill(cell, "bad");
+        }
       }
     }
 
     // -------------------------
-    // Sheet 7: Enterprise Apps (Permissions)
+    // Sheet 5: Enterprise Apps (Permissions)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Enterprise Apps (Perms)"));
@@ -1009,10 +1056,21 @@ export const runSummaryExcelReportCollector: Collector = {
           });
         }
       }
+
+      applyBasicTableLook(ws);
+
+      // riskFlag pill
+      const riskFlagCol = 7;
+      for (let r = 2; r <= ws.rowCount; r++) {
+        const cell = ws.getRow(r).getCell(riskFlagCol);
+        const v = String(cell.value ?? "").toUpperCase();
+        if (v === "YES") setCellPill(cell, "bad");
+        else if (v === "NO") setCellPill(cell, "ok");
+      }
     }
 
     // -------------------------
-    // Sheet 8: Conditional Access (Summary + Top Policies)
+    // Sheet 6: Conditional Access (Summary + Top Policies)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Conditional Access"));
@@ -1138,10 +1196,21 @@ export const runSummaryExcelReportCollector: Collector = {
           }
         }
       }
+
+      applyKeyValueLook(ws);
+
+      const statusRow = findRowByField(ws, "status");
+      if (statusRow) {
+        const v = String(statusRow.getCell(2).value ?? "");
+        if (v === "ok") setCellPill(statusRow.getCell(2), "ok");
+        else if (v === "truncated") setCellPill(statusRow.getCell(2), "warn");
+        else if (v === "permission-denied" || v === "error") setCellPill(statusRow.getCell(2), "bad");
+        else setCellPill(statusRow.getCell(2), "warn");
+      }
     }
 
     // -------------------------
-    // Sheet 9: Directory Roles (Observed)
+    // Sheet 7: Directory Roles (Observed)
     // -------------------------
     {
       const ws = wb.addWorksheet(safeSheetName("Directory Roles"));
@@ -1297,6 +1366,16 @@ export const runSummaryExcelReportCollector: Collector = {
             2400
           )
         });
+      }
+
+      applyKeyValueLook(ws);
+
+      // Make completeness.isComplete (if present) stand out
+      const completeRow = findRowByField(ws, "completeness.isComplete");
+      if (completeRow) {
+        const v = String(completeRow.getCell(2).value ?? "").toLowerCase();
+        if (v === "true") setCellPill(completeRow.getCell(2), "ok");
+        else if (v === "false") setCellPill(completeRow.getCell(2), "warn");
       }
     }
 
