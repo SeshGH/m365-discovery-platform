@@ -197,8 +197,8 @@ Artefacts:
 
 Notes:
 
-* No findings currently emitted
 * Evidence is consumed by XLSX reporting only
+* Completeness is surfaced via observed checks, not findings
 
 ---
 
@@ -253,19 +253,48 @@ Artefact:
 
 Guarantees:
 
-* Multi-sheet workbook
-* Human-readable
-* Derived from artefacts, observed checks, and findings
-* Must tolerate missing artefacts
+* Multi-sheet, human-readable workbook
+* Designed for **review and presentation**, not raw data export
+* Derived from artefacts and observed checks
+* Must tolerate missing or unparseable artefacts
 
-Sheets MAY include:
+### Guaranteed sheets
 
-* Run Summary
+The following sheets are **contractually stable**:
+
+* **Run Summary** — run metadata, derived status, high-level counts
+* **Users (Summary)** — user inventory counts (safe/full aware)
+* **Enterprise Apps (Summary)** — app counts, risk/truncation signals
+* **Conditional Access** — policy summary and completeness signals
+* **Directory Roles** — role inventory and completeness overview
+* **Exchange Mailboxes (Summary)** — mailbox counts and size buckets
+
+### Explicitly excluded from XLSX
+
+The XLSX report **intentionally does NOT include** raw tables for:
+
 * Jobs
 * Findings
-* Observed Checks
-* Artefacts
-* Module-specific sheets (Users, Enterprise Apps, CA, Directory Roles, Exchange)
+* Observed checks
+* Artefact inventories
+
+These remain available via:
+
+* API endpoints
+* CSV exports
+* JSON artefacts
+
+This keeps the XLSX:
+
+* executive-friendly
+* stable over time
+* decoupled from internal schemas
+
+### Optional / future sheets
+
+Additional **summary-only** sheets MAY be added in an append-only fashion.
+
+Raw or schema-heavy tables MUST NOT be added without explicit contract revision.
 
 ---
 
@@ -338,15 +367,15 @@ The following **MUST NOT** change without a version bump and migration plan:
 * Filename conventions and suffix semantics (`.safe.json`, `.full.json`)
 * Safe vs full emission rules
 * JSON shape of documented artefacts
-* Report sheet names, column meanings, or removal of existing sheets
+* Guaranteed XLSX sheet set or semantic meaning of sheet contents
 * Download behaviour (302 redirect, presigned URL semantics)
 
 ### What is allowed without versioning
 
 The following are **non-breaking** and may evolve:
 
-* Additional artefacts or sheets (append-only)
-* Additional fields added to existing artefacts (never removing or reinterpreting fields)
+* Additional summary sheets (append-only)
+* Additional fields added to existing summary sheets
 * New collectors or observed checks
 * New reports derived from existing artefacts
 
