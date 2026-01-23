@@ -1,3 +1,5 @@
+// apps/worker/src/collectors/exchangeMailboxesInventoryCollector.ts
+
 import type { Collector } from "./types";
 import { getGraphAccessToken, GraphHttpError } from "./graph";
 import { runPwshJson } from "../lib/pwsh";
@@ -189,21 +191,9 @@ type ExoMailboxCounts = {
 };
 
 function buildExoMailboxCountsScript(params: { appId: string; organization: string; certThumbprint: string }) {
-  // IMPORTANT:
-  // - Never output mailbox identifiers.
-  // - Return counts only as JSON.
-  // - Force errors to become a non-zero exit, with message to stderr.
-  //
-  // Note:
-  // RecipientTypeDetails values we count:
-  // - UserMailbox
-  // - SharedMailbox
-  // - RoomMailbox
-  // - EquipmentMailbox
   return `
 $ErrorActionPreference = "Stop"
 
-# Ensure module is available
 if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
   throw "ExchangeOnlineManagement module is not installed. Install-Module ExchangeOnlineManagement (CurrentUser) on the worker host."
 }
@@ -213,7 +203,6 @@ Import-Module ExchangeOnlineManagement -ErrorAction Stop
 try {
   Connect-ExchangeOnline -AppId "${params.appId}" -Organization "${params.organization}" -CertificateThumbprint "${params.certThumbprint}" -ShowBanner:$false | Out-Null
 
-  # Inventory: no PII output, counts only
   $mbxs = Get-EXOMailbox -ResultSize Unlimited -Properties RecipientTypeDetails,AccountDisabled
 
   $user = 0
@@ -235,7 +224,6 @@ try {
       default { }
     }
 
-    # AccountDisabled is available for many mailbox objects; treat missing as $null => enabled (best effort)
     if ($m.PSObject.Properties.Name -contains "AccountDisabled" -and $m.AccountDisabled -eq $true) {
       $disabled++
     } else {
@@ -271,15 +259,6 @@ type ExoMailboxFeaturesCounts = {
 };
 
 function buildExoMailboxFeaturesCountsScript(params: { appId: string; organization: string; certThumbprint: string }) {
-  // Tier-2 slice: counts only (no PII)
-  //
-  // ArchiveStatus:
-  // - Typically "None" when no archive mailbox exists; other values indicate archive enabled.
-  //
-  // LitigationHoldEnabled:
-  // - Boolean; count enabled/disabled.
-  //
-  // IMPORTANT: Never output mailbox identifiers.
   return `
 $ErrorActionPreference = "Stop"
 
@@ -303,7 +282,6 @@ try {
   $lhUnknown = 0
 
   foreach ($m in $mbxs) {
-    # ArchiveStatus
     if ($m.PSObject.Properties.Name -contains "ArchiveStatus") {
       $a = [string]$m.ArchiveStatus
       if ([string]::IsNullOrWhiteSpace($a)) {
@@ -317,7 +295,6 @@ try {
       $archiveUnknown++
     }
 
-    # LitigationHoldEnabled
     if ($m.PSObject.Properties.Name -contains "LitigationHoldEnabled") {
       if ($m.LitigationHoldEnabled -eq $true) {
         $lhEnabled++
@@ -364,19 +341,48 @@ type MailboxUsageDetailFullRow = {
   reportPeriod?: string; // e.g. D7
 };
 
+// Explicit allowlist (stable contract for FULL-only mailboxUsageDetail rows)
+const GRAPH_MAILBOX_USAGE_HEADERS = {
+  upn: "User Principal Name",
+  displayName: "Display Name",
+  isDeleted: "Is Deleted",
+  storageUsedBytes: "Storage Used (Byte)"
+} as const;
+
+function mapMailboxUsageDetailFullRow(params: {
+  record: Record<string, string>;
+  period: string;
+}): MailboxUsageDetailFullRow {
+  const { record, period } = params;
+
+  const bytes = toIntOrNull(record[GRAPH_MAILBOX_USAGE_HEADERS.storageUsedBytes]);
+  const gb = bytes === null ? null : Math.round(bytesToGb(bytes) * 100) / 100;
+
+  return {
+    userPrincipalName: record[GRAPH_MAILBOX_USAGE_HEADERS.upn] || undefined,
+    displayName: record[GRAPH_MAILBOX_USAGE_HEADERS.displayName] || undefined,
+    storageUsedBytes: bytes,
+    storageUsedGb: gb,
+    isDeleted: false,
+    reportPeriod: period
+  };
+}
+
+function missingHeadersInRecords(
+  records: Array<Record<string, string>>,
+  headers: string[]
+): string[] {
+  if (records.length === 0) return headers; // nothing to inspect; treat as missing
+  const sample = records[0];
+  return headers.filter((h) => !(h in sample));
+}
+
 /**
- * Exchange Online – Mailbox Inventory (v1)
- *
- * Step A (EXO-by-design):
- * - Uses Exchange Online PowerShell (app-only cert auth) to compute mailbox type + state distribution
- * - Still uses Graph reports for size buckets (for now)
- * - Emits observed checks + safe artefact
- * - Emits full artefact in full mode (may include PII derived from Graph report CSV)
- * - No findings in v1
+ * Exchange Online – Mailbox Inventory
  *
  * Tier-2 (EXO, best-effort):
  * - Counts only (no PII): archive mailbox presence + litigation hold enabled
- * - Failure must not change overall completeness (Option A)
+ * - Failure must not change overall completeness
  */
 export const exchangeMailboxesInventoryCollector: Collector = {
   id: "exchange.mailboxes.inventory",
@@ -395,7 +401,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
     const slicesCompleted: string[] = [];
     const notes: string[] = [];
 
-    // Start with nulls, fill as slices succeed
     let totalMailboxes: number | null = null;
 
     const sizeBuckets: Record<
@@ -421,7 +426,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       disabled: null as number | null
     };
 
-    // Tier-2 counts only (no PII)
     const mailboxFeatures: {
       archive: { enabled: number | null; disabledOrNone: number | null; unknown: number | null };
       litigationHold: { enabled: number | null; disabled: number | null; unknown: number | null };
@@ -430,11 +434,9 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       litigationHold: { enabled: null, disabled: null, unknown: null }
     };
 
-    // FULL-only optional detail export (may contain PII)
     let mailboxUsageDetailFull: MailboxUsageDetailFullRow[] | null = null;
     const MAX_FULL_DETAIL_ROWS = Number(process.env.EXO_MAILBOXES_MAX_DETAIL_ROWS ?? 2000);
 
-    // Resolve EXO connection inputs once
     const appId = requireEnv("EXO_APP_ID");
     const organization =
       process.env.EXO_ORGANIZATION?.trim() ||
@@ -456,11 +458,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
     slicesAttempted.push("mailboxes");
 
     {
-      const script = buildExoMailboxCountsScript({
-        appId,
-        organization,
-        certThumbprint
-      });
+      const script = buildExoMailboxCountsScript({ appId, organization, certThumbprint });
 
       const res = await runPwshJson<ExoMailboxCounts>({
         script,
@@ -474,7 +472,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
           stderr.includes("unauthorized") ||
           stderr.includes("forbidden") ||
           stderr.includes("access denied") ||
-          stderr.includes("is not recognized") || // cmdlet missing due to module not loaded/role issues
+          stderr.includes("is not recognized") ||
           stderr.includes("connect-exchangeonline")
         ) {
           isComplete = false;
@@ -506,17 +504,12 @@ export const exchangeMailboxesInventoryCollector: Collector = {
     }
 
     // -------------------------
-    // Slice (Tier-2, best-effort): EXO mailbox features (archive + litigation hold) — counts only
-    // Does NOT affect overall completeness (Option A)
+    // Slice (Tier-2, best-effort): EXO mailbox features — counts only
     // -------------------------
     slicesAttempted.push("mailboxFeatures");
 
     {
-      const script = buildExoMailboxFeaturesCountsScript({
-        appId,
-        organization,
-        certThumbprint
-      });
+      const script = buildExoMailboxFeaturesCountsScript({ appId, organization, certThumbprint });
 
       const res = await runPwshJson<ExoMailboxFeaturesCounts>({
         script,
@@ -537,7 +530,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
           notes.push(
             "Tier-2 EXO mailbox feature counts (archive/litigation hold) could not be collected. This is best-effort and does not affect overall completeness."
           );
-          // Option A: do not change isComplete
         } else {
           throw new Error(
             `[exchange.mailboxes.inventory] EXO pwsh failed (tier2 mailboxFeatures): ${res.error}\nstdout=${res.details.stdout}\nstderr=${res.details.stderr}`
@@ -557,7 +549,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
     }
 
     // -------------------------
-    // Slice: Graph mailbox usage detail (size buckets) — keep for now
+    // Slice: Graph mailbox usage detail (size buckets)
     // -------------------------
     const period = "D7";
     slicesAttempted.push("mailboxUsageDetail");
@@ -570,6 +562,22 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       const csv = await graphGetText(token, url);
 
       const rows = parseCsv(csv);
+
+      // Header sanity: warn if Graph report schema changes (counts-only note)
+      const requiredHeaders = [
+        GRAPH_MAILBOX_USAGE_HEADERS.upn,
+        GRAPH_MAILBOX_USAGE_HEADERS.displayName,
+        GRAPH_MAILBOX_USAGE_HEADERS.isDeleted,
+        GRAPH_MAILBOX_USAGE_HEADERS.storageUsedBytes
+      ];
+      const missing = missingHeadersInRecords(rows, requiredHeaders);
+      if (missing.length > 0) {
+        notes.push(
+          `Graph mailbox usage report CSV is missing expected header(s): ${missing.join(
+            ", "
+          )}. Collector will proceed best-effort using available columns.`
+        );
+      }
 
       const bucketCounts: Record<"under1GB" | "1to10GB" | "10to50GB" | "over50GB", number> = {
         under1GB: 0,
@@ -584,11 +592,11 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       const fullRows: MailboxUsageDetailFullRow[] = [];
 
       for (const r of rows) {
-        const isDeletedRaw = (r["Is Deleted"] ?? "").toLowerCase();
+        const isDeletedRaw = (r[GRAPH_MAILBOX_USAGE_HEADERS.isDeleted] ?? "").toLowerCase();
         const isDeleted = isDeletedRaw === "true";
         if (isDeleted) continue;
 
-        const bytes = toIntOrNull(r["Storage Used (Byte)"]);
+        const bytes = toIntOrNull(r[GRAPH_MAILBOX_USAGE_HEADERS.storageUsedBytes]);
         if (bytes === null) continue;
 
         const gb = bytesToGb(bytes);
@@ -596,22 +604,19 @@ export const exchangeMailboxesInventoryCollector: Collector = {
 
         if (gb >= 40 && gb < 50) nearLimit40to50++;
 
-        // FULL-only: include a capped detail export (may contain PII)
         if (includeSensitive && fullRows.length < MAX_FULL_DETAIL_ROWS) {
-          fullRows.push({
-            userPrincipalName: r["User Principal Name"] || undefined,
-            displayName: r["Display Name"] || undefined,
-            storageUsedBytes: bytes,
-            storageUsedGb: Math.round(gb * 100) / 100,
-            isDeleted: false,
-            reportPeriod: period
-          });
+          // FULL allowlist enforced by mapper (no accidental column leakage)
+          fullRows.push(
+            mapMailboxUsageDetailFullRow({
+              record: r,
+              period
+            })
+          );
         }
 
         seen++;
       }
 
-      // Keep totalMailboxes as EXO-sourced if available; otherwise fall back to Graph-derived count.
       if (totalMailboxes === null) totalMailboxes = seen;
 
       sizeBuckets.under1GB = bucketCounts.under1GB;
@@ -629,7 +634,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       if (includeSensitive) {
         mailboxUsageDetailFull = fullRows;
 
-        // Truncation should reflect what we actually emitted (not raw CSV row count)
         if (fullRows.length >= MAX_FULL_DETAIL_ROWS) {
           truncated = true;
           notes.push(
@@ -649,14 +653,12 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       }
     }
 
-    // Completeness: require both slices for “complete”
-    // NOTE: Tier-2 mailboxFeatures is best-effort and intentionally NOT part of completeness gating (Option A)
+    // Completeness gating excludes Tier-2 mailboxFeatures (Option A)
     const requiredSlices = ["mailboxes", "mailboxUsageDetail"];
     for (const s of requiredSlices) {
       if (!slicesCompleted.includes(s)) isComplete = false;
     }
 
-    // We consider "fullExported" to mean "a full artefact was emitted for this collector"
     const fullExported = includeSensitive;
 
     const summary = {
@@ -708,7 +710,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
 
     const generatedAt = new Date().toISOString();
 
-    // SAFE artefact (no PII)
     const safeArtefact = JSON.stringify(
       {
         generatedAt,
@@ -727,7 +728,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
           dataProfile,
           fullExported
         },
-        // Tier-2 counts only (no PII)
         mailboxFeatures
       },
       null,
@@ -748,7 +748,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       }
     ];
 
-    // FULL artefact (allowed to contain PII; includes optional capped detail)
     if (includeSensitive) {
       const fullArtefact = JSON.stringify(
         {
@@ -768,9 +767,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
             dataProfile,
             fullExported
           },
-          // Tier-2 counts only (no PII)
           mailboxFeatures,
-          // Full-only detail: derived from Graph reports CSV
           mailboxUsageDetail: mailboxUsageDetailFull ?? []
         },
         null,
