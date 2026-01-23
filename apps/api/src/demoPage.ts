@@ -86,8 +86,6 @@ export function getDemoHtml(): string {
       --bg: #ffffff;
       --panel: #ffffff;
       --chip: #f3f4f6;
-      --codebg: #0b1020;
-      --codefg: #d6e7ff;
       --btn: #111827;
       --btnfg: #ffffff;
       --focus: rgba(59,130,246,0.45);
@@ -304,6 +302,23 @@ export function getDemoHtml(): string {
     .tile.span4 { grid-column: span 4; }
     .tile.span6 { grid-column: span 6; }
 
+    /* Resume-last-run row */
+    .resumeRow {
+      margin-top: 8px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .resumeHint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+
     @media (max-width: 980px) {
       .tile.span3, .tile.span4, .tile.span6 { grid-column: span 12; }
       .grid { grid-template-columns: 1fr; }
@@ -369,6 +384,10 @@ export function getDemoHtml(): string {
           <label for="existingRunId">Run ID</label>
           <input id="existingRunId" placeholder="cmk..." />
           <div class="note">Paste a runId to resume polling and view jobs/observed checks/artefacts.</div>
+          <div class="resumeRow">
+            <button class="small" id="resumeLastRun" disabled title="Resume last run from this browser">Resume last run</button>
+            <span class="resumeHint">Last run: <span id="lastRunHint" class="mono">—</span></span>
+          </div>
         </div>
         <div style="display:flex; align-items:flex-end;">
           <button class="primary small" id="loadRun">Load run</button>
@@ -546,8 +565,11 @@ export function getDemoHtml(): string {
 
   const POLL_INTERVAL_MS = 500;
 
+  const STORAGE_LAST_RUN_ID = "m365dp:lastRunId";
+
   let pollTimer = null;
   let currentRunId = null;
+  let lastPollAtMs = null;
 
   const normalizeList = (v) => {
     if (Array.isArray(v)) return v;
@@ -559,6 +581,50 @@ export function getDemoHtml(): string {
     \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
 
   const safe = (v) => (v === null || v === undefined) ? "" : String(v);
+
+  const fmtNumber = (n) => {
+    if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+    try { return n.toLocaleString(undefined); } catch { return String(n); }
+  };
+
+  const fmtBytes = (bytes) => {
+    if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "—";
+    const abs = Math.abs(bytes);
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let u = 0;
+    let v = abs;
+    while (v >= 1024 && u < units.length - 1) {
+      v = v / 1024;
+      u += 1;
+    }
+    const rounded = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
+    const sign = bytes < 0 ? "-" : "";
+    return sign + rounded.toLocaleString(undefined) + " " + units[u];
+  };
+
+  const fmtLocalTime = (iso) => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString(undefined);
+    } catch {
+      return String(iso);
+    }
+  };
+
+  const fmtAgo = (msAgo) => {
+    if (typeof msAgo !== "number" || !Number.isFinite(msAgo) || msAgo < 0) return "";
+    const s = Math.floor(msAgo / 1000);
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m ago";
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + "h ago";
+    const d = Math.floor(h / 24);
+    return d + "d ago";
+  };
 
   const setPollStatus = (text) => {
     const el = $("pollStatus");
@@ -631,8 +697,8 @@ export function getDemoHtml(): string {
 
     setTile("tileRunStatus", run && run.status ? String(run.status) : "—");
     setTile("tileJobsDone", totalJobs ? \`\${done}/\${totalJobs}\` : "—");
-    setTile("tileJobsQueued", \`queued: \${queued}\`);
-    setTile("tileJobsFailed", \`failed: \${failed}\`);
+    setTile("tileJobsQueued", \`queued: \${fmtNumber(queued)}\`);
+    setTile("tileJobsFailed", \`failed: \${fmtNumber(failed)}\`);
 
     // Entra Users
     const usersObs = firstObserved(observed, "ENTRA_USERS_OBS_001");
@@ -641,9 +707,9 @@ export function getDemoHtml(): string {
     setTile("tileUsersProfile", usersProfile);
 
     const usersTotal = u && typeof u.totalUsers === "number" ? u.totalUsers : null;
-    setTile("tileUsersTotal", usersTotal === null ? "—" : String(usersTotal));
-    setTile("tileUsersEnabled", "enabled: " + (typeof u?.enabledUsers === "number" ? u.enabledUsers : "—"));
-    setTile("tileUsersGuests", "guests: " + (typeof u?.guestUsers === "number" ? u.guestUsers : "—"));
+    setTile("tileUsersTotal", usersTotal === null ? "—" : fmtNumber(usersTotal));
+    setTile("tileUsersEnabled", "enabled: " + (typeof u?.enabledUsers === "number" ? fmtNumber(u.enabledUsers) : "—"));
+    setTile("tileUsersGuests", "guests: " + (typeof u?.guestUsers === "number" ? fmtNumber(u.guestUsers) : "—"));
 
     // Mailboxes
     const mbxObs = firstObserved(observed, "EXO_MAILBOXES_OBS_001");
@@ -652,9 +718,9 @@ export function getDemoHtml(): string {
     setTile("tileMbxProfile", mbxProfile);
 
     const mbxTotal = m && typeof m.totalMailboxes === "number" ? m.totalMailboxes : null;
-    setTile("tileMbxTotal", mbxTotal === null ? "—" : String(mbxTotal));
-    setTile("tileMbxEnabled", "enabled: " + (typeof m?.byState?.enabled === "number" ? m.byState.enabled : "—"));
-    setTile("tileMbxOver50", ">50GB: " + (typeof m?.sizeBuckets?.over50GB === "number" ? m.sizeBuckets.over50GB : "—"));
+    setTile("tileMbxTotal", mbxTotal === null ? "—" : fmtNumber(mbxTotal));
+    setTile("tileMbxEnabled", "enabled: " + (typeof m?.byState?.enabled === "number" ? fmtNumber(m.byState.enabled) : "—"));
+    setTile("tileMbxOver50", ">50GB: " + (typeof m?.sizeBuckets?.over50GB === "number" ? fmtNumber(m.sizeBuckets.over50GB) : "—"));
 
     // Enterprise Apps
     const appsObs = firstObserved(observed, "ENTRA_EAP_OBS_001");
@@ -670,16 +736,16 @@ export function getDemoHtml(): string {
           ? a.totalApps
           : null;
 
-    setTile("tileAppsTotal", appsTotal === null ? "—" : String(appsTotal));
-    setTile("tileAppsScanned", "scanned: " + (typeof a?.scannedApps === "number" ? a.scannedApps : "—"));
+    setTile("tileAppsTotal", appsTotal === null ? "—" : fmtNumber(appsTotal));
+    setTile("tileAppsScanned", "scanned: " + (typeof a?.scannedApps === "number" ? fmtNumber(a.scannedApps) : "—"));
 
     const risky =
       typeof a?.riskyApps === "number"
         ? a.riskyApps
         : typeof a?.riskyAppsCount === "number"
           ? a.riskyAppsCount
-          : "—";
-    setTile("tileAppsRisky", "risky: " + risky);
+          : null;
+    setTile("tileAppsRisky", "risky: " + (typeof risky === "number" ? fmtNumber(risky) : "—"));
 
     // Conditional Access
     const caObs = firstObserved(observed, "ENTRA_CA_OBS_001");
@@ -688,10 +754,10 @@ export function getDemoHtml(): string {
     const caProfile = c && (c.profile || c.dataProfile) ? String(c.profile || c.dataProfile) : "—";
     setTile("tileCaProfile", caProfile);
 
-    setTile("tileCaTotal", "total: " + (typeof c?.totalPolicies === "number" ? c.totalPolicies : "—"));
-    setTile("tileCaEnabled", "enabled: " + (typeof c?.enabledPolicies === "number" ? c.enabledPolicies : "—"));
-    setTile("tileCaMfa", "with MFA: " + (typeof c?.policiesWithMfaGrantControl === "number" ? c.policiesWithMfaGrantControl : "—"));
-    setTile("tileCaAllUsers", "target all users: " + (typeof c?.policiesTargetingAllUsers === "number" ? c.policiesTargetingAllUsers : "—"));
+    setTile("tileCaTotal", "total: " + (typeof c?.totalPolicies === "number" ? fmtNumber(c.totalPolicies) : "—"));
+    setTile("tileCaEnabled", "enabled: " + (typeof c?.enabledPolicies === "number" ? fmtNumber(c.enabledPolicies) : "—"));
+    setTile("tileCaMfa", "with MFA: " + (typeof c?.policiesWithMfaGrantControl === "number" ? fmtNumber(c.policiesWithMfaGrantControl) : "—"));
+    setTile("tileCaAllUsers", "target all users: " + (typeof c?.policiesTargetingAllUsers === "number" ? fmtNumber(c.policiesTargetingAllUsers) : "—"));
   };
 
   const renderJobs = (jobs) => {
@@ -700,9 +766,9 @@ export function getDemoHtml(): string {
         <tr>
           <td>\${safe(j.collectorId)}</td>
           <td><span class="status">\${safe(j.status)}</span></td>
-          <td>\${safe(j.attempts)}</td>
+          <td>\${fmtNumber(Number(j.attempts ?? 0))}</td>
           <td>\${safe(j.lockedBy)}</td>
-          <td>\${safe(j.lockedAt)}</td>
+          <td>\${fmtLocalTime(j.lockedAt)}</td>
           <td style="max-width: 420px; white-space: pre-wrap;">\${safe(j.lastError)}</td>
         </tr>\`;
     }).join("");
@@ -723,7 +789,7 @@ export function getDemoHtml(): string {
     const rows = observed.map(o => {
       return \`
         <tr>
-          <td>\${safe(o.observedAt)}</td>
+          <td>\${fmtLocalTime(o.observedAt)}</td>
           <td>\${safe(o.checkId)}</td>
           <td>\${safe(o.collectorId)}</td>
           <td class="jsoncell">\${safeJsonInline(o.data)}</td>
@@ -745,12 +811,13 @@ export function getDemoHtml(): string {
     const rows = artefacts.map(a => {
       const filename = filenameFromKey(a);
       const href = "/artefacts/" + a.id + "/download";
+      const sizePretty = typeof a.sizeBytes === "number" ? fmtBytes(a.sizeBytes) : "—";
       return (
         "<tr>" +
           "<td>" + safe(filename) + "</td>" +
           "<td>" + safe(a.type) + "</td>" +
-          "<td>" + safe(a.sizeBytes) + "</td>" +
-          "<td>" + safe(a.createdAt) + "</td>" +
+          "<td title=\\"" + safe(a.sizeBytes) + "\\">" + sizePretty + "</td>" +
+          "<td>" + fmtLocalTime(a.createdAt) + "</td>" +
           "<td><a href=\\"" + href + "\\" target=\\"_blank\\" rel=\\"noreferrer\\">Download</a></td>" +
         "</tr>"
       );
@@ -797,9 +864,42 @@ export function getDemoHtml(): string {
     }
   };
 
+  const persistLastRunId = (runId) => {
+    try {
+      if (!runId) return;
+      localStorage.setItem(STORAGE_LAST_RUN_ID, String(runId));
+      updateResumeUi();
+    } catch { /* ignore */ }
+  };
+
+  const readLastRunId = () => {
+    try {
+      const v = localStorage.getItem(STORAGE_LAST_RUN_ID);
+      return (v && String(v).trim()) ? String(v).trim() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const updateResumeUi = () => {
+    const hint = $("lastRunHint");
+    const btn = $("resumeLastRun");
+    if (!hint || !btn) return;
+
+    const last = readLastRunId();
+    if (last) {
+      hint.textContent = last;
+      btn.disabled = false;
+    } else {
+      hint.textContent = "—";
+      btn.disabled = true;
+    }
+  };
+
   const stopPolling = () => {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
+    lastPollAtMs = null;
     setPollStatus("Polling: off");
   };
 
@@ -824,11 +924,20 @@ export function getDemoHtml(): string {
 
     // reset tiles until first poll
     renderSummaryTiles(null, [], [], []);
+
+    // persist for quick demo resumes
+    persistLastRunId(runId);
+
+    // keep input in sync for convenience
+    if ($("existingRunId")) $("existingRunId").value = runId;
   };
 
   const startPolling = () => {
     stopPolling();
-    setPollStatus("Polling every " + (POLL_INTERVAL_MS / 1000) + "s");
+
+    lastPollAtMs = Date.now();
+    setPollStatus("Polling every " + (POLL_INTERVAL_MS / 1000) + "s (" + fmtAgo(0) + ")");
+
     pollTimer = setInterval(async () => {
       if (!currentRunId) return;
 
@@ -864,12 +973,21 @@ export function getDemoHtml(): string {
         // Restore overview tiles
         renderSummaryTiles(run, jobsList, observed, artefactList);
 
+        lastPollAtMs = Date.now();
+        const since = Date.now() - lastPollAtMs; // 0
+        setPollStatus("Polling every " + (POLL_INTERVAL_MS / 1000) + "s (" + fmtAgo(since) + ")");
+
         if (run && (run.status === "succeeded" || run.status === "failed")) {
           stopPolling();
           setPollStatus("Polling stopped (run " + run.status + ").");
         }
       } catch (e) {
         console.warn("poll failed", e);
+        // show staleness hint
+        if (lastPollAtMs) {
+          const age = Date.now() - lastPollAtMs;
+          setPollStatus("Polling every " + (POLL_INTERVAL_MS / 1000) + "s (last update " + fmtAgo(age) + ")");
+        }
       }
     }, POLL_INTERVAL_MS);
   };
@@ -879,6 +997,25 @@ export function getDemoHtml(): string {
     if (!runId) return;
     const ok = await copyTextToClipboard(runId);
     showToast(ok ? "Copied." : "Copy failed.");
+  });
+
+  $("resumeLastRun").addEventListener("click", async () => {
+    const last = readLastRunId();
+    if (!last) return;
+
+    try {
+      const res = await fetch("/runs/" + last);
+      if (!res.ok) {
+        alert("Last runId not found anymore (HTTP " + res.status + ").");
+        return;
+      }
+    } catch {
+      alert("Unable to reach API to load run.");
+      return;
+    }
+
+    showRun(last);
+    startPolling();
   });
 
   $("clear").addEventListener("click", () => {
@@ -895,6 +1032,9 @@ export function getDemoHtml(): string {
     // reset summary links/tiles
     setRunSummaryLinks([]);
     renderSummaryTiles(null, [], [], []);
+
+    // DO NOT clear localStorage: it's for demo convenience
+    updateResumeUi();
   });
 
   $("loadRun").addEventListener("click", async () => {
@@ -968,11 +1108,16 @@ export function getDemoHtml(): string {
       return;
     }
 
-    if ($("existingRunId")) $("existingRunId").value = runId;
-
     showRun(runId);
     startPolling();
   });
+
+  // Init
+  updateResumeUi();
+  const last = readLastRunId();
+  if (last && $("existingRunId") && !$("existingRunId").value) {
+    $("existingRunId").value = last;
+  }
 </script>
 </body>
 </html>`;
