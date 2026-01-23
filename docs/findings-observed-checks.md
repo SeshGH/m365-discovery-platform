@@ -331,10 +331,11 @@ Notes:
 
 Collector: `exchange.mailboxes.inventory`
 
-| checkId                 | Description                    |
-| ----------------------- | ------------------------------ |
-| `EXO_MAILBOXES_OBS_001` | Mailbox inventory summary      |
-| `EXO_MAILBOXES_OBS_002` | Mailbox inventory completeness |
+| checkId                 | Description                          |
+| ----------------------- | ------------------------------------ |
+| `EXO_MAILBOXES_OBS_001` | Mailbox inventory summary            |
+| `EXO_MAILBOXES_OBS_002` | Mailbox inventory completeness       |
+| `EXO_MAILBOXES_OBS_003` | Mailbox feature counts (Tier-2, EXO) |
 
 **Payload shapes**
 
@@ -380,12 +381,33 @@ Collector: `exchange.mailboxes.inventory`
 }
 ```
 
+`EXO_MAILBOXES_OBS_003`
+
+```json
+{
+  "mailboxFeatures": {
+    "archive": {
+      "enabled": number (nullable),
+      "disabledOrNone": number (nullable),
+      "unknown": number (nullable)
+    },
+    "litigationHold": {
+      "enabled": number (nullable),
+      "disabled": number (nullable),
+      "unknown": number (nullable)
+    }
+  },
+  "dataProfile": "safe" or "full"
+}
+```
+
 Notes:
 
 * These checks are **counts, buckets, and completeness signals only** — no mailbox identifiers or addresses are included.
 * If Exchange data cannot be fully enumerated due to missing permissions or access restrictions, `isComplete = false` and relevant counts MAY be `null`.
-* `permissionDenied` must contain stable identifiers describing blocked slices (e.g. `"exo:mailboxes:list"`, `"exo:mailboxStatistics:read"`, `"microsoft.graph/reports:getMailboxUsageDetail"`).
-* `slicesAttempted` and `slicesCompleted` should reflect the collector’s internal slices (e.g. `"mailboxes"`, `"mailboxStatistics"`, `"mailboxUsageDetail"`).
+* `permissionDenied` must contain stable identifiers describing blocked slices (e.g. `"exo:mailboxes:list"`, `"exo:mailboxes:features"`, `"microsoft.graph/reports:getMailboxUsageDetail"`).
+* `slicesAttempted` and `slicesCompleted` should reflect the collector’s internal slices (e.g. `"mailboxes"`, `"mailboxFeatures"`, `"mailboxUsageDetail"`).
+* Tier-2 EXO feature counts (`EXO_MAILBOXES_OBS_003`) are **best-effort** and MUST NOT affect overall completeness (`EXO_MAILBOXES_OBS_002.isComplete`). Failures should surface via `permissionDenied` and `notes`.
 * Demo tenant / API limits must surface via `truncated = true` and/or `isComplete = false`.
 
 ---
