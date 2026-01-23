@@ -166,10 +166,31 @@ Current report collector IDs:
 * `report.runSummary.csv` → uploads `run-summary.csv`
 * `report.runSummary.xlsx` → uploads `run-summary.xlsx`
 
-Important:
+### Reporting scope and intent (important)
+
+Reporting collectors are **intentionally opinionated**.
 
 * Reports are **derived artefacts**, not sources of truth.
-* Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOrThrow`).
+* They are designed for **human consumption** (consultants, reviewers, clients), not forensic debugging.
+* Reports **must not** attempt to mirror raw database tables or API payloads.
+
+Specifically for the run summary reports:
+
+* Jobs, findings, and observed checks are **not exported as raw tables** in Excel.
+* Those datasets remain available via:
+
+  * API endpoints
+  * JSON artefacts
+  * Portal / UI views
+* The Excel report focuses on:
+
+  * run metadata and status
+  * high-level counts and completeness signals
+  * curated domain summaries (e.g. Users, Exchange, Enterprise Apps, Conditional Access, Directory Roles)
+
+This separation prevents accidental misuse of reports as audit logs and keeps outputs stable as internal models evolve.
+
+Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOrThrow`).
 
 ---
 
