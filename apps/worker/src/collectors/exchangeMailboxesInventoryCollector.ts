@@ -265,6 +265,18 @@ finally {
 `.trim();
 }
 
+type MailboxUsageDetailFullRow = {
+  // NOTE: These fields can be PII. Only include in FULL profile artefact.
+  userPrincipalName?: string;
+  displayName?: string;
+
+  storageUsedBytes?: number | null;
+  storageUsedGb?: number | null;
+
+  isDeleted?: boolean | null;
+  reportPeriod?: string; // e.g. D7
+};
+
 /**
  * Exchange Online – Mailbox Inventory (v1)
  *
@@ -272,6 +284,7 @@ finally {
  * - Uses Exchange Online PowerShell (app-only cert auth) to compute mailbox type + state distribution
  * - Still uses Graph reports for size buckets (for now)
  * - Emits observed checks + safe artefact
+ * - Emits full artefact in full mode (may include PII derived from Graph report CSV)
  * - No findings in v1
  */
 export const exchangeMailboxesInventoryCollector: Collector = {
@@ -280,6 +293,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
 
   run: async (ctx) => {
     const dataProfile = normalizeDataProfile((ctx.run as any)?.dataProfile);
+    const includeSensitive = dataProfile === "full";
 
     let isComplete = true;
     let truncated = false;
@@ -315,6 +329,10 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       enabled: null as number | null,
       disabled: null as number | null
     };
+
+    // FULL-only optional detail export (may contain PII)
+    let mailboxUsageDetailFull: MailboxUsageDetailFullRow[] | null = null;
+    const MAX_FULL_DETAIL_ROWS = Number(process.env.EXO_MAILBOXES_MAX_DETAIL_ROWS ?? 2000);
 
     // -------------------------
     // Slice: EXO mailbox inventory (type + state)
@@ -416,9 +434,12 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       let nearLimit40to50 = 0;
       let seen = 0;
 
+      const fullRows: MailboxUsageDetailFullRow[] = [];
+
       for (const r of rows) {
-        const isDeleted = (r["Is Deleted"] ?? "").toLowerCase();
-        if (isDeleted === "true") continue;
+        const isDeletedRaw = (r["Is Deleted"] ?? "").toLowerCase();
+        const isDeleted = isDeletedRaw === "true";
+        if (isDeleted) continue;
 
         const bytes = toIntOrNull(r["Storage Used (Byte)"]);
         if (bytes === null) continue;
@@ -427,6 +448,18 @@ export const exchangeMailboxesInventoryCollector: Collector = {
         bucketCounts[bucketForGb(gb)]++;
 
         if (gb >= 40 && gb < 50) nearLimit40to50++;
+
+        // FULL-only: include a capped detail export (may contain PII)
+        if (includeSensitive && fullRows.length < MAX_FULL_DETAIL_ROWS) {
+          fullRows.push({
+            userPrincipalName: r["User Principal Name"] || undefined,
+            displayName: r["Display Name"] || undefined,
+            storageUsedBytes: bytes,
+            storageUsedGb: Math.round(gb * 100) / 100,
+            isDeleted: false,
+            reportPeriod: period
+          });
+        }
 
         seen++;
       }
@@ -445,6 +478,16 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       notes.push(
         "Mailbox size buckets are derived from Microsoft Graph mailbox usage reports (CSV). This dataset may be delayed relative to real time."
       );
+
+      if (includeSensitive) {
+        mailboxUsageDetailFull = fullRows;
+        if (rows.length > MAX_FULL_DETAIL_ROWS) {
+          truncated = true;
+          notes.push(
+            `Full mailbox usage detail export capped at ${MAX_FULL_DETAIL_ROWS} rows (EXO_MAILBOXES_MAX_DETAIL_ROWS).`
+          );
+        }
+      }
     } catch (e: unknown) {
       if (e instanceof GraphHttpError && e.status === 403) {
         isComplete = false;
@@ -463,7 +506,8 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       if (!slicesCompleted.includes(s)) isComplete = false;
     }
 
-    const fullExported = false;
+    // We consider "fullExported" to mean "a full artefact was emitted for this collector"
+    const fullExported = includeSensitive;
 
     const summary = {
       totalMailboxes,
@@ -504,9 +548,12 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       ]
     });
 
+    const generatedAt = new Date().toISOString();
+
+    // SAFE artefact (no PII)
     const safeArtefact = JSON.stringify(
       {
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         profile: "safe",
         completeness: {
           isComplete,
@@ -527,6 +574,55 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       2
     );
 
+    const artefacts: Array<{
+      type: "json";
+      filename: string;
+      contentType: "application/json";
+      content: string;
+    }> = [
+      {
+        type: "json" as const,
+        filename: "exchange-mailboxes-inventory.safe.json",
+        contentType: "application/json",
+        content: safeArtefact
+      }
+    ];
+
+    // FULL artefact (allowed to contain PII; includes optional capped detail)
+    if (includeSensitive) {
+      const fullArtefact = JSON.stringify(
+        {
+          generatedAt,
+          profile: "full",
+          completeness: {
+            isComplete,
+            truncated,
+            permissionDenied,
+            slicesAttempted,
+            slicesCompleted,
+            notes,
+            implemented
+          },
+          summary: {
+            ...summary,
+            dataProfile,
+            fullExported
+          },
+          // Full-only detail: derived from Graph reports CSV
+          mailboxUsageDetail: mailboxUsageDetailFull ?? []
+        },
+        null,
+        2
+      );
+
+      artefacts.push({
+        type: "json" as const,
+        filename: "exchange-mailboxes-inventory.full.json",
+        contentType: "application/json",
+        content: fullArtefact
+      });
+    }
+
     return {
       id: "exchange.mailboxes.inventory",
       status: "ok",
@@ -539,14 +635,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
         totalMailboxes,
         nearLimit40to50GB: sizeBuckets["40to50GB"]
       },
-      artefacts: [
-        {
-          type: "json" as const,
-          filename: "exchange-mailboxes-inventory.safe.json",
-          contentType: "application/json",
-          content: safeArtefact
-        }
-      ]
+      artefacts
     };
   }
 };
