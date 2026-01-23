@@ -88,6 +88,22 @@ function isGraph403(e: unknown): boolean {
   return e instanceof GraphHttpError && e.status === 403;
 }
 
+function truncateForUi(input: string, max = 320): string {
+  const cleaned = input.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max)}…(truncated)`;
+}
+
+function summarizeGraphErrorMessage(msg: string): string {
+  // Try to keep only the useful bit for humans, without the huge JSON blob.
+  // Example msg often contains: "Graph GET failed (400) url=...: {\"error\":{...}}"
+  const m = msg.match(/Graph GET failed \((\d+)\)/);
+  const status = m?.[1] ? `(${m[1]})` : "";
+  // Pick out CultureNotFoundException if present
+  const culture = msg.includes("CultureNotFoundException") ? " CultureNotFoundException" : "";
+  return `Graph request failed ${status}.${culture}`.trim();
+}
+
 function principalTypeFromOdata(odataType: unknown): PrincipalType | null {
   const s = typeof odataType === "string" ? odataType.toLowerCase() : "";
   // Common types:
@@ -299,36 +315,41 @@ export const entraDirectoryRolesAssignmentsCollector: Collector = {
       completeness.permissionDenied.push("activeAssignments");
     }
 
-    // -------------------------
-    // Slice C: Eligible / PIM assignments (best-effort, optional)
-    // -------------------------
-    let pimAttempted = false;
-    let pimSucceeded = false;
-    let eligibleAssignmentsCount: number | undefined = undefined;
+  // -------------------------
+// Slice C: Eligible / PIM assignments (best-effort, optional)
+// -------------------------
+let pimAttempted = false;
+let pimSucceeded = false;
+let eligibleAssignmentsCount: number | undefined = undefined;
 
-    const ENABLE_PIM_SLICE = String(process.env.DIRROLES_ENABLE_PIM_SLICE ?? "1") === "1";
+const ENABLE_PIM_SLICE = String(process.env.DIRROLES_ENABLE_PIM_SLICE ?? "1") === "1";
 
-    if (ENABLE_PIM_SLICE) {
-      pimAttempted = true;
-      completeness.slicesAttempted.push("eligibleAssignments");
+if (ENABLE_PIM_SLICE) {
+  pimAttempted = true;
+  completeness.slicesAttempted.push("eligibleAssignments");
 
-      try {
-        const schedules = await graphGetAllPages<any>(
-          token,
-          "https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules?$select=id"
-        );
-        eligibleAssignmentsCount = schedules.length;
-        pimSucceeded = true;
-        completeness.slicesCompleted.push("eligibleAssignments");
-      } catch (e: unknown) {
-        pimSucceeded = false;
-        if (isGraph403(e) && !completeness.permissionDenied.includes("eligibleAssignments")) {
-          completeness.permissionDenied.push("eligibleAssignments");
-        }
-        const msg = e instanceof Error ? e.message : String(e);
-        completeness.notes.push(`eligibleAssignments (PIM) not available or denied: ${msg}`);
-      }
+  try {
+    const schedules = await graphGetAllPages<any>(
+      token,
+      "https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules?$select=id"
+    );
+    eligibleAssignmentsCount = schedules.length;
+    pimSucceeded = true;
+    completeness.slicesCompleted.push("eligibleAssignments");
+  } catch (e: unknown) {
+    pimSucceeded = false;
+
+    if (isGraph403(e) && !completeness.permissionDenied.includes("eligibleAssignments")) {
+      completeness.permissionDenied.push("eligibleAssignments");
     }
+
+    const raw = e instanceof Error ? e.message : String(e);
+    const summary = summarizeGraphErrorMessage(raw);
+    completeness.notes.push(
+      `eligibleAssignments (PIM) not available or denied: ${truncateForUi(summary || raw)}`
+    );
+  }
+}
 
     // -------------------------
     // Build summaries for observed checks

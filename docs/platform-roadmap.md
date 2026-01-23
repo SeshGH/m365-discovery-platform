@@ -77,7 +77,7 @@ Rules:
 - Sensitive artefacts must never be auto-consumed by reports or UI
 
 ### Tier 3 — Operational & commercial views (future)
-- Workbook-style reports (CloudGeezer-style)
+- Workbook-style reporting and scoping views
 - Scoping lenses for:
   - migrations
   - take-ons
@@ -118,7 +118,7 @@ Some limits exist purely to keep demos safe and predictable.
 
 Examples:
 - Enterprise app enumeration caps (e.g. `ENTAPP_MAX_APPS`)
-- Artificial truncation surfaced as data completeness findings
+- Artificial truncation surfaced as data completeness signals
 
 Rules:
 - Demo-only behaviour must be explicitly documented as such
