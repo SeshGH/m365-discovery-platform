@@ -265,6 +265,93 @@ finally {
 `.trim();
 }
 
+type ExoMailboxFeaturesCounts = {
+  archive: { enabled: number; disabledOrNone: number; unknown: number };
+  litigationHold: { enabled: number; disabled: number; unknown: number };
+};
+
+function buildExoMailboxFeaturesCountsScript(params: { appId: string; organization: string; certThumbprint: string }) {
+  // Tier-2 slice: counts only (no PII)
+  //
+  // ArchiveStatus:
+  // - Typically "None" when no archive mailbox exists; other values indicate archive enabled.
+  //
+  // LitigationHoldEnabled:
+  // - Boolean; count enabled/disabled.
+  //
+  // IMPORTANT: Never output mailbox identifiers.
+  return `
+$ErrorActionPreference = "Stop"
+
+if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+  throw "ExchangeOnlineManagement module is not installed. Install-Module ExchangeOnlineManagement (CurrentUser) on the worker host."
+}
+
+Import-Module ExchangeOnlineManagement -ErrorAction Stop
+
+try {
+  Connect-ExchangeOnline -AppId "${params.appId}" -Organization "${params.organization}" -CertificateThumbprint "${params.certThumbprint}" -ShowBanner:$false | Out-Null
+
+  $mbxs = Get-EXOMailbox -ResultSize Unlimited -Properties ArchiveStatus,LitigationHoldEnabled
+
+  $archiveEnabled = 0
+  $archiveDisabledOrNone = 0
+  $archiveUnknown = 0
+
+  $lhEnabled = 0
+  $lhDisabled = 0
+  $lhUnknown = 0
+
+  foreach ($m in $mbxs) {
+    # ArchiveStatus
+    if ($m.PSObject.Properties.Name -contains "ArchiveStatus") {
+      $a = [string]$m.ArchiveStatus
+      if ([string]::IsNullOrWhiteSpace($a)) {
+        $archiveUnknown++
+      } elseif ($a -eq "None") {
+        $archiveDisabledOrNone++
+      } else {
+        $archiveEnabled++
+      }
+    } else {
+      $archiveUnknown++
+    }
+
+    # LitigationHoldEnabled
+    if ($m.PSObject.Properties.Name -contains "LitigationHoldEnabled") {
+      if ($m.LitigationHoldEnabled -eq $true) {
+        $lhEnabled++
+      } elseif ($m.LitigationHoldEnabled -eq $false) {
+        $lhDisabled++
+      } else {
+        $lhUnknown++
+      }
+    } else {
+      $lhUnknown++
+    }
+  }
+
+  $out = [pscustomobject]@{
+    archive = [pscustomobject]@{
+      enabled = [int]$archiveEnabled
+      disabledOrNone = [int]$archiveDisabledOrNone
+      unknown = [int]$archiveUnknown
+    }
+    litigationHold = [pscustomobject]@{
+      enabled = [int]$lhEnabled
+      disabled = [int]$lhDisabled
+      unknown = [int]$lhUnknown
+    }
+  }
+
+  $out | ConvertTo-Json -Depth 6 -Compress
+}
+finally {
+  try { Disconnect-ExchangeOnline -Confirm:$false | Out-Null } catch { }
+}
+`.trim();
+}
+
 type MailboxUsageDetailFullRow = {
   // NOTE: These fields can be PII. Only include in FULL profile artefact.
   userPrincipalName?: string;
@@ -286,6 +373,10 @@ type MailboxUsageDetailFullRow = {
  * - Emits observed checks + safe artefact
  * - Emits full artefact in full mode (may include PII derived from Graph report CSV)
  * - No findings in v1
+ *
+ * Tier-2 (EXO, best-effort):
+ * - Counts only (no PII): archive mailbox presence + litigation hold enabled
+ * - Failure must not change overall completeness (Option A)
  */
 export const exchangeMailboxesInventoryCollector: Collector = {
   id: "exchange.mailboxes.inventory",
@@ -330,31 +421,41 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       disabled: null as number | null
     };
 
+    // Tier-2 counts only (no PII)
+    const mailboxFeatures: {
+      archive: { enabled: number | null; disabledOrNone: number | null; unknown: number | null };
+      litigationHold: { enabled: number | null; disabled: number | null; unknown: number | null };
+    } = {
+      archive: { enabled: null, disabledOrNone: null, unknown: null },
+      litigationHold: { enabled: null, disabled: null, unknown: null }
+    };
+
     // FULL-only optional detail export (may contain PII)
     let mailboxUsageDetailFull: MailboxUsageDetailFullRow[] | null = null;
     const MAX_FULL_DETAIL_ROWS = Number(process.env.EXO_MAILBOXES_MAX_DETAIL_ROWS ?? 2000);
+
+    // Resolve EXO connection inputs once
+    const appId = requireEnv("EXO_APP_ID");
+    const organization =
+      process.env.EXO_ORGANIZATION?.trim() ||
+      (typeof ctx.tenant?.primaryDomain === "string" && ctx.tenant.primaryDomain.trim().length > 0
+        ? ctx.tenant.primaryDomain.trim()
+        : null);
+
+    if (!organization) {
+      throw new Error(
+        "[exchange.mailboxes.inventory] Missing EXO_ORGANIZATION and tenant.primaryDomain; cannot connect to Exchange Online"
+      );
+    }
+
+    const certThumbprint = requireEnv("EXO_CERT_THUMBPRINT");
 
     // -------------------------
     // Slice: EXO mailbox inventory (type + state)
     // -------------------------
     slicesAttempted.push("mailboxes");
 
-    try {
-      const appId = requireEnv("EXO_APP_ID");
-      const organization =
-        process.env.EXO_ORGANIZATION?.trim() ||
-        (typeof ctx.tenant?.primaryDomain === "string" && ctx.tenant.primaryDomain.trim().length > 0
-          ? ctx.tenant.primaryDomain.trim()
-          : null);
-
-      if (!organization) {
-        throw new Error(
-          "[exchange.mailboxes.inventory] Missing EXO_ORGANIZATION and tenant.primaryDomain; cannot connect to Exchange Online"
-        );
-      }
-
-      const certThumbprint = requireEnv("EXO_CERT_THUMBPRINT");
-
+    {
       const script = buildExoMailboxCountsScript({
         appId,
         organization,
@@ -367,8 +468,6 @@ export const exchangeMailboxesInventoryCollector: Collector = {
       });
 
       if (!res.ok) {
-        // EXO failures are treated as completeness gaps only if they look like auth/permission problems.
-        // Otherwise, treat as hard failure (throw) so job status becomes error and we can investigate.
         const stderr = (res.details.stderr ?? "").toLowerCase();
 
         if (
@@ -404,9 +503,57 @@ export const exchangeMailboxesInventoryCollector: Collector = {
 
         slicesCompleted.push("mailboxes");
       }
-    } catch (e: unknown) {
-      // Missing env vars or other worker misconfig should fail the job.
-      throw e;
+    }
+
+    // -------------------------
+    // Slice (Tier-2, best-effort): EXO mailbox features (archive + litigation hold) — counts only
+    // Does NOT affect overall completeness (Option A)
+    // -------------------------
+    slicesAttempted.push("mailboxFeatures");
+
+    {
+      const script = buildExoMailboxFeaturesCountsScript({
+        appId,
+        organization,
+        certThumbprint
+      });
+
+      const res = await runPwshJson<ExoMailboxFeaturesCounts>({
+        script,
+        timeoutMs: 240_000
+      });
+
+      if (!res.ok) {
+        const stderr = (res.details.stderr ?? "").toLowerCase();
+
+        if (
+          stderr.includes("unauthorized") ||
+          stderr.includes("forbidden") ||
+          stderr.includes("access denied") ||
+          stderr.includes("is not recognized") ||
+          stderr.includes("connect-exchangeonline")
+        ) {
+          permissionDenied.push("exo:mailboxes:features");
+          notes.push(
+            "Tier-2 EXO mailbox feature counts (archive/litigation hold) could not be collected. This is best-effort and does not affect overall completeness."
+          );
+          // Option A: do not change isComplete
+        } else {
+          throw new Error(
+            `[exchange.mailboxes.inventory] EXO pwsh failed (tier2 mailboxFeatures): ${res.error}\nstdout=${res.details.stdout}\nstderr=${res.details.stderr}`
+          );
+        }
+      } else {
+        mailboxFeatures.archive.enabled = res.value.archive.enabled;
+        mailboxFeatures.archive.disabledOrNone = res.value.archive.disabledOrNone;
+        mailboxFeatures.archive.unknown = res.value.archive.unknown;
+
+        mailboxFeatures.litigationHold.enabled = res.value.litigationHold.enabled;
+        mailboxFeatures.litigationHold.disabled = res.value.litigationHold.disabled;
+        mailboxFeatures.litigationHold.unknown = res.value.litigationHold.unknown;
+
+        slicesCompleted.push("mailboxFeatures");
+      }
     }
 
     // -------------------------
@@ -481,7 +628,9 @@ export const exchangeMailboxesInventoryCollector: Collector = {
 
       if (includeSensitive) {
         mailboxUsageDetailFull = fullRows;
-        if (rows.length > MAX_FULL_DETAIL_ROWS) {
+
+        // Truncation should reflect what we actually emitted (not raw CSV row count)
+        if (fullRows.length >= MAX_FULL_DETAIL_ROWS) {
           truncated = true;
           notes.push(
             `Full mailbox usage detail export capped at ${MAX_FULL_DETAIL_ROWS} rows (EXO_MAILBOXES_MAX_DETAIL_ROWS).`
@@ -501,6 +650,7 @@ export const exchangeMailboxesInventoryCollector: Collector = {
     }
 
     // Completeness: require both slices for “complete”
+    // NOTE: Tier-2 mailboxFeatures is best-effort and intentionally NOT part of completeness gating (Option A)
     const requiredSlices = ["mailboxes", "mailboxUsageDetail"];
     for (const s of requiredSlices) {
       if (!slicesCompleted.includes(s)) isComplete = false;
@@ -544,6 +694,14 @@ export const exchangeMailboxesInventoryCollector: Collector = {
             dataProfile
           },
           references: []
+        },
+        {
+          checkId: "EXO_MAILBOXES_OBS_003",
+          data: {
+            mailboxFeatures,
+            dataProfile
+          },
+          references: []
         }
       ]
     });
@@ -568,7 +726,9 @@ export const exchangeMailboxesInventoryCollector: Collector = {
           ...summary,
           dataProfile,
           fullExported
-        }
+        },
+        // Tier-2 counts only (no PII)
+        mailboxFeatures
       },
       null,
       2
@@ -608,6 +768,8 @@ export const exchangeMailboxesInventoryCollector: Collector = {
             dataProfile,
             fullExported
           },
+          // Tier-2 counts only (no PII)
+          mailboxFeatures,
           // Full-only detail: derived from Graph reports CSV
           mailboxUsageDetail: mailboxUsageDetailFull ?? []
         },
@@ -633,7 +795,9 @@ export const exchangeMailboxesInventoryCollector: Collector = {
         truncated,
         fullExported,
         totalMailboxes,
-        nearLimit40to50GB: sizeBuckets["40to50GB"]
+        nearLimit40to50GB: sizeBuckets["40to50GB"],
+        archiveEnabledCount: mailboxFeatures.archive.enabled,
+        litigationHoldEnabledCount: mailboxFeatures.litigationHold.enabled
       },
       artefacts
     };
