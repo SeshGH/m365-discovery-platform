@@ -172,21 +172,11 @@ export function getDemoHtml(): string {
       margin-left: 8px;
       color: #374151;
       vertical-align: middle;
+      word-break: break-all;
     }
     .row { display:flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .links a { color: #0b5bd3; text-decoration: none; }
     .links a:hover { text-decoration: underline; }
-    pre {
-      margin-top: 12px;
-      background: var(--codebg);
-      color: var(--codefg);
-      padding: 12px;
-      border-radius: 12px;
-      overflow: auto;
-      max-height: 340px;
-      font-size: 12.5px;
-      line-height: 1.35;
-    }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
     th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--border); vertical-align: top; }
     th { color: #374151; font-weight: 700; }
@@ -197,11 +187,7 @@ export function getDemoHtml(): string {
     .muted { color: var(--muted); }
     .jsoncell { max-width: 520px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
 
-    .divider {
-      height: 1px;
-      background: var(--border);
-      margin: 16px 0;
-    }
+    .divider { height: 1px; background: var(--border); margin: 16px 0; }
 
     details {
       border: 1px solid var(--border);
@@ -259,6 +245,68 @@ export function getDemoHtml(): string {
     .exportRow a.buttonLink[aria-disabled="true"] {
       opacity: 0.55;
       pointer-events: none;
+    }
+
+    .runHeaderLine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .toast { margin-left: 10px; font-size: 12px; color: var(--muted); }
+    .pollMeta { margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+    /* Summary tiles */
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .tile {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+      min-height: 86px;
+    }
+    .tile .kicker {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .tile .title {
+      margin-top: 6px;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .tile .subline {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #fff;
+      font-weight: 700;
+      font-size: 11.5px;
+      color: #374151;
+    }
+    .tile.span3 { grid-column: span 3; }
+    .tile.span4 { grid-column: span 4; }
+    .tile.span6 { grid-column: span 6; }
+
+    @media (max-width: 980px) {
+      .tile.span3, .tile.span4, .tile.span6 { grid-column: span 12; }
+      .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -331,18 +379,14 @@ export function getDemoHtml(): string {
     <div class="card" id="statusCard" style="display:none;">
       <div class="row" style="align-items: center;">
         <div>
-          <div style="font-weight:700;">Run <span class="pill" id="runIdPill"></span></div>
-          <div class="muted">Live status below (polling).</div>
-
-          <div style="margin-top: 10px;">
-            <div style="font-weight:700; font-size: 13px;">Run summary exports</div>
-            <div class="muted" style="margin-top: 4px;">These appear once report jobs finish.</div>
-            <div class="exportRow">
-              <a id="runSummaryXlsx" class="buttonLink primaryLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download XLSX</a>
-              <a id="runSummaryCsv" class="buttonLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download CSV</a>
-              <span id="runSummaryStatus" class="muted">Not ready yet.</span>
-            </div>
+          <div class="runHeaderLine" style="font-weight:700;">
+            <span>Run</span>
+            <span class="pill" id="runIdPill"></span>
+            <button class="small" id="copyRunId" title="Copy runId to clipboard">Copy</button>
+            <span class="toast" id="copyToast" style="display:none;"></span>
           </div>
+
+          <div class="pollMeta" id="pollStatus">Polling: off</div>
         </div>
 
         <details style="min-width: 280px;">
@@ -352,6 +396,84 @@ export function getDemoHtml(): string {
           </summary>
           <div class="links" id="links" style="margin-top: 8px;"></div>
         </details>
+      </div>
+
+      <!-- Summary tiles (restored) -->
+      <div class="tiles" aria-label="Run summary tiles">
+        <div class="tile span3">
+          <div class="kicker">
+            <span>Run</span>
+            <span class="chip" id="tileRunStatus">—</span>
+          </div>
+          <div class="title" id="tileJobsDone">—</div>
+          <div class="subline">
+            <span class="chip" id="tileJobsQueued">queued: —</span>
+            <span class="chip" id="tileJobsFailed">failed: —</span>
+          </div>
+        </div>
+
+        <div class="tile span3">
+          <div class="kicker">
+            <span>Entra Users</span>
+            <span class="chip" id="tileUsersProfile">—</span>
+          </div>
+          <div class="title" id="tileUsersTotal">—</div>
+          <div class="subline">
+            <span class="chip" id="tileUsersEnabled">enabled: —</span>
+            <span class="chip" id="tileUsersGuests">guests: —</span>
+          </div>
+        </div>
+
+        <div class="tile span3">
+          <div class="kicker">
+            <span>Mailboxes</span>
+            <span class="chip" id="tileMbxProfile">—</span>
+          </div>
+          <div class="title" id="tileMbxTotal">—</div>
+          <div class="subline">
+            <span class="chip" id="tileMbxEnabled">enabled: —</span>
+            <span class="chip" id="tileMbxOver50">>50GB: —</span>
+          </div>
+        </div>
+
+        <div class="tile span3">
+          <div class="kicker">
+            <span>Enterprise Apps</span>
+            <span class="chip" id="tileAppsTrunc">—</span>
+          </div>
+          <div class="title" id="tileAppsTotal">—</div>
+          <div class="subline">
+            <span class="chip" id="tileAppsScanned">scanned: —</span>
+            <span class="chip" id="tileAppsRisky">risky: —</span>
+          </div>
+        </div>
+
+        <div class="tile span12" style="padding: 12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap: wrap;">
+            <div>
+              <div class="kicker" style="justify-content:flex-start; gap: 8px;">
+                <span>Conditional Access</span>
+                <span class="chip" id="tileCaProfile">—</span>
+              </div>
+              <div class="subline" style="margin-top: 8px;">
+                <span class="chip" id="tileCaTotal">total: —</span>
+                <span class="chip" id="tileCaEnabled">enabled: —</span>
+                <span class="chip" id="tileCaMfa">with MFA: —</span>
+                <span class="chip" id="tileCaAllUsers">target all users: —</span>
+              </div>
+            </div>
+
+            <div style="min-width: 320px;">
+              <div style="font-weight:700; font-size: 13px;">Run summary exports</div>
+              <div class="muted" style="margin-top: 4px;">These appear once report jobs finish.</div>
+              <div class="exportRow">
+                <a id="runSummaryXlsx" class="buttonLink primaryLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download XLSX</a>
+                <a id="runSummaryCsv" class="buttonLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download CSV</a>
+                <span id="runSummaryStatus" class="muted">Not ready yet.</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Default collapsed now: no "open" attribute -->
@@ -422,6 +544,8 @@ export function getDemoHtml(): string {
 
   const DEMO_MODULE_KEYS = ${moduleKeysJson};
 
+  const POLL_INTERVAL_MS = 500;
+
   let pollTimer = null;
   let currentRunId = null;
 
@@ -435,6 +559,140 @@ export function getDemoHtml(): string {
     \`<div><a href="\${href}" target="_blank" rel="noreferrer">\${text}</a></div>\`;
 
   const safe = (v) => (v === null || v === undefined) ? "" : String(v);
+
+  const setPollStatus = (text) => {
+    const el = $("pollStatus");
+    if (el) el.textContent = text;
+  };
+
+  const showToast = (text) => {
+    const el = $("copyToast");
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = "inline";
+    setTimeout(() => {
+      try { el.style.display = "none"; } catch { /* ignore */ }
+    }, 1200);
+  };
+
+  const copyTextToClipboard = async (text) => {
+    try {
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* ignore */ }
+
+    // Fallback
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "true");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const setTile = (id, text) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+
+  const firstObserved = (observed, checkId) => {
+    if (!Array.isArray(observed)) return null;
+    for (const o of observed) {
+      if (o && o.checkId === checkId) return o;
+    }
+    return null;
+  };
+
+  const renderSummaryTiles = (run, jobs, observed, artefacts) => {
+    // Run / Jobs tile
+    const listJobs = Array.isArray(jobs) ? jobs : [];
+    const totalJobs = listJobs.length;
+
+    let done = 0;
+    let queued = 0;
+    let failed = 0;
+
+    for (const j of listJobs) {
+      const s = j && j.status;
+      if (s === "succeeded") done += 1;
+      else if (s === "failed") failed += 1;
+      else queued += 1;
+    }
+
+    setTile("tileRunStatus", run && run.status ? String(run.status) : "—");
+    setTile("tileJobsDone", totalJobs ? \`\${done}/\${totalJobs}\` : "—");
+    setTile("tileJobsQueued", \`queued: \${queued}\`);
+    setTile("tileJobsFailed", \`failed: \${failed}\`);
+
+    // Entra Users
+    const usersObs = firstObserved(observed, "ENTRA_USERS_OBS_001");
+    const u = usersObs && usersObs.data ? usersObs.data : null;
+    const usersProfile = u && (u.profile || u.dataProfile) ? String(u.profile || u.dataProfile) : "—";
+    setTile("tileUsersProfile", usersProfile);
+
+    const usersTotal = u && typeof u.totalUsers === "number" ? u.totalUsers : null;
+    setTile("tileUsersTotal", usersTotal === null ? "—" : String(usersTotal));
+    setTile("tileUsersEnabled", "enabled: " + (typeof u?.enabledUsers === "number" ? u.enabledUsers : "—"));
+    setTile("tileUsersGuests", "guests: " + (typeof u?.guestUsers === "number" ? u.guestUsers : "—"));
+
+    // Mailboxes
+    const mbxObs = firstObserved(observed, "EXO_MAILBOXES_OBS_001");
+    const m = mbxObs && mbxObs.data ? mbxObs.data : null;
+    const mbxProfile = m && (m.profile || m.dataProfile) ? String(m.profile || m.dataProfile) : "—";
+    setTile("tileMbxProfile", mbxProfile);
+
+    const mbxTotal = m && typeof m.totalMailboxes === "number" ? m.totalMailboxes : null;
+    setTile("tileMbxTotal", mbxTotal === null ? "—" : String(mbxTotal));
+    setTile("tileMbxEnabled", "enabled: " + (typeof m?.byState?.enabled === "number" ? m.byState.enabled : "—"));
+    setTile("tileMbxOver50", ">50GB: " + (typeof m?.sizeBuckets?.over50GB === "number" ? m.sizeBuckets.over50GB : "—"));
+
+    // Enterprise Apps
+    const appsObs = firstObserved(observed, "ENTRA_EAP_OBS_001");
+    const a = appsObs && appsObs.data ? appsObs.data : null;
+
+    const appsTrunc = a && typeof a.truncated === "boolean" ? (a.truncated ? "truncated" : "complete") : "—";
+    setTile("tileAppsTrunc", appsTrunc);
+
+    const appsTotal =
+      a && typeof a.totalEnterpriseApps === "number"
+        ? a.totalEnterpriseApps
+        : a && typeof a.totalApps === "number"
+          ? a.totalApps
+          : null;
+
+    setTile("tileAppsTotal", appsTotal === null ? "—" : String(appsTotal));
+    setTile("tileAppsScanned", "scanned: " + (typeof a?.scannedApps === "number" ? a.scannedApps : "—"));
+
+    const risky =
+      typeof a?.riskyApps === "number"
+        ? a.riskyApps
+        : typeof a?.riskyAppsCount === "number"
+          ? a.riskyAppsCount
+          : "—";
+    setTile("tileAppsRisky", "risky: " + risky);
+
+    // Conditional Access
+    const caObs = firstObserved(observed, "ENTRA_CA_OBS_001");
+    const c = caObs && caObs.data ? caObs.data : null;
+
+    const caProfile = c && (c.profile || c.dataProfile) ? String(c.profile || c.dataProfile) : "—";
+    setTile("tileCaProfile", caProfile);
+
+    setTile("tileCaTotal", "total: " + (typeof c?.totalPolicies === "number" ? c.totalPolicies : "—"));
+    setTile("tileCaEnabled", "enabled: " + (typeof c?.enabledPolicies === "number" ? c.enabledPolicies : "—"));
+    setTile("tileCaMfa", "with MFA: " + (typeof c?.policiesWithMfaGrantControl === "number" ? c.policiesWithMfaGrantControl : "—"));
+    setTile("tileCaAllUsers", "target all users: " + (typeof c?.policiesTargetingAllUsers === "number" ? c.policiesTargetingAllUsers : "—"));
+  };
 
   const renderJobs = (jobs) => {
     const rows = jobs.map(j => {
@@ -542,6 +800,7 @@ export function getDemoHtml(): string {
   const stopPolling = () => {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = null;
+    setPollStatus("Polling: off");
   };
 
   const setLinksForRun = (runId) => {
@@ -562,10 +821,14 @@ export function getDemoHtml(): string {
 
     // reset summary links until next artefact poll
     setRunSummaryLinks([]);
+
+    // reset tiles until first poll
+    renderSummaryTiles(null, [], [], []);
   };
 
   const startPolling = () => {
     stopPolling();
+    setPollStatus("Polling every " + (POLL_INTERVAL_MS / 1000) + "s");
     pollTimer = setInterval(async () => {
       if (!currentRunId) return;
 
@@ -588,23 +851,35 @@ export function getDemoHtml(): string {
           }
         } catch { /* ignore */ }
 
+        const jobsList = normalizeList(jobs);
         const artefactList = normalizeList(artefacts);
 
-        renderJobs(normalizeList(jobs));
+        renderJobs(jobsList);
         renderArtefacts(artefactList);
         renderObserved(observed);
 
         // Update run-summary export buttons near the top
         setRunSummaryLinks(artefactList);
 
+        // Restore overview tiles
+        renderSummaryTiles(run, jobsList, observed, artefactList);
+
         if (run && (run.status === "succeeded" || run.status === "failed")) {
           stopPolling();
+          setPollStatus("Polling stopped (run " + run.status + ").");
         }
       } catch (e) {
         console.warn("poll failed", e);
       }
-    }, 500);
+    }, POLL_INTERVAL_MS);
   };
+
+  $("copyRunId").addEventListener("click", async () => {
+    const runId = $("runIdPill").textContent || "";
+    if (!runId) return;
+    const ok = await copyTextToClipboard(runId);
+    showToast(ok ? "Copied." : "Copy failed.");
+  });
 
   $("clear").addEventListener("click", () => {
     stopPolling();
@@ -617,8 +892,9 @@ export function getDemoHtml(): string {
     if ($("observedBody")) $("observedBody").innerHTML = "";
     if ($("existingRunId")) $("existingRunId").value = "";
 
-    // reset summary links
+    // reset summary links/tiles
     setRunSummaryLinks([]);
+    renderSummaryTiles(null, [], [], []);
   });
 
   $("loadRun").addEventListener("click", async () => {
