@@ -467,33 +467,28 @@ export function getDemoHtml(): string {
           </div>
         </div>
 
-        <div class="tile span12" style="padding: 12px;">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap: wrap;">
-            <div>
-              <div class="kicker" style="justify-content:flex-start; gap: 8px;">
-                <span>Conditional Access</span>
-                <span class="chip" id="tileCaProfile">—</span>
-              </div>
-              <div class="subline" style="margin-top: 8px;">
-                <span class="chip" id="tileCaTotal">total: —</span>
-                <span class="chip" id="tileCaEnabled">enabled: —</span>
-                <span class="chip" id="tileCaMfa">with MFA: —</span>
-                <span class="chip" id="tileCaAllUsers">target all users: —</span>
-              </div>
-            </div>
+        <div class="tile span6">
+  <div class="kicker" style="justify-content:flex-start; gap: 8px;">
+    <span>Conditional Access</span>
+    <span class="chip" id="tileCaProfile">—</span>
+  </div>
+  <div class="subline" style="margin-top: 10px;">
+    <span class="chip" id="tileCaTotal">total: —</span>
+    <span class="chip" id="tileCaEnabled">enabled: —</span>
+    <span class="chip" id="tileCaMfa">with MFA: —</span>
+    <span class="chip" id="tileCaAllUsers">target all users: —</span>
+  </div>
+</div>
 
-            <div style="min-width: 320px;">
-              <div style="font-weight:700; font-size: 13px;">Run summary exports</div>
-              <div class="muted" style="margin-top: 4px;">These appear once report jobs finish.</div>
-              <div class="exportRow">
-                <a id="runSummaryXlsx" class="buttonLink primaryLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download XLSX</a>
-                <a id="runSummaryCsv" class="buttonLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download CSV</a>
-                <span id="runSummaryStatus" class="muted">Not ready yet.</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+<div class="tile span6">
+  <div style="font-weight:800; font-size: 12px; color: var(--muted);">Run summary exports</div>
+  <div class="muted" style="margin-top: 6px;">These appear once report jobs finish.</div>
+  <div class="exportRow" style="margin-top: 10px;">
+    <a id="runSummaryXlsx" class="buttonLink primaryLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download XLSX</a>
+    <a id="runSummaryCsv" class="buttonLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download CSV</a>
+    <span id="runSummaryStatus" class="muted">Not ready yet.</span>
+  </div>
+</div>
 
       <!-- Default collapsed now: no "open" attribute -->
       <details style="margin-top: 14px;">
