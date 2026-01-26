@@ -2,6 +2,59 @@
 import Link from "next/link";
 import { getTenantAuth, listRuns } from "@/lib/api";
 
+function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
+  return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const tone =
+    status === "succeeded"
+      ? { bg: "#e7f7ed", fg: "#116329" }
+      : status === "failed"
+        ? { bg: "#fde7e9", fg: "#a4262c" }
+        : status === "running"
+          ? { bg: "#e8f0fe", fg: "#1a73e8" }
+          : status === "queued"
+            ? { bg: "#f1f3f4", fg: "#444" }
+            : { bg: "#eee", fg: "#444" };
+
+  return (
+    <span
+      style={{
+        background: tone.bg,
+        color: tone.fg,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        whiteSpace: "nowrap"
+      }}
+    >
+      {status}
+    </span>
+  );
+}
+
+function ProfileBadge({ profile }: { profile: string }) {
+  const tone =
+    profile === "full"
+      ? { bg: "#fff4d6", fg: "#8a5a00" }
+      : { bg: "#f1f3f4", fg: "#444" };
+
+  return (
+    <span
+      style={{
+        background: tone.bg,
+        color: tone.fg,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12
+      }}
+    >
+      {profile}
+    </span>
+  );
+}
+
 export default async function TenantPage({
   params
 }: {
@@ -14,7 +67,12 @@ export default async function TenantPage({
     listRuns()
   ]);
 
-  const tenantRuns = runs.filter((r) => r.tenant?.id === tenantId);
+  const tenantRunsAll = runs
+    .filter((r) => r.tenant?.id === tenantId)
+    .sort(sortByCreatedDesc);
+
+  const maxRows = 20;
+  const tenantRuns = tenantRunsAll.slice(0, maxRows);
 
   return (
     <main>
@@ -63,7 +121,8 @@ export default async function TenantPage({
 
       <h3 style={{ marginTop: 0 }}>Recent runs</h3>
       <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Source: <code>GET /runs</code> (filtered client-side).
+        Source: <code>GET /runs</code> (filtered client-side).{" "}
+        Showing {tenantRuns.length} of {tenantRunsAll.length}.
       </p>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
@@ -88,9 +147,15 @@ export default async function TenantPage({
                     {r.triggeredBy ?? "—"}
                   </div>
                 </td>
-                <td style={{ padding: 10 }}>{r.status}</td>
-                <td style={{ padding: 10 }}>{r.dataProfile}</td>
-                <td style={{ padding: 10 }}>{r.createdAt}</td>
+                <td style={{ padding: 10 }}>
+                  <StatusBadge status={r.status} />
+                </td>
+                <td style={{ padding: 10 }}>
+                  <ProfileBadge profile={r.dataProfile} />
+                </td>
+                <td style={{ padding: 10 }}>
+                  <span style={{ opacity: 0.85 }}>{r.createdAt}</span>
+                </td>
                 <td style={{ padding: 10, fontSize: 12 }}>
                   jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
                 </td>
