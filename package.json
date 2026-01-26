@@ -5,6 +5,7 @@
   "scripts": {
     "dev:api": "pnpm --filter @acme/api dev",
     "dev:worker": "pnpm --filter @acme/worker dev",
+    "dev:portal": "pnpm --filter @acme/portal dev",
     "dev:stop:api": "node scripts/kill-port.mjs 8080",
     "dev:stop:worker": "node scripts/kill-worker.mjs",
     "dev:stop": "pnpm dev:stop:api && pnpm dev:stop:worker"
