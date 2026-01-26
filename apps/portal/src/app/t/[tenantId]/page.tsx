@@ -2,10 +2,18 @@
 import Link from "next/link";
 import { getTenantAuth, listRuns } from "@/lib/api";
 
-export default async function TenantPage({ params }: { params: { tenantId: string } }) {
-  const tenantId = params.tenantId;
+export default async function TenantPage({
+  params
+}: {
+  params: Promise<{ tenantId: string }>;
+}) {
+  const { tenantId } = await params;
 
-  const [auth, runs] = await Promise.all([getTenantAuth(tenantId), listRuns()]);
+  const [auth, runs] = await Promise.all([
+    getTenantAuth(tenantId),
+    listRuns()
+  ]);
+
   const tenantRuns = runs.filter((r) => r.tenant?.id === tenantId);
 
   return (
@@ -16,7 +24,9 @@ export default async function TenantPage({ params }: { params: { tenantId: strin
 
       <h2 style={{ marginTop: 0 }}>
         {auth.tenant.displayName ?? "(no display name)"}{" "}
-        <span style={{ fontSize: 14, opacity: 0.7 }}>({auth.tenant.primaryDomain})</span>
+        <span style={{ fontSize: 14, opacity: 0.7 }}>
+          ({auth.tenant.primaryDomain})
+        </span>
       </h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -24,6 +34,7 @@ export default async function TenantPage({ params }: { params: { tenantId: strin
           <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Tenant</h3>
           <div style={{ fontSize: 12, opacity: 0.8 }}>ID</div>
           <div><code>{auth.tenant.id}</code></div>
+
           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Tenant GUID</div>
           <div><code>{auth.tenant.tenantGuid}</code></div>
         </div>
@@ -32,11 +43,11 @@ export default async function TenantPage({ params }: { params: { tenantId: strin
           <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Auth</h3>
           {auth.auth ? (
             <>
-              <div>
-                Status: <strong>{String(auth.auth.status)}</strong>
-              </div>
+              <div>Status: <strong>{String(auth.auth.status)}</strong></div>
               {auth.auth.lastError ? (
-                <div style={{ color: "#a00", marginTop: 6 }}>{auth.auth.lastError}</div>
+                <div style={{ color: "#a00", marginTop: 6 }}>
+                  {auth.auth.lastError}
+                </div>
               ) : (
                 <div style={{ opacity: 0.7, marginTop: 6 }}>No errors</div>
               )}
@@ -52,7 +63,7 @@ export default async function TenantPage({ params }: { params: { tenantId: strin
 
       <h3 style={{ marginTop: 0 }}>Recent runs</h3>
       <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Source: <code>GET /runs</code> (filtered client-side to this tenant).
+        Source: <code>GET /runs</code> (filtered client-side).
       </p>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
@@ -70,26 +81,28 @@ export default async function TenantPage({ params }: { params: { tenantId: strin
             {tenantRuns.map((r) => (
               <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
                 <td style={{ padding: 10 }}>
-                  <Link href={`/t/${tenantId}/runs/${r.id}`} style={{ textDecoration: "none" }}>
+                  <Link href={`/t/${tenantId}/runs/${r.id}`}>
                     <code>{r.id}</code>
                   </Link>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>{r.triggeredBy ?? "—"}</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {r.triggeredBy ?? "—"}
+                  </div>
                 </td>
                 <td style={{ padding: 10 }}>{r.status}</td>
                 <td style={{ padding: 10 }}>{r.dataProfile}</td>
                 <td style={{ padding: 10 }}>{r.createdAt}</td>
                 <td style={{ padding: 10, fontSize: 12 }}>
-                  jobs: {r.counts.jobs} · findings: {r.counts.findings} · artefacts: {r.counts.artefacts}
+                  jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
                 </td>
               </tr>
             ))}
-            {tenantRuns.length === 0 ? (
+            {tenantRuns.length === 0 && (
               <tr>
                 <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
-                  No runs found for this tenant yet.
+                  No runs found for this tenant.
                 </td>
               </tr>
-            ) : null}
+            )}
           </tbody>
         </table>
       </div>

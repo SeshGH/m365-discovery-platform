@@ -85,9 +85,9 @@ function Badge({ badge }: { badge: CompletenessBadge }) {
 export default async function RunPage({
   params
 }: {
-  params: { tenantId: string; runId: string };
+  params: Promise<{ tenantId: string; runId: string }>;
 }) {
-  const { tenantId, runId } = params;
+  const { tenantId, runId } = await params;
 
   const [run, jobs, artefacts, observed, findings] = await Promise.all([
     getRun(runId),
@@ -223,7 +223,11 @@ export default async function RunPage({
                 <td style={{ padding: 10 }}>{j.status}</td>
                 <td style={{ padding: 10 }}>{j.attempts}</td>
                 <td style={{ padding: 10, fontSize: 12 }}>
-                  {j.lastError ? <span style={{ color: "#a00" }}>{j.lastError}</span> : <span style={{ opacity: 0.7 }}>—</span>}
+                  {j.lastError ? (
+                    <span style={{ color: "#a00" }}>{j.lastError}</span>
+                  ) : (
+                    <span style={{ opacity: 0.7 }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
