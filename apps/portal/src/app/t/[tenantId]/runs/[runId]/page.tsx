@@ -6,7 +6,9 @@ import {
   listRunArtefacts,
   listRunObservedChecks,
   listRunFindings,
-  type ObservedCheckItem
+  type ObservedCheckItem,
+  type JobListItem,
+  type ArtefactItem
 } from "@/lib/api";
 
 function smallTime(iso: string | null | undefined) {
@@ -23,40 +25,25 @@ function safeString(v: unknown): string {
   }
 }
 
-type CompletenessBadge = {
-  label: string;
-  tone: "ok" | "warn" | "bad" | "muted";
-};
-
-function badgeForObservedChecks(observed: ObservedCheckItem[]): CompletenessBadge {
-  // Prefer explicit completeness signals if present (common pattern in your registry).
-  // We don't assume specific checkIds yet; we scan for known fields.
-  let sawPermissionDenied = false;
-  let sawTruncated = false;
-  let sawIncomplete = false;
-
-  for (const oc of observed) {
-    const d = oc.data as any;
-    if (d && typeof d === "object") {
-      if (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) sawPermissionDenied = true;
-      if (d.truncated === true) sawTruncated = true;
-      if (d.isComplete === false) sawIncomplete = true;
-      if (d.completeness && typeof d.completeness === "object") {
-        if (Array.isArray(d.completeness.permissionDenied) && d.completeness.permissionDenied.length > 0)
-          sawPermissionDenied = true;
-        if (d.completeness.truncated === true) sawTruncated = true;
-        if (d.completeness.isComplete === false) sawIncomplete = true;
-      }
-    }
-  }
-
-  if (sawPermissionDenied) return { label: "permission-denied", tone: "warn" };
-  if (sawTruncated) return { label: "truncated", tone: "warn" };
-  if (sawIncomplete) return { label: "partial", tone: "warn" };
-  return { label: "ok", tone: "ok" };
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return String(bytes);
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)} GB`;
 }
 
-function Badge({ badge }: { badge: CompletenessBadge }) {
+type BadgeTone = "ok" | "warn" | "bad" | "muted";
+
+type BadgeModel = {
+  label: string;
+  tone: BadgeTone;
+};
+
+function Badge({ badge }: { badge: BadgeModel }) {
   const bg =
     badge.tone === "ok"
       ? "#e7f7ed"
@@ -76,10 +63,174 @@ function Badge({ badge }: { badge: CompletenessBadge }) {
           : "#444";
 
   return (
-    <span style={{ background: bg, color: fg, padding: "2px 8px", borderRadius: 999, fontSize: 12 }}>
+    <span
+      style={{
+        background: bg,
+        color: fg,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        lineHeight: "16px",
+        whiteSpace: "nowrap"
+      }}
+    >
       {badge.label}
     </span>
   );
+}
+
+/** -----------------------------
+ *  Completeness signals
+ *  ----------------------------*/
+
+function badgeForObservedChecks(observed: ObservedCheckItem[]): BadgeModel {
+  let sawPermissionDenied = false;
+  let sawTruncated = false;
+  let sawIncomplete = false;
+
+  for (const oc of observed) {
+    const d = oc.data as any;
+    if (d && typeof d === "object") {
+      if (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) sawPermissionDenied = true;
+      if (d.truncated === true) sawTruncated = true;
+      if (d.isComplete === false) sawIncomplete = true;
+
+      if (d.completeness && typeof d.completeness === "object") {
+        if (Array.isArray(d.completeness.permissionDenied) && d.completeness.permissionDenied.length > 0)
+          sawPermissionDenied = true;
+        if (d.completeness.truncated === true) sawTruncated = true;
+        if (d.completeness.isComplete === false) sawIncomplete = true;
+      }
+    }
+  }
+
+  if (sawPermissionDenied) return { label: "permission-denied", tone: "warn" };
+  if (sawTruncated) return { label: "truncated", tone: "warn" };
+  if (sawIncomplete) return { label: "partial", tone: "warn" };
+  return { label: "ok", tone: "ok" };
+}
+
+function extractSignals(observed: ObservedCheckItem[]) {
+  const permissionDenied: string[] = [];
+  const truncatedChecks: string[] = [];
+  const incompleteChecks: string[] = [];
+
+  for (const oc of observed) {
+    const d = oc.data as any;
+    if (!d || typeof d !== "object") continue;
+
+    const pd = (Array.isArray(d.permissionDenied) ? d.permissionDenied : []) as unknown[];
+    for (const x of pd) if (typeof x === "string") permissionDenied.push(x);
+
+    if (d.truncated === true) truncatedChecks.push(oc.checkId);
+    if (d.isComplete === false) incompleteChecks.push(oc.checkId);
+
+    if (d.completeness && typeof d.completeness === "object") {
+      const pd2 = (Array.isArray(d.completeness.permissionDenied) ? d.completeness.permissionDenied : []) as unknown[];
+      for (const x of pd2) if (typeof x === "string") permissionDenied.push(x);
+
+      if (d.completeness.truncated === true) truncatedChecks.push(oc.checkId);
+      if (d.completeness.isComplete === false) incompleteChecks.push(oc.checkId);
+    }
+  }
+
+  const uniq = (xs: string[]) => Array.from(new Set(xs));
+
+  return {
+    permissionDenied: uniq(permissionDenied),
+    truncatedChecks: uniq(truncatedChecks),
+    incompleteChecks: uniq(incompleteChecks)
+  };
+}
+
+/** -----------------------------
+ *  Run phase & job summary
+ *  ----------------------------*/
+
+type JobSummary = {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  other: number;
+};
+
+function summarizeJobs(jobs: JobListItem[]): JobSummary {
+  const s: JobSummary = { queued: 0, running: 0, succeeded: 0, failed: 0, other: 0 };
+  for (const j of jobs) {
+    switch (j.status) {
+      case "queued":
+        s.queued++;
+        break;
+      case "running":
+        s.running++;
+        break;
+      case "succeeded":
+        s.succeeded++;
+        break;
+      case "failed":
+        s.failed++;
+        break;
+      default:
+        s.other++;
+        break;
+    }
+  }
+  return s;
+}
+
+function phaseForRun(
+  run: { status: string; startedAt: string | null; endedAt: string | null },
+  jobs: JobListItem[]
+): BadgeModel {
+  const status = String(run.status ?? "").toLowerCase();
+  const summary = summarizeJobs(jobs);
+
+  if (status === "succeeded") return { label: "phase: succeeded", tone: "ok" };
+  if (status === "failed") return { label: "phase: failed", tone: "bad" };
+
+  if (summary.running > 0) return { label: "phase: running", tone: "warn" };
+  if (run.startedAt && !run.endedAt) return { label: "phase: running", tone: "warn" };
+
+  if (run.endedAt && status !== "succeeded" && status !== "failed") return { label: "phase: ended (non-terminal)", tone: "warn" };
+
+  return { label: "phase: queued", tone: "muted" };
+}
+
+/** -----------------------------
+ *  Artefacts: reports vs raw
+ *  ----------------------------*/
+
+type ArtefactRow = {
+  id: string;
+  type: string;
+  key: string;
+  jobId: string | null;
+  sizeBytes: number;
+  createdAt: string;
+};
+
+function filenameFromKey(key: string) {
+  return key.split("/").pop() ?? key;
+}
+
+function isKnownReportFilename(filenameLower: string) {
+  return filenameLower === "run-summary.xlsx" || filenameLower === "run-summary.csv";
+}
+
+function buildArtefactLists(all: ArtefactRow[]) {
+  const reports = all.filter((a) => isKnownReportFilename(filenameFromKey(a.key).toLowerCase()));
+  const others = all.filter((a) => !isKnownReportFilename(filenameFromKey(a.key).toLowerCase()));
+
+  reports.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+
+  others.sort((a, b) => {
+    const f = filenameFromKey(a.key).localeCompare(filenameFromKey(b.key));
+    if (f !== 0) return f;
+    return (a.jobId ?? "").localeCompare(b.jobId ?? "");
+  });
+
+  return { reports, others };
 }
 
 export default async function RunPage({
@@ -89,7 +240,7 @@ export default async function RunPage({
 }) {
   const { tenantId, runId } = await params;
 
-  const [run, jobs, artefacts, observed, findings] = await Promise.all([
+  const [run, jobs, artefactsRaw, observed, findings] = await Promise.all([
     getRun(runId),
     listRunJobs(runId),
     listRunArtefacts(runId),
@@ -97,7 +248,6 @@ export default async function RunPage({
     listRunFindings(runId)
   ]);
 
-  // Tenant isolation (portal-side guardrail)
   if (run.tenant?.id !== tenantId) {
     return (
       <main>
@@ -113,6 +263,31 @@ export default async function RunPage({
   }
 
   const completeness = badgeForObservedChecks(observed);
+  const signals = extractSignals(observed);
+
+  const artefacts: ArtefactRow[] = (artefactsRaw as ArtefactItem[]).map((a) => ({
+    id: a.id,
+    type: a.type,
+    key: a.key,
+    jobId: a.jobId ?? null,
+    sizeBytes: a.sizeBytes,
+    createdAt: a.createdAt
+  }));
+
+  const { reports, others } = buildArtefactLists(artefacts);
+
+  const phase = phaseForRun(
+    { status: run.status, startedAt: run.startedAt ?? null, endedAt: run.endedAt ?? null },
+    jobs
+  );
+
+  const jobSummary = summarizeJobs(jobs);
+
+  const hasCompletenessIssues =
+    completeness.tone !== "ok" ||
+    signals.permissionDenied.length > 0 ||
+    signals.truncatedChecks.length > 0 ||
+    signals.incompleteChecks.length > 0;
 
   return (
     <main>
@@ -133,7 +308,14 @@ export default async function RunPage({
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
-              <div style={{ fontWeight: 700 }}>{run.status}</div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+                <span style={{ fontWeight: 700 }}>{run.status}</span>
+                <Badge badge={phase} />
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+                Jobs: q {jobSummary.queued} · r {jobSummary.running} · ok {jobSummary.succeeded} · fail {jobSummary.failed}
+                {jobSummary.other > 0 ? ` · other ${jobSummary.other}` : ""}
+              </div>
             </div>
           </div>
 
@@ -170,6 +352,7 @@ export default async function RunPage({
 
         <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
           <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Completeness</h3>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Badge badge={completeness} />
             <span style={{ fontSize: 13, opacity: 0.8 }}>
@@ -180,6 +363,43 @@ export default async function RunPage({
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
             Observed checks: {observed.length} · Findings: {findings.length} · Artefacts: {artefacts.length}
           </div>
+
+          {hasCompletenessIssues ? (
+            <div style={{ marginTop: 10, fontSize: 12 }}>
+              {signals.permissionDenied.length > 0 ? (
+                <div style={{ marginBottom: 6 }}>
+                  <strong>Permission denied:</strong>{" "}
+                  <span style={{ opacity: 0.85 }}>{signals.permissionDenied.join(", ")}</span>
+                </div>
+              ) : null}
+
+              {signals.truncatedChecks.length > 0 ? (
+                <div style={{ marginBottom: 6 }}>
+                  <strong>Truncated checks:</strong>{" "}
+                  <span style={{ opacity: 0.85 }}>{signals.truncatedChecks.join(", ")}</span>
+                </div>
+              ) : null}
+
+              {signals.incompleteChecks.length > 0 ? (
+                <div>
+                  <strong>Incomplete checks:</strong>{" "}
+                  <span style={{ opacity: 0.85 }}>{signals.incompleteChecks.join(", ")}</span>
+                </div>
+              ) : null}
+
+              {signals.permissionDenied.length === 0 &&
+              signals.truncatedChecks.length === 0 &&
+              signals.incompleteChecks.length === 0 ? (
+                <div style={{ opacity: 0.85 }}>
+                  Completeness warning present but no explicit details found in observed data.
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+              No completeness warnings detected in observed checks.
+            </div>
+          )}
 
           {observed.length > 0 ? (
             <details style={{ marginTop: 10 }}>
@@ -198,6 +418,53 @@ export default async function RunPage({
             </div>
           )}
         </div>
+      </div>
+
+      <h3 style={{ marginTop: 0 }}>Reports</h3>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>
+        Derived outputs (not sources of truth). Known: <code>run-summary.xlsx</code>, <code>run-summary.csv</code>.
+      </p>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f6f6f6" }}>
+            <tr>
+              <th style={{ textAlign: "left", padding: 10 }}>Report</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Type</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Size</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reports.map((a) => {
+              const filename = filenameFromKey(a.key);
+              return (
+                <tr key={a.id} style={{ borderTop: "1px solid #eee" }}>
+                  <td style={{ padding: 10 }}>
+                    <div style={{ fontWeight: 600 }}>{filename}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                      <code>{a.key}</code>
+                    </div>
+                  </td>
+                  <td style={{ padding: 10 }}>{a.type}</td>
+                  <td style={{ padding: 10 }}>{formatBytes(a.sizeBytes)}</td>
+                  <td style={{ padding: 10 }}>
+                    <a href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
+                      Download
+                    </a>
+                  </td>
+                </tr>
+              );
+            })}
+            {reports.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
+                  No report artefacts found for this run.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
 
       <h3 style={{ marginTop: 0 }}>Jobs</h3>
@@ -223,11 +490,7 @@ export default async function RunPage({
                 <td style={{ padding: 10 }}>{j.status}</td>
                 <td style={{ padding: 10 }}>{j.attempts}</td>
                 <td style={{ padding: 10, fontSize: 12 }}>
-                  {j.lastError ? (
-                    <span style={{ color: "#a00" }}>{j.lastError}</span>
-                  ) : (
-                    <span style={{ opacity: 0.7 }}>—</span>
-                  )}
+                  {j.lastError ? <span style={{ color: "#a00" }}>{j.lastError}</span> : <span style={{ opacity: 0.7 }}>—</span>}
                 </td>
               </tr>
             ))}
@@ -243,6 +506,10 @@ export default async function RunPage({
       </div>
 
       <h3 style={{ marginTop: 0 }}>Artefacts</h3>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>
+        Raw artefacts (sources of truth). Reports are shown above.
+      </p>
+
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ background: "#f6f6f6" }}>
@@ -254,8 +521,8 @@ export default async function RunPage({
             </tr>
           </thead>
           <tbody>
-            {artefacts.map((a) => {
-              const filename = a.key.split("/").pop() ?? a.key;
+            {others.map((a) => {
+              const filename = filenameFromKey(a.key);
               return (
                 <tr key={a.id} style={{ borderTop: "1px solid #eee" }}>
                   <td style={{ padding: 10 }}>
@@ -263,19 +530,24 @@ export default async function RunPage({
                     <div style={{ fontSize: 12, opacity: 0.7 }}>
                       job: <code>{a.jobId ?? "—"}</code>
                     </div>
+                    <div style={{ fontSize: 12, opacity: 0.55 }}>
+                      <code>{a.key}</code>
+                    </div>
                   </td>
                   <td style={{ padding: 10 }}>{a.type}</td>
-                  <td style={{ padding: 10 }}>{a.sizeBytes}</td>
+                  <td style={{ padding: 10 }}>{formatBytes(a.sizeBytes)}</td>
                   <td style={{ padding: 10 }}>
-                    <a href={`/api/artefacts/${a.id}/download`}>Download</a>
+                    <a href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
+                      Download
+                    </a>
                   </td>
                 </tr>
               );
             })}
-            {artefacts.length === 0 ? (
+            {others.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
-                  No artefacts recorded yet for this run.
+                  No non-report artefacts recorded yet for this run.
                 </td>
               </tr>
             ) : null}
