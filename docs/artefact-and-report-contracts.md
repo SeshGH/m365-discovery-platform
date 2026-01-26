@@ -202,26 +202,119 @@ Notes:
 
 ---
 
-### Exchange Online – Mailbox Inventory
+## Exchange Online – Mailbox Inventory (exchange.mailboxes.inventory)
 
-Collector ID: `exchange.mailboxes.inventory`
+### Artefacts
 
-Artefacts:
+#### `exchange-mailboxes-inventory.safe.json`
 
-| Filename                                 | Profile | Notes                       |
-| ---------------------------------------- | ------- | --------------------------- |
-| `exchange-mailboxes-inventory.safe.json` | safe    | Counts, types, size buckets |
-| `exchange-mailboxes-inventory.full.json` | full    | Per-mailbox inventory (PII) |
+**Purpose:** Safe, non-PII, Graph-first mailbox sizing summary.
 
-Contract guarantees:
+**Shape (stable):**
 
-* JSON root is an object
-* `summary` MUST be present
-* Safe artefact contains **no mailbox identifiers**
-* Full artefact is emitted **only** when `dataProfile=full`
-* Partial or permission-limited data MUST surface via completeness signals
+* `generatedAt` (ISO string)
+* `profile`: `"safe"`
+* `completeness`:
+
+  * `isComplete` (boolean)
+  * `truncated` (boolean)
+  * `permissionDenied` (string[])
+  * `slicesAttempted` (string[])
+  * `slicesCompleted` (string[])
+  * `notes` (string[])
+  * `implemented` (boolean)
+* `summary`:
+
+  * `totalMailboxes` (number|null)
+  * `byType` (object|null)
+  * `byState` (object|null)
+  * `sizeBuckets`:
+
+    * `under1GB` (number|null)
+    * `1to10GB` (number|null)
+    * `10to50GB` (number|null)
+    * `40to50GB` (number|null)
+      *Count of mailboxes in the 40–50GB range (proactive sizing).*
+    * `over50GB` (number|null)
+  * `dataProfile`: `"safe"|"full"` (string)
+  * `fullExported` (boolean)
+* `mailboxFeatures` (object|null)
+
+**Graph-first behaviour (important):**
+
+* When running **Graph-only** (Linux/container compatible), the collector intentionally does **not** populate:
+
+  * `summary.byType`
+  * `summary.byState`
+  * `mailboxFeatures`
+
+These fields are set to `null` and must be treated as **explicit completeness signals** (not silent omissions).
+
+#### `exchange-mailboxes-inventory.full.json`
+
+Everything in the SAFE artefact plus:
+
+* `profile`: `"full"`
+* `mailboxUsageDetail`: array of **FULL-only** rows (PII allowed)
+
+  * `userPrincipalName` (string)
+  * `displayName` (string)
+  * `storageUsedBytes` (number|null)
+  * `storageUsedGb` (number|null)
+  * `isDeleted` (boolean|null)
+  * `reportPeriod` (string, e.g. `"D7"`)
+
+**Data source note:** `sizeBuckets` and `mailboxUsageDetail` are derived from Microsoft Graph mailbox usage reports (CSV). This dataset may be delayed relative to real time.
 
 ---
+
+## report.runSummary.xlsx (Excel)
+
+### Exchange Online sheets
+
+The Excel report includes two Exchange sheets when Exchange mailbox artefacts are present:
+
+#### Sheet: **Exchange Mailboxes (Summary)**
+
+**Source:** `exchange-mailboxes-inventory.safe.json` or `exchange-mailboxes-inventory.full.json` (profile-aware selection).
+
+**Guaranteed fields rendered (when artefact loads):**
+
+* `status` one of: `ok | truncated | permission-denied | error | not-available`
+* `generatedAt`
+* `artefact` (filename chosen)
+* `profile`
+* `totalMailboxes`
+* `mailboxesOver50GB` (derived from `sizeBuckets.over50GB`)
+* `nearLimit40to50GB` (from `sizeBuckets.40to50GB`)
+* `bucket.under1GB`, `bucket.1to10GB`, `bucket.10to50GB`
+* `completeness.isComplete`, `completeness.truncated`
+* `completeness.permissionDeniedCount`
+* `notes` (count + joined notes)
+
+**Graph-only signalling:**
+
+If the collector is in Graph-only mode, the summary sheet must explicitly indicate (via notes and/or null fields) that `byType`, `byState`, and `mailboxFeatures` are not collected.
+
+#### Sheet: **Exchange Mailboxes**
+
+**Profile behaviour:**
+
+* **FULL runs:** renders rows from `mailboxUsageDetail[]`.
+* **SAFE runs:** does **not** render mailbox-level rows (PII gated); a single status row is shown instead.
+
+**Columns (FULL only):**
+
+* `displayName`
+* `userPrincipalName`
+* `storageUsedGb`
+* `isOver50GB` (`YES|NO`)
+* `reportPeriod`
+
+**Row cap:** implementation may cap rows for readability; any cap must be clearly stated in-sheet.
+
+---
+
 
 ## Report artefact contracts
 
