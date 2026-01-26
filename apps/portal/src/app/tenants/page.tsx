@@ -1,4 +1,5 @@
 // apps/portal/src/app/tenants/page.tsx
+import Link from "next/link";
 import { listTenants } from "@/lib/api";
 
 export default async function TenantsPage() {
@@ -26,7 +27,11 @@ export default async function TenantsPage() {
             {tenants.map((t) => (
               <tr key={t.id} style={{ borderTop: "1px solid #eee" }}>
                 <td style={{ padding: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{t.displayName ?? "(no display name)"}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    <Link href={`/t/${t.id}`} style={{ textDecoration: "none" }}>
+                      {t.displayName ?? "(no display name)"}
+                    </Link>
+                  </div>
                   <div style={{ fontSize: 12, opacity: 0.7 }}>{t.id}</div>
                 </td>
                 <td style={{ padding: 10 }}>{t.primaryDomain}</td>
@@ -40,9 +45,7 @@ export default async function TenantsPage() {
                         <strong>{t.auth.status}</strong>
                       </div>
                       {t.auth.lastError ? (
-                        <div style={{ color: "#a00", fontSize: 12 }}>
-                          {t.auth.lastError}
-                        </div>
+                        <div style={{ color: "#a00", fontSize: 12 }}>{t.auth.lastError}</div>
                       ) : (
                         <div style={{ fontSize: 12, opacity: 0.7 }}>No errors</div>
                       )}
