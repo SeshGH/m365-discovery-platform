@@ -275,108 +275,94 @@ type EnterpriseAppPermissionsJson = {
 type ExchangeMailboxesInventoryJson = {
   generatedAt?: string;
   profile?: "safe" | "full";
-  tenant?: {
-    tenantGuid?: string;
-    primaryDomain?: string;
-    displayName?: string;
+  completeness?: {
+    isComplete?: boolean;
+    truncated?: boolean;
+    permissionDenied?: string[];
+    slicesAttempted?: string[];
+    slicesCompleted?: string[];
+    notes?: string[];
+    implemented?: boolean;
   };
   summary?: {
-    totalMailboxes?: number;
+    totalMailboxes?: number | null;
+    byType?: {
+      user?: number | null;
+      shared?: number | null;
+      room?: number | null;
+      equipment?: number | null;
+    };
     byState?: {
-      enabled?: number;
-      disabled?: number;
+      enabled?: number | null;
+      disabled?: number | null;
     };
-    byRecipientType?: Record<string, number>;
     sizeBuckets?: {
-      over50GB?: number;
-      over100GB?: number;
-    };
-    archive?: {
-      enabled?: number;
-      disabled?: number;
-    };
-    litigationHold?: {
-      enabled?: number;
-      disabled?: number;
+      under1GB?: number | null;
+      "1to10GB"?: number | null;
+      "10to50GB"?: number | null;
+      "40to50GB"?: number | null;
+      over50GB?: number | null;
     };
   };
-  mailboxes?: Array<{
-    displayName?: string;
+  mailboxFeatures?: {
+    archive?: { enabled?: number | null; disabledOrNone?: number | null; unknown?: number | null };
+    litigationHold?: { enabled?: number | null; disabled?: number | null; unknown?: number | null };
+  };
+  mailboxUsageDetail?: Array<{
     userPrincipalName?: string;
-    recipientTypeDetails?: string;
-    accountEnabled?: boolean;
-    mailboxSizeGB?: number;
-    archiveEnabled?: boolean;
-    litigationHoldEnabled?: boolean;
+    displayName?: string;
+    storageUsedBytes?: number | null;
+    storageUsedGb?: number | null;
+    isDeleted?: boolean | null;
+    reportPeriod?: string;
   }>;
 };
 
 type NormalizedExoSummary = {
   totalMailboxes: number | null;
-  enabled: number | null;
-  disabled: number | null;
   over50GB: number | null;
-  archiveEnabled: number | null;
-  litigationHoldEnabled: number | null;
+  nearLimit40to50GB: number | null;
+  under1GB: number | null;
+  oneTo10GB: number | null;
+  tenTo50GB: number | null;
   truncated: boolean | null;
+  isComplete: boolean | null;
+  implemented: boolean | null;
+  permissionDeniedCount: number | null;
 };
 
 function normalizeExoSummary(exoJson: any): NormalizedExoSummary {
   const s = exoJson?.summary ?? {};
-  const mailboxes: any[] = Array.isArray(exoJson?.mailboxes) ? exoJson.mailboxes : [];
+  const size = s?.sizeBuckets ?? {};
+  const comp = exoJson?.completeness ?? {};
 
   const totalMailboxes =
-    typeof s.totalMailboxes === "number"
-      ? s.totalMailboxes
-      : mailboxes.length
-        ? mailboxes.length
-        : null;
+    typeof s.totalMailboxes === "number" ? s.totalMailboxes : (typeof s.totalMailboxes === "object" ? null : (s.totalMailboxes ?? null));
 
-  const enabled =
-    typeof s.byState?.enabled === "number"
-      ? s.byState.enabled
-      : mailboxes.length
-        ? mailboxes.filter((m) => m?.accountEnabled === true).length
-        : null;
+  const over50GB = typeof size.over50GB === "number" ? size.over50GB : null;
+  const nearLimit40to50GB = typeof size["40to50GB"] === "number" ? size["40to50GB"] : null;
 
-  const disabled =
-    typeof s.byState?.disabled === "number"
-      ? s.byState.disabled
-      : mailboxes.length
-        ? mailboxes.filter((m) => m?.accountEnabled === false).length
-        : null;
+  const under1GB = typeof size.under1GB === "number" ? size.under1GB : null;
+  const oneTo10GB = typeof size["1to10GB"] === "number" ? size["1to10GB"] : null;
+  const tenTo50GB = typeof size["10to50GB"] === "number" ? size["10to50GB"] : null;
 
-  const over50GB =
-    typeof s.sizeBuckets?.over50GB === "number"
-      ? s.sizeBuckets.over50GB
-      : mailboxes.length
-        ? mailboxes.filter((m) => typeof m?.mailboxSizeGB === "number" && m.mailboxSizeGB > 50).length
-        : null;
+  const truncated = typeof comp.truncated === "boolean" ? comp.truncated : null;
+  const isComplete = typeof comp.isComplete === "boolean" ? comp.isComplete : null;
+  const implemented = typeof comp.implemented === "boolean" ? comp.implemented : null;
 
-  const archiveEnabled =
-    typeof s.archive?.enabled === "number"
-      ? s.archive.enabled
-      : mailboxes.length
-        ? mailboxes.filter((m) => m?.archiveEnabled === true).length
-        : null;
-
-  const litigationHoldEnabled =
-    typeof s.litigationHold?.enabled === "number"
-      ? s.litigationHold.enabled
-      : mailboxes.length
-        ? mailboxes.filter((m) => m?.litigationHoldEnabled === true).length
-        : null;
-
-  const truncated = typeof s.truncated === "boolean" ? s.truncated : null;
+  const permissionDeniedCount = Array.isArray(comp.permissionDenied) ? comp.permissionDenied.length : null;
 
   return {
-    totalMailboxes,
-    enabled,
-    disabled,
+    totalMailboxes: typeof totalMailboxes === "number" ? totalMailboxes : null,
     over50GB,
-    archiveEnabled,
-    litigationHoldEnabled,
-    truncated
+    nearLimit40to50GB,
+    under1GB,
+    oneTo10GB,
+    tenTo50GB,
+    truncated,
+    isComplete,
+    implemented,
+    permissionDeniedCount
   };
 }
 
@@ -728,13 +714,13 @@ export const runSummaryExcelReportCollector: Collector = {
     const caCandidates = ["conditional-access-policies.safe.json"];
 
     const exoCandidates =
-  run.dataProfile === "full"
-    ? [
-        "exchange-mailboxes-inventory.full.json",
-        "exchange-mailboxes-inventory.safe.json",
-        "exchange-mailboxes-inventory.json"
-      ]
-    : ["exchange-mailboxes-inventory.json", "exchange-mailboxes-inventory.safe.json"];
+      run.dataProfile === "full"
+        ? [
+            "exchange-mailboxes-inventory.full.json",
+            "exchange-mailboxes-inventory.safe.json",
+            "exchange-mailboxes-inventory.json"
+          ]
+        : ["exchange-mailboxes-inventory.safe.json", "exchange-mailboxes-inventory.json"];
 
     const { artefact: usersArtefact, filename: usersArtefactName } = pickArtefactByFilename(usersCandidates);
     const { artefact: eapArtefact, filename: eapArtefactName } = pickArtefactByFilename(eapCandidates);
@@ -814,27 +800,22 @@ export const runSummaryExcelReportCollector: Collector = {
     }
 
     let exoJson: ExchangeMailboxesInventoryJson | null = null;
-let exoJsonError: string | null = null;
+    let exoJsonError: string | null = null;
 
-if (exoArtefact) {
-  if (!s3) {
-    exoJsonError = s3InitError ?? "S3 client unavailable";
-  } else {
-    try {
-      const text = await downloadArtefactText({
-        s3,
-        bucket: exoArtefact.bucket,
-        key: exoArtefact.key
-      });
-      const parsed = tryParseJson<ExchangeMailboxesInventoryJson>(text);
-      if (parsed.ok) exoJson = parsed.value;
-      else exoJsonError = parsed.error;
-    } catch (e: any) {
-      exoJsonError = e?.message ? String(e.message) : String(e);
+    if (exoArtefact) {
+      if (!s3) {
+        exoJsonError = s3InitError ?? "S3 client unavailable";
+      } else {
+        try {
+          const text = await downloadArtefactText({ s3, bucket: exoArtefact.bucket, key: exoArtefact.key });
+          const parsed = tryParseJson<ExchangeMailboxesInventoryJson>(text);
+          if (parsed.ok) exoJson = parsed.value;
+          else exoJsonError = parsed.error;
+        } catch (e: any) {
+          exoJsonError = e?.message ? String(e.message) : String(e);
+        }
+      }
     }
-  }
-}
-
 
     const usersSummary = usersJson ? normalizeUsersSummary(usersJson) : null;
     const eapSummary = eapJson ? normalizeEapSummary(eapJson) : null;
@@ -916,12 +897,11 @@ if (exoArtefact) {
 
       if (exoSummary) {
         ws.addRow({ field: "exo.totalMailboxes", value: exoSummary.totalMailboxes ?? "" });
-        ws.addRow({ field: "exo.enabled", value: exoSummary.enabled ?? "" });
-        ws.addRow({ field: "exo.disabled", value: exoSummary.disabled ?? "" });
         ws.addRow({ field: "exo.over50GB", value: exoSummary.over50GB ?? "" });
-        ws.addRow({ field: "exo.archiveEnabled", value: exoSummary.archiveEnabled ?? "" });
-        ws.addRow({ field: "exo.litigationHoldEnabled", value: exoSummary.litigationHoldEnabled ?? "" });
+        ws.addRow({ field: "exo.nearLimit40to50GB", value: exoSummary.nearLimit40to50GB ?? "" });
         ws.addRow({ field: "exo.truncated", value: exoSummary.truncated ?? "" });
+        ws.addRow({ field: "exo.isComplete", value: exoSummary.isComplete ?? "" });
+        ws.addRow({ field: "exo.permissionDeniedCount", value: exoSummary.permissionDeniedCount ?? "" });
       } else if (exoJsonError) {
         ws.addRow({ field: "exo.sourceError", value: exoJsonError });
       }
@@ -1523,158 +1503,6 @@ if (exoArtefact) {
         });
       }
 
-      // -------------------------
-// Sheet 8: Exchange Mailboxes (Summary)
-// -------------------------
-{
-  const ws = wb.addWorksheet(safeSheetName("Exchange Mailboxes (Summary)"));
-
-  ws.columns = [
-    { header: "field", key: "field", width: 40 },
-    { header: "value", key: "value", width: 24 },
-    { header: "notes", key: "notes", width: 100 }
-  ];
-
-  if (!exoArtefact) {
-    ws.addRow({
-      field: "status",
-      value: "not-available",
-      notes: "Exchange mailboxes artefact was not present in this run."
-    });
-  } else if (exoJsonError) {
-    ws.addRow({
-      field: "status",
-      value: "error",
-      notes: `Unable to load Exchange mailboxes artefact: ${exoJsonError}`
-    });
-  } else if (!exoSummary) {
-    ws.addRow({
-      field: "status",
-      value: "empty",
-      notes: "Exchange mailboxes artefact was present but no summary could be derived."
-    });
-  } else {
-    ws.addRow({ field: "generatedAt", value: exoJson?.generatedAt ?? "", notes: "" });
-    ws.addRow({ field: "dataProfile", value: exoJson?.profile ?? "", notes: "" });
-
-    ws.addRow({ field: "totalMailboxes", value: exoSummary.totalMailboxes, notes: "" });
-    ws.addRow({ field: "enabledMailboxes", value: exoSummary.enabledMailboxes ?? "n/a", notes: "" });
-    ws.addRow({ field: "disabledMailboxes", value: exoSummary.disabledMailboxes ?? "n/a", notes: "" });
-
-    ws.addRow({
-      field: "mailboxesOver50GB",
-      value: exoSummary.mailboxesOver50GB ?? "n/a",
-      notes: "Used for Exchange Online Plan 2 sizing conversations."
-    });
-
-    ws.addRow({
-      field: "sharedMailboxes",
-      value: exoSummary.sharedMailboxes ?? "n/a",
-      notes: ""
-    });
-
-    ws.addRow({
-      field: "roomAndEquipmentMailboxes",
-      value: exoSummary.roomAndEquipmentMailboxes ?? "n/a",
-      notes: ""
-    });
-
-    ws.addRow({
-      field: "truncated",
-      value: String(exoSummary.truncated ?? ""),
-      notes: exoSummary.truncated ? "Mailbox enumeration was truncated (demo or guardrail limit)." : ""
-    });
-  }
-}
-
-// -------------------------
-// Sheet 9: Exchange Mailboxes (Inventory)
-// -------------------------
-{
-  const ws = wb.addWorksheet(safeSheetName("Exchange Mailboxes"));
-
-  ws.columns = [
-    { header: "displayName", key: "displayName", width: 32 },
-    { header: "userPrincipalName", key: "userPrincipalName", width: 36 },
-    { header: "mailboxType", key: "mailboxType", width: 18 },
-    { header: "recipientTypeDetails", key: "recipientTypeDetails", width: 26 },
-    { header: "totalItemSizeGB", key: "totalItemSizeGB", width: 18 },
-    { header: "isOver50GB", key: "isOver50GB", width: 14 },
-    { header: "accountEnabled", key: "accountEnabled", width: 14 }
-  ];
-
-  if (!exoArtefact) {
-    ws.addRow({
-      displayName: "status",
-      userPrincipalName: "not-available",
-      mailboxType: "",
-      recipientTypeDetails: "",
-      totalItemSizeGB: "",
-      isOver50GB: "",
-      accountEnabled: ""
-    });
-  } else if (exoJsonError) {
-    ws.addRow({
-      displayName: "status",
-      userPrincipalName: "error",
-      mailboxType: "",
-      recipientTypeDetails: "",
-      totalItemSizeGB: `Unable to load artefact: ${exoJsonError}`,
-      isOver50GB: "",
-      accountEnabled: ""
-    });
-  } else {
-    const mailboxes: any[] = Array.isArray(exoJson?.mailboxes)
-      ? exoJson!.mailboxes
-      : [];
-
-    if (!mailboxes.length) {
-      ws.addRow({
-        displayName: "status",
-        userPrincipalName: "empty",
-        mailboxType: "",
-        recipientTypeDetails: "",
-        totalItemSizeGB: "",
-        isOver50GB: "",
-        accountEnabled: "No mailboxes[] present in artefact."
-      });
-    } else {
-      for (const m of mailboxes.slice(0, 500)) {
-        const sizeGb =
-          typeof m?.totalItemSizeGB === "number"
-            ? m.totalItemSizeGB
-            : null;
-
-        ws.addRow({
-          displayName: String(m?.displayName ?? ""),
-          userPrincipalName: String(m?.userPrincipalName ?? ""),
-          mailboxType: String(m?.mailboxType ?? ""),
-          recipientTypeDetails: String(m?.recipientTypeDetails ?? ""),
-          totalItemSizeGB: sizeGb ?? "",
-          isOver50GB: sizeGb !== null ? (sizeGb > 50 ? "YES" : "NO") : "",
-          accountEnabled:
-            typeof m?.accountEnabled === "boolean"
-              ? String(m.accountEnabled)
-              : ""
-        });
-      }
-
-      if (mailboxes.length > 500) {
-        ws.addRow({
-          displayName: "note",
-          userPrincipalName: "",
-          mailboxType: "",
-          recipientTypeDetails: "",
-          totalItemSizeGB: "",
-          isOver50GB: "",
-          accountEnabled: `Only first 500 mailboxes shown (total in artefact: ${mailboxes.length}).`
-        });
-      }
-    }
-  }
-}
-
-
       applyKeyValueLook(ws);
 
       // Make completeness.isComplete (if present) stand out
@@ -1683,6 +1511,177 @@ if (exoArtefact) {
         const v = String(completeRow.getCell(2).value ?? "").toLowerCase();
         if (v === "true") setCellPill(completeRow.getCell(2), "ok");
         else if (v === "false") setCellPill(completeRow.getCell(2), "warn");
+      }
+    }
+
+    // -------------------------
+    // Sheet 8: Exchange Mailboxes (Summary)
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Exchange Mailboxes (Summary)"));
+
+      ws.columns = [
+        { header: "field", key: "field", width: 40 },
+        { header: "value", key: "value", width: 24 },
+        { header: "notes", key: "notes", width: 100 }
+      ];
+
+      if (!exoArtefact) {
+        ws.addRow({
+          field: "status",
+          value: "not-available",
+          notes: `${exoArtefactName} artefact was not present in this run.`
+        });
+      } else if (exoJsonError) {
+        ws.addRow({
+          field: "status",
+          value: "error",
+          notes: `Unable to load ${exoArtefactName}: ${exoJsonError}`
+        });
+      } else {
+        const comp = (exoJson as any)?.completeness ?? {};
+        const isComplete = typeof comp.isComplete === "boolean" ? comp.isComplete : null;
+        const truncated = typeof comp.truncated === "boolean" ? comp.truncated : null;
+        const implemented = typeof comp.implemented === "boolean" ? comp.implemented : null;
+        const permDenied: string[] = Array.isArray(comp.permissionDenied) ? comp.permissionDenied : [];
+        const notes: string[] = Array.isArray(comp.notes) ? comp.notes : [];
+
+        const status =
+          permDenied.length > 0 ? "permission-denied" :
+          implemented === false ? "not-implemented" :
+          truncated === true ? "truncated" :
+          "ok";
+
+        const statusNote =
+          permDenied.length > 0
+            ? `Permission denied collecting mailbox usage report (Graph). Missing permissions: ${permDenied.join(", ")}`
+            : implemented === false
+              ? "Exchange mailbox sizing is not implemented in this environment."
+              : truncated === true
+                ? "Mailbox detail export was truncated (row cap). Buckets remain valid."
+                : "Mailbox sizing derived from Graph reports.";
+
+        ws.addRow({ field: "status", value: status, notes: statusNote });
+        ws.addRow({ field: "generatedAt", value: exoJson?.generatedAt ?? "", notes: "" });
+        ws.addRow({ field: "artefact", value: exoArtefactName, notes: "" });
+        ws.addRow({ field: "profile", value: exoJson?.profile ?? "", notes: "" });
+
+        ws.addRow({ field: "totalMailboxes", value: exoSummary?.totalMailboxes ?? "n/a", notes: "" });
+        ws.addRow({ field: "mailboxesOver50GB", value: exoSummary?.over50GB ?? "n/a", notes: "Used for Exchange Online Plan 2 sizing conversations." });
+        ws.addRow({ field: "nearLimit40to50GB", value: exoSummary?.nearLimit40to50GB ?? "n/a", notes: "Mailboxes in the 40–50GB range (proactive sizing)." });
+
+        ws.addRow({ field: "bucket.under1GB", value: exoSummary?.under1GB ?? "n/a", notes: "" });
+        ws.addRow({ field: "bucket.1to10GB", value: exoSummary?.oneTo10GB ?? "n/a", notes: "" });
+        ws.addRow({ field: "bucket.10to50GB", value: exoSummary?.tenTo50GB ?? "n/a", notes: "" });
+
+        ws.addRow({ field: "completeness.isComplete", value: isComplete === null ? "" : String(isComplete), notes: "" });
+        ws.addRow({ field: "completeness.truncated", value: truncated === null ? "" : String(truncated), notes: "" });
+        ws.addRow({ field: "completeness.permissionDeniedCount", value: String(permDenied.length), notes: permDenied.join(", ") });
+
+        if (notes.length > 0) {
+          ws.addRow({ field: "notes", value: String(notes.length), notes: notes.join(" | ") });
+        }
+      }
+
+      applyKeyValueLook(ws);
+
+      const statusRow = findRowByField(ws, "status");
+      if (statusRow) {
+        const v = String(statusRow.getCell(2).value ?? "");
+        if (v === "ok") setCellPill(statusRow.getCell(2), "ok");
+        else if (v === "truncated") setCellPill(statusRow.getCell(2), "warn");
+        else if (v === "permission-denied" || v === "error") setCellPill(statusRow.getCell(2), "bad");
+        else setCellPill(statusRow.getCell(2), "warn");
+      }
+    }
+
+    // -------------------------
+    // Sheet 9: Exchange Mailboxes (Detail - FULL only)
+    // -------------------------
+    {
+      const ws = wb.addWorksheet(safeSheetName("Exchange Mailboxes"));
+
+      ws.columns = [
+        { header: "displayName", key: "displayName", width: 32 },
+        { header: "userPrincipalName", key: "userPrincipalName", width: 36 },
+        { header: "storageUsedGb", key: "storageUsedGb", width: 14 },
+        { header: "isOver50GB", key: "isOver50GB", width: 12 },
+        { header: "reportPeriod", key: "reportPeriod", width: 10 }
+      ];
+
+      if (run.dataProfile !== "full") {
+        ws.addRow({
+          displayName: "status",
+          userPrincipalName: "not-available",
+          storageUsedGb: "",
+          isOver50GB: "",
+          reportPeriod: "FULL profile only"
+        });
+
+        applyBasicTableLook(ws);
+      } else if (!exoArtefact) {
+        ws.addRow({
+          displayName: "status",
+          userPrincipalName: "not-available",
+          storageUsedGb: "",
+          isOver50GB: "",
+          reportPeriod: ""
+        });
+
+        applyBasicTableLook(ws);
+      } else if (exoJsonError) {
+        ws.addRow({
+          displayName: "status",
+          userPrincipalName: "error",
+          storageUsedGb: `Unable to load ${exoArtefactName}: ${exoJsonError}`,
+          isOver50GB: "",
+          reportPeriod: ""
+        });
+
+        applyBasicTableLook(ws);
+      } else {
+        const rows: any[] = Array.isArray((exoJson as any)?.mailboxUsageDetail) ? (exoJson as any).mailboxUsageDetail : [];
+
+        if (!rows.length) {
+          ws.addRow({
+            displayName: "status",
+            userPrincipalName: "empty",
+            storageUsedGb: "",
+            isOver50GB: "",
+            reportPeriod: "No mailboxUsageDetail[] present in FULL artefact."
+          });
+        } else {
+          for (const r of rows.slice(0, 500)) {
+            const gb = typeof r?.storageUsedGb === "number" ? r.storageUsedGb : null;
+            ws.addRow({
+              displayName: String(r?.displayName ?? ""),
+              userPrincipalName: String(r?.userPrincipalName ?? ""),
+              storageUsedGb: gb === null ? "" : gb,
+              isOver50GB: gb === null ? "" : (gb > 50 ? "YES" : "NO"),
+              reportPeriod: String(r?.reportPeriod ?? "")
+            });
+          }
+
+          if (rows.length > 500) {
+            ws.addRow({
+              displayName: "note",
+              userPrincipalName: "",
+              storageUsedGb: "",
+              isOver50GB: "",
+              reportPeriod: `Only first 500 rows shown (total in artefact: ${rows.length}).`
+            });
+          }
+        }
+
+        applyBasicTableLook(ws);
+
+        const overCol = 4;
+        for (let r = 2; r <= ws.rowCount; r++) {
+          const cell = ws.getRow(r).getCell(overCol);
+          const v = String(cell.value ?? "").toUpperCase();
+          if (v === "YES") setCellPill(cell, "bad");
+          else if (v === "NO") setCellPill(cell, "ok");
+        }
       }
     }
 
