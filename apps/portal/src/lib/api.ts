@@ -29,6 +29,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** -----------------------------
+ *  Types (match Fastify selects)
+ *  ----------------------------*/
+
 export type TenantListItem = {
   id: string;
   tenantGuid: string;
@@ -85,6 +89,72 @@ export type RunListItem = {
   };
 };
 
+export type RunDetail = RunListItem;
+
+export type JobListItem = {
+  id: string;
+  runId: string;
+  status: string;
+  attempts: number;
+  lockedAt: string | null;
+  lockedBy: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  collectorId: string;
+  payload: unknown;
+  counts: {
+    findings: number;
+    artefacts: number;
+  };
+};
+
+export type FindingItem = {
+  id: string;
+  runId: string;
+  jobId: string | null;
+  checkId: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence: unknown;
+  references: unknown;
+  createdAt: string;
+};
+
+export type ObservedCheckItem = {
+  id: string;
+  runId: string;
+  jobId: string | null;
+  checkId: string;
+  collectorId: string;
+  observedAt: string;
+  data: unknown;
+  ruleId: string | null;
+  references: unknown;
+  createdAt: string;
+};
+
+export type ArtefactItem = {
+  id: string;
+  runId: string;
+  jobId: string | null;
+  type: string;
+  uri: string | null;
+  bucket: string;
+  key: string;
+  hash: string | null;
+  sizeBytes: number;
+  createdAt: string;
+};
+
+/** -----------------------------
+ *  API calls
+ *  ----------------------------*/
+
 export async function listTenants(params?: {
   q?: string;
   tenantGuid?: string;
@@ -107,4 +177,24 @@ export async function getTenantAuth(tenantId: string): Promise<TenantAuthRespons
 
 export async function listRuns(): Promise<RunListItem[]> {
   return apiFetch<RunListItem[]>(`/runs`);
+}
+
+export async function getRun(runId: string): Promise<RunDetail> {
+  return apiFetch<RunDetail>(`/runs/${runId}`);
+}
+
+export async function listRunJobs(runId: string): Promise<JobListItem[]> {
+  return apiFetch<JobListItem[]>(`/runs/${runId}/jobs`);
+}
+
+export async function listRunArtefacts(runId: string): Promise<ArtefactItem[]> {
+  return apiFetch<ArtefactItem[]>(`/runs/${runId}/artefacts`);
+}
+
+export async function listRunObservedChecks(runId: string): Promise<ObservedCheckItem[]> {
+  return apiFetch<ObservedCheckItem[]>(`/runs/${runId}/observed-checks`);
+}
+
+export async function listRunFindings(runId: string): Promise<FindingItem[]> {
+  return apiFetch<FindingItem[]>(`/runs/${runId}/findings`);
 }
