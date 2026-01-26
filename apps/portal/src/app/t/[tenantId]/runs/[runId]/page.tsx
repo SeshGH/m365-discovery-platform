@@ -80,7 +80,7 @@ function Badge({ badge }: { badge: BadgeModel }) {
 }
 
 /** -----------------------------
- *  Completeness signals
+ *  Completeness signals (run-level)
  *  ----------------------------*/
 
 function badgeForObservedChecks(observed: ObservedCheckItem[]): BadgeModel {
@@ -144,6 +144,45 @@ function extractSignals(observed: ObservedCheckItem[]) {
 }
 
 /** -----------------------------
+ *  Per-observed-check signals (row-level)
+ *  ----------------------------*/
+
+type RowSignals = {
+  truncated: boolean;
+  permissionDeniedCount: number;
+  incomplete: boolean;
+};
+
+function getRowSignals(oc: ObservedCheckItem): RowSignals {
+  const d = oc.data as any;
+  if (!d || typeof d !== "object") return { truncated: false, permissionDeniedCount: 0, incomplete: false };
+
+  const directPD = Array.isArray(d.permissionDenied) ? d.permissionDenied : [];
+  const nestedPD =
+    d.completeness && typeof d.completeness === "object" && Array.isArray(d.completeness.permissionDenied)
+      ? d.completeness.permissionDenied
+      : [];
+
+  const permissionDeniedCount = [...directPD, ...nestedPD].filter((x) => typeof x === "string").length;
+
+  const truncated = d.truncated === true || (d.completeness && typeof d.completeness === "object" && d.completeness.truncated === true);
+  const incomplete = d.isComplete === false || (d.completeness && typeof d.completeness === "object" && d.completeness.isComplete === false);
+
+  return { truncated, permissionDeniedCount, incomplete };
+}
+
+function signalBadgesForRow(oc: ObservedCheckItem): BadgeModel[] {
+  const s = getRowSignals(oc);
+  const out: BadgeModel[] = [];
+
+  if (s.permissionDeniedCount > 0) out.push({ label: `permission-denied (${s.permissionDeniedCount})`, tone: "warn" });
+  if (s.truncated) out.push({ label: "truncated", tone: "warn" });
+  if (s.incomplete) out.push({ label: "incomplete", tone: "warn" });
+
+  return out;
+}
+
+/** -----------------------------
  *  Run phase & job summary
  *  ----------------------------*/
 
@@ -195,6 +234,14 @@ function phaseForRun(
   if (run.endedAt && status !== "succeeded" && status !== "failed") return { label: "phase: ended (non-terminal)", tone: "warn" };
 
   return { label: "phase: queued", tone: "muted" };
+}
+
+function shouldShowPhaseBadge(runStatusRaw: string, phase: BadgeModel) {
+  const status = String(runStatusRaw ?? "").toLowerCase();
+  // Only show phase badge if it provides extra info beyond terminal run status
+  if (status === "succeeded" && phase.label === "phase: succeeded") return false;
+  if (status === "failed" && phase.label === "phase: failed") return false;
+  return true;
 }
 
 /** -----------------------------
@@ -281,6 +328,7 @@ export default async function RunPage({
     jobs
   );
 
+  const showPhaseBadge = shouldShowPhaseBadge(run.status, phase);
   const jobSummary = summarizeJobs(jobs);
 
   const hasCompletenessIssues =
@@ -310,7 +358,7 @@ export default async function RunPage({
               <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
                 <span style={{ fontWeight: 700 }}>{run.status}</span>
-                <Badge badge={phase} />
+                {showPhaseBadge ? <Badge badge={phase} /> : null}
               </div>
               <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
                 Jobs: q {jobSummary.queued} · r {jobSummary.running} · ok {jobSummary.succeeded} · fail {jobSummary.failed}
@@ -355,9 +403,7 @@ export default async function RunPage({
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Badge badge={completeness} />
-            <span style={{ fontSize: 13, opacity: 0.8 }}>
-              Derived from observed checks (no silent assumptions).
-            </span>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>Derived from observed checks (no silent assumptions).</span>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
@@ -390,15 +436,11 @@ export default async function RunPage({
               {signals.permissionDenied.length === 0 &&
               signals.truncatedChecks.length === 0 &&
               signals.incompleteChecks.length === 0 ? (
-                <div style={{ opacity: 0.85 }}>
-                  Completeness warning present but no explicit details found in observed data.
-                </div>
+                <div style={{ opacity: 0.85 }}>Completeness warning present but no explicit details found in observed data.</div>
               ) : null}
             </div>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              No completeness warnings detected in observed checks.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No completeness warnings detected in observed checks.</div>
           )}
 
           {observed.length > 0 ? (
@@ -413,11 +455,77 @@ export default async function RunPage({
               </ul>
             </details>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              No observed checks recorded yet for this run.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No observed checks recorded yet for this run.</div>
           )}
         </div>
+      </div>
+
+      {/* Observed checks (source of truth) */}
+      <h3 style={{ marginTop: 0 }}>Observed checks</h3>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>
+        Source of truth for posture + completeness signals. Findings are derived from these checks.
+      </p>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f6f6f6" }}>
+            <tr>
+              <th style={{ textAlign: "left", padding: 10, width: 210 }}>Observed</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Check</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Collector</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Signals</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Data</th>
+            </tr>
+          </thead>
+          <tbody>
+            {observed.map((o) => {
+              const rowBadges = signalBadgesForRow(o);
+              return (
+                <tr key={o.id} style={{ borderTop: "1px solid #eee" }}>
+                  <td style={{ padding: 10, fontSize: 12 }}>{smallTime(o.observedAt)}</td>
+                  <td style={{ padding: 10 }}>
+                    <div style={{ fontWeight: 600 }}>
+                      <code>{o.checkId}</code>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                      id: <code>{o.id}</code>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                      job: <code>{o.jobId ?? "—"}</code>
+                    </div>
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    <code>{o.collectorId}</code>
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    {rowBadges.length > 0 ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {rowBadges.map((b) => (
+                          <Badge key={`${o.id}:${b.label}`} badge={b} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ opacity: 0.7 }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    <details>
+                      <summary style={{ cursor: "pointer" }}>view</summary>
+                      <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{safeString(o.data)}</pre>
+                    </details>
+                  </td>
+                </tr>
+              );
+            })}
+            {observed.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
+                  No observed checks recorded for this run.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
 
       <h3 style={{ marginTop: 0 }}>Reports</h3>
@@ -556,6 +664,10 @@ export default async function RunPage({
       </div>
 
       <h3 style={{ marginTop: 0 }}>Findings</h3>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>
+        Derived view (not a source of truth). Use observed checks above to understand completeness context.
+      </p>
+
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ background: "#f6f6f6" }}>
