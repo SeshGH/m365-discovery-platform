@@ -168,7 +168,11 @@ export default async function ObservedCheckPage({
           flexWrap: "wrap",
           gap: 8,
           alignItems: "center",
-          margin: "8px 0 14px 0"
+          margin: "8px 0 14px 0",
+          padding: "8px 10px",
+          border: "1px solid #eee",
+          borderRadius: 10,
+          background: "#fafafa"
         }}
       >
         <Badge badge={badge} />
