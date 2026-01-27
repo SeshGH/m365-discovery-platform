@@ -25,7 +25,8 @@ function safeString(v: unknown): string {
   }
 }
 
-function formatBytes(bytes: number) {
+function formatBytes(bytes: number | null | undefined) {
+  if (bytes === null || bytes === undefined) return "—";
   if (!Number.isFinite(bytes) || bytes < 0) return String(bytes);
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;
@@ -77,6 +78,25 @@ function Badge({ badge }: { badge: BadgeModel }) {
       {badge.label}
     </span>
   );
+}
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const s = String(severity ?? "").toLowerCase();
+
+  const badge: BadgeModel =
+    s === "critical"
+      ? { label: "critical", tone: "bad" }
+      : s === "high"
+        ? { label: "high", tone: "bad" }
+        : s === "medium"
+          ? { label: "medium", tone: "warn" }
+          : s === "low"
+            ? { label: "low", tone: "muted" }
+            : s === "info"
+              ? { label: "info", tone: "muted" }
+              : { label: s || "unknown", tone: "muted" };
+
+  return <Badge badge={badge} />;
 }
 
 /** -----------------------------
@@ -212,14 +232,32 @@ function observedRowSignals(o: ObservedCheckItem): string[] {
 
   const isTruncated = d.truncated === true || d?.completeness?.truncated === true;
 
-  const isIncomplete =
-    d.isComplete === false || d?.completeness?.isComplete === false;
+  const isIncomplete = d.isComplete === false || d?.completeness?.isComplete === false;
 
   const sigs: string[] = [];
   if (hasPd) sigs.push("permissionDenied");
   if (isTruncated) sigs.push("truncated");
   if (isIncomplete) sigs.push("incomplete");
   return sigs;
+}
+
+function groupObservedByCheckId(observed: ObservedCheckItem[]): Map<string, ObservedCheckItem[]> {
+  const m = new Map<string, ObservedCheckItem[]>();
+  for (const o of observed) {
+    const key = String(o.checkId ?? "");
+    if (!key) continue;
+    const arr = m.get(key) ?? [];
+    arr.push(o);
+    m.set(key, arr);
+  }
+
+  // Stable, predictable ordering within each bucket
+  for (const [k, arr] of m.entries()) {
+    arr.sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
+    m.set(k, arr);
+  }
+
+  return m;
 }
 
 /** -----------------------------
@@ -231,7 +269,7 @@ type ArtefactRow = {
   type: string;
   key: string;
   jobId: string | null;
-  sizeBytes: number;
+  sizeBytes: number | null;
   createdAt: string;
 };
 
@@ -265,28 +303,14 @@ export default async function RunPage({
 }) {
   const { tenantId, runId } = await params;
 
+  // All calls tenant-scoped via portal BFF (fail-closed)
   const [run, jobs, artefactsRaw, observed, findings] = await Promise.all([
-    getRun(runId),
-    listRunJobs(runId),
-    listRunArtefacts(runId),
-    listRunObservedChecks(runId),
-    listRunFindings(runId)
+    getRun(tenantId, runId),
+    listRunJobs(tenantId, runId),
+    listRunArtefacts(tenantId, runId),
+    listRunObservedChecks(tenantId, runId),
+    listRunFindings(tenantId, runId)
   ]);
-
-  // Tenant isolation (portal-side guardrail)
-  if (run.tenant?.id !== tenantId) {
-    return (
-      <main>
-        <p style={{ marginTop: 0 }}>
-          <Link href={`/t/${tenantId}`}>← Back to tenant</Link>
-        </p>
-        <h2 style={{ marginTop: 0 }}>Run not in tenant</h2>
-        <p style={{ opacity: 0.8 }}>
-          This run belongs to tenant <code>{run.tenant?.id}</code>, not <code>{tenantId}</code>.
-        </p>
-      </main>
-    );
-  }
 
   const completeness = badgeForObservedChecks(observed);
   const signals = extractSignals(observed);
@@ -296,7 +320,7 @@ export default async function RunPage({
     type: a.type,
     key: a.key,
     jobId: a.jobId ?? null,
-    sizeBytes: a.sizeBytes,
+    sizeBytes: a.sizeBytes ?? null,
     createdAt: a.createdAt
   }));
 
@@ -315,10 +339,12 @@ export default async function RunPage({
     signals.truncatedChecks.length > 0 ||
     signals.incompleteChecks.length > 0;
 
-  // Match your portal screenshot ordering: oldest -> newest
+  // Match your portal ordering: oldest -> newest
   const observedSorted = observed
     .slice()
     .sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
+
+  const observedByCheckId = groupObservedByCheckId(observedSorted);
 
   return (
     <main>
@@ -386,9 +412,7 @@ export default async function RunPage({
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Badge badge={completeness} />
-            <span style={{ fontSize: 13, opacity: 0.8 }}>
-              Derived from observed checks (no silent assumptions).
-            </span>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>Derived from observed checks (no silent assumptions).</span>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
@@ -421,15 +445,11 @@ export default async function RunPage({
               {signals.permissionDenied.length === 0 &&
               signals.truncatedChecks.length === 0 &&
               signals.incompleteChecks.length === 0 ? (
-                <div style={{ opacity: 0.85 }}>
-                  Completeness warning present but no explicit details found in observed data.
-                </div>
+                <div style={{ opacity: 0.85 }}>Completeness warning present but no explicit details found in observed data.</div>
               ) : null}
             </div>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              No completeness warnings detected in observed checks.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No completeness warnings detected in observed checks.</div>
           )}
 
           {observed.length > 0 ? (
@@ -444,9 +464,7 @@ export default async function RunPage({
               </ul>
             </details>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              No observed checks recorded yet for this run.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No observed checks recorded yet for this run.</div>
           )}
         </div>
       </div>
@@ -494,11 +512,7 @@ export default async function RunPage({
                     <code>{o.collectorId}</code>
                   </td>
                   <td style={{ padding: 10, fontSize: 12 }}>
-                    {sigs.length > 0 ? (
-                      <span style={{ opacity: 0.9 }}>{sigs.join(", ")}</span>
-                    ) : (
-                      <span style={{ opacity: 0.7 }}>—</span>
-                    )}
+                    {sigs.length > 0 ? <span style={{ opacity: 0.9 }}>{sigs.join(", ")}</span> : <span style={{ opacity: 0.7 }}>—</span>}
                   </td>
                   <td style={{ padding: 10, fontSize: 12 }}>
                     <Link href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>view</Link>
@@ -603,9 +617,7 @@ export default async function RunPage({
       </div>
 
       <h3 style={{ marginTop: 0 }}>Artefacts</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Raw artefacts (sources of truth). Reports are shown above.
-      </p>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>Raw artefacts (sources of truth). Reports are shown above.</p>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -654,7 +666,7 @@ export default async function RunPage({
 
       <h3 style={{ marginTop: 0 }}>Findings</h3>
       <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Derived view (not a source of truth). Use observed checks above to understand completeness context.
+        Derived view (not a source of truth). Each finding links back to its supporting observed checks.
       </p>
 
       <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
@@ -664,23 +676,74 @@ export default async function RunPage({
               <th style={{ textAlign: "left", padding: 10 }}>Severity</th>
               <th style={{ textAlign: "left", padding: 10 }}>Check</th>
               <th style={{ textAlign: "left", padding: 10 }}>Title</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Evidence</th>
               <th style={{ textAlign: "left", padding: 10 }}>Recommendation</th>
             </tr>
           </thead>
           <tbody>
-            {findings.map((f) => (
-              <tr key={f.id} style={{ borderTop: "1px solid #eee" }}>
-                <td style={{ padding: 10 }}>{f.severity}</td>
-                <td style={{ padding: 10 }}>
-                  <code>{f.checkId}</code>
-                </td>
-                <td style={{ padding: 10 }}>{f.title}</td>
-                <td style={{ padding: 10, fontSize: 12, opacity: 0.9 }}>{f.recommendation}</td>
-              </tr>
-            ))}
+            {findings.map((f) => {
+              const supporting = observedByCheckId.get(String(f.checkId ?? "")) ?? [];
+              const evidenceBadge =
+                supporting.length > 0 ? badgeForObservedChecks(supporting) : { label: "no observed", tone: "muted" as const };
+
+              const first = supporting[0] ?? null;
+              const extra = supporting.length > 1 ? supporting.slice(1, 4) : [];
+
+              return (
+                <tr key={f.id} style={{ borderTop: "1px solid #eee" }}>
+                  <td style={{ padding: 10 }}>
+                    <SeverityBadge severity={f.severity} />
+                  </td>
+                  <td style={{ padding: 10 }}>
+                    <code>{f.checkId}</code>
+                  </td>
+                  <td style={{ padding: 10 }}>{f.title}</td>
+
+                  <td style={{ padding: 10, fontSize: 12 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <Badge badge={evidenceBadge} />
+                      <span style={{ opacity: 0.75 }}>
+                        {supporting.length} observed
+                      </span>
+                    </div>
+
+                    {first ? (
+                      <div style={{ marginTop: 6 }}>
+                        <Link href={`/t/${tenantId}/runs/${runId}/observed/${first.id}`}>view observed</Link>
+                        <span style={{ opacity: 0.7 }}> · </span>
+                        <span style={{ opacity: 0.8 }}>{smallTime(first.observedAt)}</span>
+                        <span style={{ opacity: 0.7 }}> · </span>
+                        <code style={{ opacity: 0.9 }}>{first.collectorId}</code>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 6, opacity: 0.7 }}>No supporting observed checks found for this checkId.</div>
+                    )}
+
+                    {extra.length > 0 ? (
+                      <details style={{ marginTop: 6 }}>
+                        <summary style={{ cursor: "pointer" }}>More evidence ({supporting.length - 1})</summary>
+                        <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+                          {extra.map((o) => (
+                            <li key={o.id}>
+                              <Link href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>observed</Link>{" "}
+                              <span style={{ opacity: 0.75 }}>{smallTime(o.observedAt)}</span>{" "}
+                              <span style={{ opacity: 0.7 }}>·</span>{" "}
+                              <code style={{ fontSize: 12 }}>{o.collectorId}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </td>
+
+                  <td style={{ padding: 10, fontSize: 12, opacity: 0.9 }}>{f.recommendation ?? "—"}</td>
+                </tr>
+              );
+            })}
+
             {findings.length === 0 ? (
               <tr>
-                <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
                   No findings recorded for this run.
                 </td>
               </tr>
