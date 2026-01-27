@@ -2,13 +2,7 @@
 import Link from "next/link";
 import "server-only";
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`[portal] Missing env var: ${name}`);
-  return v;
-}
-
-const API_BASE = requireEnv("PORTAL_API_BASE_URL").replace(/\/+$/, "");
+import { listRunObservedChecks, type ObservedCheckItem } from "@/lib/api";
 
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
 type BadgeModel = { label: string; tone: BadgeTone };
@@ -65,52 +59,6 @@ function isMeaningful(value: unknown): boolean {
   return true;
 }
 
-type ObservedCheckDetail = {
-  id: string;
-  runId: string;
-  jobId: string | null;
-  checkId: string;
-  collectorId: string;
-  observedAt: string;
-  data: unknown;
-  ruleId: string | null;
-  references: unknown;
-  createdAt: string;
-};
-
-async function apiFetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    cache: "no-store",
-    headers: { accept: "application/json" }
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `[portal] API error ${res.status} ${res.statusText} for ${path}${text ? ` :: ${text}` : ""}`
-    );
-  }
-
-  return (await res.json()) as T;
-}
-
-/**
- * Endpoint shape varies a bit across iterations, so we try the most likely paths.
- * - /observed-checks/:id (common)
- * - /runs/:runId/observed-checks/:id (scoped variant)
- */
-async function getObservedCheck(runId: string, observedId: string): Promise<ObservedCheckDetail> {
-  try {
-    return await apiFetchJson<ObservedCheckDetail>(`/observed-checks/${observedId}`);
-  } catch (e: any) {
-    const msg = String(e?.message ?? "");
-    if (msg.includes(" 404 ")) {
-      return apiFetchJson<ObservedCheckDetail>(`/runs/${runId}/observed-checks/${observedId}`);
-    }
-    throw e;
-  }
-}
-
 function completenessFromData(data: unknown): {
   badge: BadgeModel;
   permissionDenied: string[];
@@ -133,11 +81,10 @@ function completenessFromData(data: unknown): {
 
   const profile = typeof d?.profile === "string" ? d.profile : null;
 
-  // UX nit: make the badge text self-describing
-  let badge: BadgeModel = { label: "completeness: ok", tone: "ok" };
-  if (permissionDenied.length > 0) badge = { label: "completeness: permission-denied", tone: "warn" };
-  else if (truncated) badge = { label: "completeness: truncated", tone: "warn" };
-  else if (isCompleteRaw === false) badge = { label: "completeness: partial", tone: "warn" };
+  let badge: BadgeModel = { label: "ok", tone: "ok" };
+  if (permissionDenied.length > 0) badge = { label: "permission-denied", tone: "warn" };
+  else if (truncated) badge = { label: "truncated", tone: "warn" };
+  else if (isCompleteRaw === false) badge = { label: "partial", tone: "warn" };
 
   return { badge, permissionDenied, truncated, isComplete: isCompleteRaw, profile };
 }
@@ -165,6 +112,11 @@ function pickKpiPairs(data: unknown): Array<[string, string]> {
   return out.slice(0, 6);
 }
 
+async function getObservedCheckFromRun(runId: string, observedId: string): Promise<ObservedCheckItem | null> {
+  const all = await listRunObservedChecks(runId);
+  return all.find((x) => x.id === observedId) ?? null;
+}
+
 export default async function ObservedCheckPage({
   params
 }: {
@@ -172,7 +124,36 @@ export default async function ObservedCheckPage({
 }) {
   const { tenantId, runId, observedId } = await params;
 
-  const observed = await getObservedCheck(runId, observedId);
+  const observed = await getObservedCheckFromRun(runId, observedId);
+
+  if (!observed) {
+    return (
+      <main>
+        <p style={{ marginTop: 0 }}>
+          <Link href={`/t/${tenantId}/runs/${runId}`}>← Back to run</Link>
+        </p>
+        <h2 style={{ marginTop: 0 }}>Observed check not found</h2>
+        <p style={{ opacity: 0.8 }}>
+          Could not find observed check <code>{observedId}</code> in run <code>{runId}</code>.
+        </p>
+      </main>
+    );
+  }
+
+  // Guardrail: if API ever returns a mismatched runId (shouldn't), fail closed.
+  if (observed.runId !== runId) {
+    return (
+      <main>
+        <p style={{ marginTop: 0 }}>
+          <Link href={`/t/${tenantId}/runs/${runId}`}>← Back to run</Link>
+        </p>
+        <h2 style={{ marginTop: 0 }}>Observed check not in run</h2>
+        <p style={{ opacity: 0.8 }}>
+          This observed check belongs to run <code>{observed.runId}</code>, not <code>{runId}</code>.
+        </p>
+      </main>
+    );
+  }
 
   const { badge, permissionDenied, isComplete, profile } = completenessFromData(observed.data);
   const kpis = pickKpiPairs(observed.data);
@@ -192,14 +173,12 @@ export default async function ObservedCheckPage({
 
       <h2 style={{ marginTop: 0 }}>Observed check</h2>
 
-      {/* Tiny summary strip (B) */}
+      {/* Tiny summary strip */}
       <div
         style={{
           display: "flex",
           flexWrap: "wrap",
-          // UX nit: make spacing robust (avoid "glued together" feel)
-          columnGap: 8,
-          rowGap: 8,
+          gap: 8,
           alignItems: "center",
           margin: "8px 0 14px 0"
         }}
@@ -290,7 +269,6 @@ export default async function ObservedCheckPage({
         {safeJson(observed.data)}
       </pre>
 
-      {/* (A) Hide empty references */}
       {showReferences ? (
         <>
           <h3 style={{ marginTop: 16 }}>References</h3>
