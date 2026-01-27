@@ -778,6 +778,44 @@ app.get("/runs/:runId/observed-checks", async (req, reply) => {
   return observed;
 });
 
+// --------------------
+// GET /observed-checks/:observedId  (GLOBAL detail)
+// --------------------
+app.get("/observed-checks/:observedId", async (req, reply) => {
+  const { observedId } = req.params as { observedId: string };
+
+  const observed = await prisma.observedCheck.findUnique({
+    where: { id: observedId }
+  });
+
+  if (!observed) return reply.code(404).send({ error: "Observed check not found" });
+
+  return observed;
+});
+
+// --------------------
+// GET /runs/:runId/observed-checks/:observedId  (run-scoped detail)
+// --------------------
+app.get("/runs/:runId/observed-checks/:observedId", async (req, reply) => {
+  const { runId, observedId } = req.params as { runId: string; observedId: string };
+
+  // Keep consistent with other run-scoped endpoints: validate run exists first
+  const runExists = await prisma.run.findUnique({
+    where: { id: runId },
+    select: { id: true }
+  });
+  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+
+  // Fail-closed: observed check must belong to the run
+  const observed = await prisma.observedCheck.findFirst({
+    where: { id: observedId, runId }
+  });
+
+  if (!observed) return reply.code(404).send({ error: "Observed check not found for run" });
+
+  return observed;
+});
+
 // List artefacts for a run (includes bucket/key + jobId)
 app.get("/runs/:runId/artefacts", async (req, reply) => {
   const { runId } = req.params as { runId: string };
