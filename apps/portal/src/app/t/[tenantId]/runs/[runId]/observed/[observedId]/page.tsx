@@ -3,7 +3,9 @@ import Link from "next/link";
 import {
   getRunObservedCheck,
   listRunObservedChecks,
-  type ObservedCheckItem
+  listRunFindings,
+  type ObservedCheckItem,
+  type FindingItem
 } from "@/lib/api";
 
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
@@ -45,6 +47,24 @@ function Badge({ badge }: { badge: BadgeModel }) {
   );
 }
 
+function SeverityBadge({ severity }: { severity: string }) {
+  const s = String(severity ?? "").toLowerCase();
+  const badge: BadgeModel =
+    s === "critical"
+      ? { label: "critical", tone: "bad" }
+      : s === "high"
+        ? { label: "high", tone: "bad" }
+        : s === "medium"
+          ? { label: "medium", tone: "warn" }
+          : s === "low"
+            ? { label: "low", tone: "muted" }
+            : s === "info"
+              ? { label: "info", tone: "muted" }
+              : { label: s || "unknown", tone: "muted" };
+
+  return <Badge badge={badge} />;
+}
+
 function safeJson(v: unknown): string {
   try {
     return JSON.stringify(v, null, 2);
@@ -70,17 +90,8 @@ function completenessFromData(data: unknown): {
 } {
   const d = data && typeof data === "object" ? (data as any) : null;
 
-  // Support both legacy and newer nested completeness forms
-  const permissionDeniedRaw =
-    d && Array.isArray(d.permissionDenied)
-      ? d.permissionDenied
-      : d?.completeness && Array.isArray(d.completeness.permissionDenied)
-        ? d.completeness.permissionDenied
-        : [];
-
-  const permissionDenied = (permissionDeniedRaw as unknown[]).filter(
-    (x) => typeof x === "string"
-  ) as string[];
+  const permissionDenied =
+    d && Array.isArray(d.permissionDenied) ? d.permissionDenied.filter((x: any) => typeof x === "string") : [];
 
   const truncated = Boolean(d?.truncated === true || d?.completeness?.truncated === true);
 
@@ -124,25 +135,20 @@ function pickKpiPairs(data: unknown): Array<[string, string]> {
   return out.slice(0, 6);
 }
 
-async function getObservedDetailWithFallback(params: {
-  tenantId: string;
-  runId: string;
-  observedId: string;
-}): Promise<ObservedCheckItem> {
-  const { tenantId, runId, observedId } = params;
+function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
+  return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+}
 
-  // Preferred: tenant+run scoped detail route (BFF enforces tenant isolation)
+async function getObservedDetailWithFallback(tenantId: string, runId: string, observedId: string): Promise<ObservedCheckItem> {
+  // Preferred: run-scoped detail route (tenant-scoped via BFF in lib/api)
   try {
     return await getRunObservedCheck(tenantId, runId, observedId);
   } catch {
-    // Last resort: list + filter (keeps page resilient without breaking isolation)
+    // Last resort: list + filter (keeps the page working even if detail routes drift)
     const list = await listRunObservedChecks(tenantId, runId);
     const found = list.find((x) => x.id === observedId);
     if (found) return found;
-
-    throw new Error(
-      `[portal] Observed check not found (tenantId=${tenantId}, runId=${runId}, observedId=${observedId})`
-    );
+    throw new Error(`[portal] Observed check not found (runId=${runId}, observedId=${observedId})`);
   }
 }
 
@@ -153,7 +159,14 @@ export default async function ObservedCheckPage({
 }) {
   const { tenantId, runId, observedId } = await params;
 
-  const observed = await getObservedDetailWithFallback({ tenantId, runId, observedId });
+  const [observed, findings] = await Promise.all([
+    getObservedDetailWithFallback(tenantId, runId, observedId),
+    listRunFindings(tenantId, runId)
+  ]);
+
+  const related: FindingItem[] = findings
+    .filter((f) => String(f.checkId ?? "") === String(observed.checkId ?? ""))
+    .sort(sortByCreatedDesc);
 
   const { badge, permissionDenied, isComplete, profile } = completenessFromData(observed.data);
   const kpis = pickKpiPairs(observed.data);
@@ -191,9 +204,7 @@ export default async function ObservedCheckPage({
         {profile ? <Badge badge={{ label: `profile: ${profile}`, tone: "muted" }} /> : null}
         {isComplete === true ? <Badge badge={{ label: "isComplete: true", tone: "ok" }} /> : null}
         {isComplete === false ? <Badge badge={{ label: "isComplete: false", tone: "warn" }} /> : null}
-        {permissionDenied.length > 0 ? (
-          <Badge badge={{ label: `permissionDenied: ${permissionDenied.length}`, tone: "warn" }} />
-        ) : null}
+        {permissionDenied.length > 0 ? <Badge badge={{ label: `permissionDenied: ${permissionDenied.length}`, tone: "warn" }} /> : null}
         {kpis.map(([k, v]) => (
           <Badge key={k} badge={{ label: `${k}: ${v}`, tone: "muted" }} />
         ))}
@@ -232,15 +243,7 @@ export default async function ObservedCheckPage({
       </div>
 
       {permissionDenied.length > 0 ? (
-        <div
-          style={{
-            border: "1px solid #f2d39b",
-            background: "#fff9ec",
-            borderRadius: 10,
-            padding: 12,
-            marginBottom: 12
-          }}
-        >
+        <div style={{ border: "1px solid #f2d39b", background: "#fff9ec", borderRadius: 10, padding: 12, marginBottom: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Permission denied</div>
           <div style={{ fontSize: 13, opacity: 0.9 }}>{permissionDenied.join(", ")}</div>
         </div>
@@ -258,6 +261,54 @@ export default async function ObservedCheckPage({
           </ul>
         </div>
       ) : null}
+
+      {/* NEW: related findings */}
+      <h3 style={{ marginTop: 0 }}>Related findings</h3>
+      <p style={{ marginTop: 0, opacity: 0.75 }}>
+        Findings derived from this checkId (<code>{observed.checkId}</code>) in this run.
+      </p>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f6f6f6" }}>
+            <tr>
+              <th style={{ textAlign: "left", padding: 10 }}>Severity</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Title</th>
+              <th style={{ textAlign: "left", padding: 10 }}>Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {related.map((f) => (
+              <tr key={f.id} style={{ borderTop: "1px solid #eee" }}>
+                <td style={{ padding: 10 }}>
+                  <SeverityBadge severity={f.severity} />
+                </td>
+                <td style={{ padding: 10 }}>
+                  <div style={{ fontWeight: 600 }}>{f.title}</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    finding: <code>{f.id}</code>
+                    {f.jobId ? (
+                      <>
+                        {" "}
+                        · job: <code>{f.jobId}</code>
+                      </>
+                    ) : null}
+                  </div>
+                </td>
+                <td style={{ padding: 10, fontSize: 12, opacity: 0.9 }}>{f.recommendation ?? "—"}</td>
+              </tr>
+            ))}
+
+            {related.length === 0 ? (
+              <tr>
+                <td colSpan={3} style={{ padding: 10, opacity: 0.7 }}>
+                  No findings in this run reference this checkId.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
 
       <h3 style={{ marginTop: 0 }}>Data</h3>
       <pre
