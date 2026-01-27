@@ -326,3 +326,45 @@ code{
   color: var(--bad-fg);
   border-color: rgba(231, 76, 60, 0.40);
 }
+
+/* ---------- Text color normalization (dark theme safety) ---------- */
+
+body,
+.page,
+.card,
+.table,
+.table th,
+.table td {
+  color: var(--text);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text);
+}
+
+strong {
+  color: var(--text);
+}
+
+code {
+  color: rgba(255,255,255,0.9);
+}
+
+/* Ensure links are readable on dark bg */
+a,
+.link {
+  color: rgba(255,255,255,0.92);
+}
+a:hover,
+.link:hover {
+  color: #ffffff;
+}
+
+/* Muted helpers (explicit, predictable) */
+.subtle {
+  color: var(--muted);
+}
+
+.muted2 {
+  color: var(--muted2);
+}
