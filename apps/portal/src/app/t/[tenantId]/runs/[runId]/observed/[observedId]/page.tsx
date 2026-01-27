@@ -1,8 +1,11 @@
 // apps/portal/src/app/t/[tenantId]/runs/[runId]/observed/[observedId]/page.tsx
 import Link from "next/link";
-import "server-only";
-
-import { listRunObservedChecks, type ObservedCheckItem } from "@/lib/api";
+import {
+  getObservedCheck,
+  getRunObservedCheck,
+  listRunObservedChecks,
+  type ObservedCheckItem
+} from "@/lib/api";
 
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
 type BadgeModel = { label: string; tone: BadgeTone };
@@ -72,6 +75,7 @@ function completenessFromData(data: unknown): {
     d && Array.isArray(d.permissionDenied) ? d.permissionDenied.filter((x: any) => typeof x === "string") : [];
 
   const truncated = Boolean(d?.truncated === true || d?.completeness?.truncated === true);
+
   const isCompleteRaw =
     typeof d?.isComplete === "boolean"
       ? d.isComplete
@@ -112,9 +116,22 @@ function pickKpiPairs(data: unknown): Array<[string, string]> {
   return out.slice(0, 6);
 }
 
-async function getObservedCheckFromRun(runId: string, observedId: string): Promise<ObservedCheckItem | null> {
-  const all = await listRunObservedChecks(runId);
-  return all.find((x) => x.id === observedId) ?? null;
+async function getObservedDetailWithFallback(runId: string, observedId: string): Promise<ObservedCheckItem> {
+  // Preferred: run-scoped detail route
+  try {
+    return await getRunObservedCheck(runId, observedId);
+  } catch {
+    // Next: global detail route
+    try {
+      return await getObservedCheck(observedId);
+    } catch {
+      // Last resort: list + filter (keeps the page working even if detail routes drift)
+      const list = await listRunObservedChecks(runId);
+      const found = list.find((x) => x.id === observedId);
+      if (found) return found;
+      throw new Error(`[portal] Observed check not found (runId=${runId}, observedId=${observedId})`);
+    }
+  }
 }
 
 export default async function ObservedCheckPage({
@@ -124,36 +141,7 @@ export default async function ObservedCheckPage({
 }) {
   const { tenantId, runId, observedId } = await params;
 
-  const observed = await getObservedCheckFromRun(runId, observedId);
-
-  if (!observed) {
-    return (
-      <main>
-        <p style={{ marginTop: 0 }}>
-          <Link href={`/t/${tenantId}/runs/${runId}`}>← Back to run</Link>
-        </p>
-        <h2 style={{ marginTop: 0 }}>Observed check not found</h2>
-        <p style={{ opacity: 0.8 }}>
-          Could not find observed check <code>{observedId}</code> in run <code>{runId}</code>.
-        </p>
-      </main>
-    );
-  }
-
-  // Guardrail: if API ever returns a mismatched runId (shouldn't), fail closed.
-  if (observed.runId !== runId) {
-    return (
-      <main>
-        <p style={{ marginTop: 0 }}>
-          <Link href={`/t/${tenantId}/runs/${runId}`}>← Back to run</Link>
-        </p>
-        <h2 style={{ marginTop: 0 }}>Observed check not in run</h2>
-        <p style={{ opacity: 0.8 }}>
-          This observed check belongs to run <code>{observed.runId}</code>, not <code>{runId}</code>.
-        </p>
-      </main>
-    );
-  }
+  const observed = await getObservedDetailWithFallback(runId, observedId);
 
   const { badge, permissionDenied, isComplete, profile } = completenessFromData(observed.data);
   const kpis = pickKpiPairs(observed.data);
@@ -173,7 +161,7 @@ export default async function ObservedCheckPage({
 
       <h2 style={{ marginTop: 0 }}>Observed check</h2>
 
-      {/* Tiny summary strip */}
+      {/* Summary strip */}
       <div
         style={{
           display: "flex",
@@ -269,6 +257,7 @@ export default async function ObservedCheckPage({
         {safeJson(observed.data)}
       </pre>
 
+      {/* Hide empty references */}
       {showReferences ? (
         <>
           <h3 style={{ marginTop: 16 }}>References</h3>

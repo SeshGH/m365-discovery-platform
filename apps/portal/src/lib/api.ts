@@ -198,3 +198,17 @@ export async function listRunObservedChecks(runId: string): Promise<ObservedChec
 export async function listRunFindings(runId: string): Promise<FindingItem[]> {
   return apiFetch<FindingItem[]>(`/runs/${runId}/findings`);
 }
+
+/**
+ * Observed check detail (preferred): run-scoped route
+ */
+export async function getRunObservedCheck(runId: string, observedId: string): Promise<ObservedCheckItem> {
+  return apiFetch<ObservedCheckItem>(`/runs/${runId}/observed-checks/${observedId}`);
+}
+
+/**
+ * Observed check detail (global): useful for linking without run context
+ */
+export async function getObservedCheck(observedId: string): Promise<ObservedCheckItem> {
+  return apiFetch<ObservedCheckItem>(`/observed-checks/${observedId}`);
+}
