@@ -1,5 +1,6 @@
 // apps/portal/src/app/layout.tsx
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "M365 Discovery Portal",
@@ -9,13 +10,19 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ fontFamily: "system-ui, Segoe UI, Roboto, Arial, sans-serif", margin: 0 }}>
-        <div style={{ padding: 16, maxWidth: 1100, margin: "0 auto" }}>
-          <header style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
-            <h1 style={{ margin: 0, fontSize: 20 }}>M365 Discovery Portal</h1>
-            <span style={{ opacity: 0.7, fontSize: 12 }}>prototype (contract-consumer)</span>
+      <body>
+        <div className="container">
+          <header className="header">
+            <div className="brand">
+              <h1>M365 Discovery Portal</h1>
+              <span>prototype (contract-consumer)</span>
+            </div>
+            <div className="actions">
+              <a className="link" href="/tenants">Tenants</a>
+            </div>
           </header>
-          {children}
+
+          <div className="page">{children}</div>
         </div>
       </body>
     </html>
