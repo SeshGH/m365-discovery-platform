@@ -38,65 +38,18 @@ function formatBytes(bytes: number | null | undefined) {
 }
 
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
-
-type BadgeModel = {
-  label: string;
-  tone: BadgeTone;
-};
+type BadgeModel = { label: string; tone: BadgeTone };
 
 function Badge({ badge }: { badge: BadgeModel }) {
-  const bg =
+  const cls =
     badge.tone === "ok"
-      ? "#e7f7ed"
+      ? "badge ok"
       : badge.tone === "warn"
-        ? "#fff4d6"
+        ? "badge warn"
         : badge.tone === "bad"
-          ? "#fde7e9"
-          : "#eee";
-
-  const fg =
-    badge.tone === "ok"
-      ? "#116329"
-      : badge.tone === "warn"
-        ? "#8a5a00"
-        : badge.tone === "bad"
-          ? "#a4262c"
-          : "#444";
-
-  return (
-    <span
-      style={{
-        background: bg,
-        color: fg,
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 12,
-        lineHeight: "16px",
-        whiteSpace: "nowrap"
-      }}
-    >
-      {badge.label}
-    </span>
-  );
-}
-
-function SeverityBadge({ severity }: { severity: string }) {
-  const s = String(severity ?? "").toLowerCase();
-
-  const badge: BadgeModel =
-    s === "critical"
-      ? { label: "critical", tone: "bad" }
-      : s === "high"
-        ? { label: "high", tone: "bad" }
-        : s === "medium"
-          ? { label: "medium", tone: "warn" }
-          : s === "low"
-            ? { label: "low", tone: "muted" }
-            : s === "info"
-              ? { label: "info", tone: "muted" }
-              : { label: s || "unknown", tone: "muted" };
-
-  return <Badge badge={badge} />;
+          ? "badge bad"
+          : "badge";
+  return <span className={cls}>{badge.label}</span>;
 }
 
 /** -----------------------------
@@ -231,7 +184,6 @@ function observedRowSignals(o: ObservedCheckItem): string[] {
     (Array.isArray(d?.completeness?.permissionDenied) && d.completeness.permissionDenied.length > 0);
 
   const isTruncated = d.truncated === true || d?.completeness?.truncated === true;
-
   const isIncomplete = d.isComplete === false || d?.completeness?.isComplete === false;
 
   const sigs: string[] = [];
@@ -239,25 +191,6 @@ function observedRowSignals(o: ObservedCheckItem): string[] {
   if (isTruncated) sigs.push("truncated");
   if (isIncomplete) sigs.push("incomplete");
   return sigs;
-}
-
-function groupObservedByCheckId(observed: ObservedCheckItem[]): Map<string, ObservedCheckItem[]> {
-  const m = new Map<string, ObservedCheckItem[]>();
-  for (const o of observed) {
-    const key = String(o.checkId ?? "");
-    if (!key) continue;
-    const arr = m.get(key) ?? [];
-    arr.push(o);
-    m.set(key, arr);
-  }
-
-  // Stable, predictable ordering within each bucket
-  for (const [k, arr] of m.entries()) {
-    arr.sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
-    m.set(k, arr);
-  }
-
-  return m;
 }
 
 /** -----------------------------
@@ -339,150 +272,145 @@ export default async function RunPage({
     signals.truncatedChecks.length > 0 ||
     signals.incompleteChecks.length > 0;
 
-  // Match your portal ordering: oldest -> newest
-  const observedSorted = observed
-    .slice()
-    .sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
-
-  const observedByCheckId = groupObservedByCheckId(observedSorted);
+  // Oldest -> newest
+  const observedSorted = observed.slice().sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
 
   return (
     <main>
-      <p style={{ marginTop: 0 }}>
-        <Link href={`/t/${tenantId}`}>← Back to tenant</Link>
+      <p style={{ margin: "10px 0 0 0" }}>
+        <Link className="link" href={`/t/${tenantId}`}>← Back to tenant</Link>
       </p>
 
-      <h2 style={{ marginTop: 0 }}>Run overview</h2>
+      <h2>Run overview</h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <div className="grid-2" style={{ marginBottom: 12 }}>
+        <div className="card card-pad">
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
             <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Run ID</div>
-              <div>
-                <code>{run.id}</code>
-              </div>
+              <div className="subtle">Run ID</div>
+              <div><code>{run.id}</code></div>
             </div>
+
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Status</div>
+              <div className="subtle">Status</div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
-                <span style={{ fontWeight: 700 }}>{run.status}</span>
+                <strong>{run.status}</strong>
                 <Badge badge={phase} />
               </div>
-              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+              <div className="subtle" style={{ marginTop: 6 }}>
                 Jobs: q {jobSummary.queued} · r {jobSummary.running} · ok {jobSummary.succeeded} · fail {jobSummary.failed}
                 {jobSummary.other > 0 ? ` · other ${jobSummary.other}` : ""}
               </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 13 }}>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Profile</div>
-              <div>{run.dataProfile}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Triggered</div>
-              <div>{run.triggeredBy ?? "—"}</div>
-            </div>
-          </div>
+          <div style={{ height: 10 }} />
 
-          <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 13 }}>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Created</div>
-              <div>{smallTime(run.createdAt)}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Started</div>
-              <div>{smallTime(run.startedAt)}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Ended</div>
-              <div>{smallTime(run.endedAt)}</div>
-            </div>
-          </div>
+          <div className="kv">
+            <div className="k">Profile</div>
+            <div className="v">{run.dataProfile}</div>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Counts: jobs {run.counts.jobs} · findings {run.counts.findings} · artefacts {run.counts.artefacts}
+            <div className="k">Triggered</div>
+            <div className="v">{run.triggeredBy ?? "—"}</div>
+
+            <div className="k">Created</div>
+            <div className="v">{smallTime(run.createdAt)}</div>
+
+            <div className="k">Started</div>
+            <div className="v">{smallTime(run.startedAt)}</div>
+
+            <div className="k">Ended</div>
+            <div className="v">{smallTime(run.endedAt)}</div>
+
+            <div className="k">Counts</div>
+            <div className="v">
+              jobs {run.counts.jobs} · findings {run.counts.findings} · artefacts {run.counts.artefacts}
+            </div>
           </div>
         </div>
 
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Completeness</h3>
+        <div className="card card-pad">
+          <h3 style={{ marginTop: 0 }}>Completeness</h3>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <Badge badge={completeness} />
-            <span style={{ fontSize: 13, opacity: 0.8 }}>Derived from observed checks (no silent assumptions).</span>
+            <span className="subtle">Derived from observed checks (no silent assumptions).</span>
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+          <div className="subtle" style={{ marginTop: 10 }}>
             Observed checks: {observed.length} · Findings: {findings.length} · Artefacts: {artefacts.length}
           </div>
 
           {hasCompletenessIssues ? (
-            <div style={{ marginTop: 10, fontSize: 12 }}>
+            <div style={{ marginTop: 10, fontSize: 13 }}>
               {signals.permissionDenied.length > 0 ? (
                 <div style={{ marginBottom: 6 }}>
                   <strong>Permission denied:</strong>{" "}
-                  <span style={{ opacity: 0.85 }}>{signals.permissionDenied.join(", ")}</span>
+                  <span style={{ color: "var(--muted)" }}>{signals.permissionDenied.join(", ")}</span>
                 </div>
               ) : null}
 
               {signals.truncatedChecks.length > 0 ? (
                 <div style={{ marginBottom: 6 }}>
                   <strong>Truncated checks:</strong>{" "}
-                  <span style={{ opacity: 0.85 }}>{signals.truncatedChecks.join(", ")}</span>
+                  <span style={{ color: "var(--muted)" }}>{signals.truncatedChecks.join(", ")}</span>
                 </div>
               ) : null}
 
               {signals.incompleteChecks.length > 0 ? (
                 <div>
                   <strong>Incomplete checks:</strong>{" "}
-                  <span style={{ opacity: 0.85 }}>{signals.incompleteChecks.join(", ")}</span>
+                  <span style={{ color: "var(--muted)" }}>{signals.incompleteChecks.join(", ")}</span>
                 </div>
               ) : null}
 
               {signals.permissionDenied.length === 0 &&
               signals.truncatedChecks.length === 0 &&
               signals.incompleteChecks.length === 0 ? (
-                <div style={{ opacity: 0.85 }}>Completeness warning present but no explicit details found in observed data.</div>
+                <div style={{ color: "var(--muted)" }}>
+                  Completeness warning present but no explicit details found in observed data.
+                </div>
               ) : null}
             </div>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No completeness warnings detected in observed checks.</div>
+            <div className="subtle" style={{ marginTop: 10 }}>
+              No completeness warnings detected in observed checks.
+            </div>
           )}
 
           {observed.length > 0 ? (
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer" }}>Show observed check IDs</summary>
-              <ul style={{ marginTop: 8 }}>
+              <ul style={{ marginTop: 8, paddingLeft: 18, color: "var(--muted)" }}>
                 {observed.map((o) => (
                   <li key={o.id}>
-                    <code>{o.checkId}</code> <span style={{ opacity: 0.7 }}>({o.collectorId})</span>
+                    <code>{o.checkId}</code> <span style={{ opacity: 0.8 }}>({o.collectorId})</span>
                   </li>
                 ))}
               </ul>
             </details>
           ) : (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>No observed checks recorded yet for this run.</div>
+            <div className="subtle" style={{ marginTop: 10 }}>
+              No observed checks recorded yet for this run.
+            </div>
           )}
         </div>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Observed checks</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
+      <h3>Observed checks</h3>
+      <p className="subtle">
         Source of truth for posture + completeness signals. Findings are derived from these checks.
       </p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
+        <table className="table">
+          <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Observed</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Check</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Collector</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Signals</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Data</th>
+              <th>Observed</th>
+              <th>Check</th>
+              <th>Collector</th>
+              <th>Signals</th>
+              <th>Data</th>
             </tr>
           </thead>
           <tbody>
@@ -490,15 +418,15 @@ export default async function RunPage({
               const sigs = observedRowSignals(o);
 
               return (
-                <tr key={o.id} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={{ padding: 10, fontSize: 12 }}>
-                    <div>{smallTime(o.observedAt)}</div>
+                <tr key={o.id}>
+                  <td style={{ width: 170 }}>
+                    <div style={{ color: "var(--muted)" }}>{smallTime(o.observedAt)}</div>
                   </td>
-                  <td style={{ padding: 10 }}>
-                    <div style={{ fontWeight: 600 }}>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>
                       <code>{o.checkId}</code>
                     </div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
                       id: <code>{o.id}</code>
                       {o.jobId ? (
                         <>
@@ -508,21 +436,21 @@ export default async function RunPage({
                       ) : null}
                     </div>
                   </td>
-                  <td style={{ padding: 10, fontSize: 12 }}>
+                  <td style={{ fontSize: 12 }}>
                     <code>{o.collectorId}</code>
                   </td>
-                  <td style={{ padding: 10, fontSize: 12 }}>
-                    {sigs.length > 0 ? <span style={{ opacity: 0.9 }}>{sigs.join(", ")}</span> : <span style={{ opacity: 0.7 }}>—</span>}
+                  <td style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {sigs.length > 0 ? sigs.join(", ") : "—"}
                   </td>
-                  <td style={{ padding: 10, fontSize: 12 }}>
-                    <Link href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>view</Link>
+                  <td style={{ fontSize: 12 }}>
+                    <Link className="link" href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>view</Link>
                   </td>
                 </tr>
               );
             })}
             {observed.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={5} style={{ color: "var(--muted)" }}>
                   No observed checks recorded for this run.
                 </td>
               </tr>
@@ -531,36 +459,36 @@ export default async function RunPage({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Reports</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
+      <h3>Reports</h3>
+      <p className="subtle">
         Derived outputs (not sources of truth). Known: <code>run-summary.xlsx</code>, <code>run-summary.csv</code>.
       </p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
+        <table className="table">
+          <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Report</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Type</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Size</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Download</th>
+              <th>Report</th>
+              <th>Type</th>
+              <th>Size</th>
+              <th>Download</th>
             </tr>
           </thead>
           <tbody>
             {reports.map((a) => {
               const filename = filenameFromKey(a.key);
               return (
-                <tr key={a.id} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={{ padding: 10 }}>
-                    <div style={{ fontWeight: 600 }}>{filename}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                <tr key={a.id}>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{filename}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
                       <code>{a.key}</code>
                     </div>
                   </td>
-                  <td style={{ padding: 10 }}>{a.type}</td>
-                  <td style={{ padding: 10 }}>{formatBytes(a.sizeBytes)}</td>
-                  <td style={{ padding: 10 }}>
-                    <a href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
+                  <td>{a.type}</td>
+                  <td>{formatBytes(a.sizeBytes)}</td>
+                  <td>
+                    <a className="link" href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
                       Download
                     </a>
                   </td>
@@ -569,7 +497,7 @@ export default async function RunPage({
             })}
             {reports.length === 0 ? (
               <tr>
-                <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={4} style={{ color: "var(--muted)" }}>
                   No report artefacts found for this run.
                 </td>
               </tr>
@@ -578,36 +506,40 @@ export default async function RunPage({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Jobs</h3>
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+      <h3>Jobs</h3>
+      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
+        <table className="table">
+          <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Collector</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Status</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Attempts</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Error</th>
+              <th>Collector</th>
+              <th>Status</th>
+              <th>Attempts</th>
+              <th>Error</th>
             </tr>
           </thead>
           <tbody>
             {jobs.map((j) => (
-              <tr key={j.id} style={{ borderTop: "1px solid #eee" }}>
-                <td style={{ padding: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{j.collectorId}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+              <tr key={j.id}>
+                <td>
+                  <div style={{ fontWeight: 700 }}>{j.collectorId}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
                     <code>{j.id}</code>
                   </div>
                 </td>
-                <td style={{ padding: 10 }}>{j.status}</td>
-                <td style={{ padding: 10 }}>{j.attempts}</td>
-                <td style={{ padding: 10, fontSize: 12 }}>
-                  {j.lastError ? <span style={{ color: "#a00" }}>{j.lastError}</span> : <span style={{ opacity: 0.7 }}>—</span>}
+                <td>{j.status}</td>
+                <td>{j.attempts}</td>
+                <td style={{ fontSize: 12 }}>
+                  {j.lastError ? (
+                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
+                  ) : (
+                    <span style={{ color: "var(--muted)" }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={4} style={{ color: "var(--muted)" }}>
                   No jobs found for this run.
                 </td>
               </tr>
@@ -616,37 +548,37 @@ export default async function RunPage({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Artefacts</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>Raw artefacts (sources of truth). Reports are shown above.</p>
+      <h3>Artefacts</h3>
+      <p className="subtle">Raw artefacts (sources of truth). Reports are shown above.</p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
+        <table className="table">
+          <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Filename</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Type</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Size</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Download</th>
+              <th>Filename</th>
+              <th>Type</th>
+              <th>Size</th>
+              <th>Download</th>
             </tr>
           </thead>
           <tbody>
             {others.map((a) => {
               const filename = filenameFromKey(a.key);
               return (
-                <tr key={a.id} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={{ padding: 10 }}>
-                    <div style={{ fontWeight: 600 }}>{filename}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                <tr key={a.id}>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{filename}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
                       job: <code>{a.jobId ?? "—"}</code>
                     </div>
-                    <div style={{ fontSize: 12, opacity: 0.55 }}>
+                    <div style={{ fontSize: 12, color: "var(--muted2)" }}>
                       <code>{a.key}</code>
                     </div>
                   </td>
-                  <td style={{ padding: 10 }}>{a.type}</td>
-                  <td style={{ padding: 10 }}>{formatBytes(a.sizeBytes)}</td>
-                  <td style={{ padding: 10 }}>
-                    <a href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
+                  <td>{a.type}</td>
+                  <td>{formatBytes(a.sizeBytes)}</td>
+                  <td>
+                    <a className="link" href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
                       Download
                     </a>
                   </td>
@@ -655,7 +587,7 @@ export default async function RunPage({
             })}
             {others.length === 0 ? (
               <tr>
-                <td colSpan={4} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={4} style={{ color: "var(--muted)" }}>
                   No non-report artefacts recorded yet for this run.
                 </td>
               </tr>
@@ -664,86 +596,35 @@ export default async function RunPage({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Findings</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Derived view (not a source of truth). Each finding links back to its supporting observed checks.
+      <h3>Findings</h3>
+      <p className="subtle">
+        Derived view (not a source of truth). Use observed checks above to understand completeness context.
       </p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
+      <div className="card" style={{ overflow: "hidden" }}>
+        <table className="table">
+          <thead>
             <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Severity</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Check</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Title</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Evidence</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Recommendation</th>
+              <th>Severity</th>
+              <th>Check</th>
+              <th>Title</th>
+              <th>Recommendation</th>
             </tr>
           </thead>
           <tbody>
-            {findings.map((f) => {
-              const supporting = observedByCheckId.get(String(f.checkId ?? "")) ?? [];
-              const evidenceBadge =
-                supporting.length > 0 ? badgeForObservedChecks(supporting) : { label: "no observed", tone: "muted" as const };
-
-              const first = supporting[0] ?? null;
-              const extra = supporting.length > 1 ? supporting.slice(1, 4) : [];
-
-              return (
-                <tr key={f.id} style={{ borderTop: "1px solid #eee" }}>
-                  <td style={{ padding: 10 }}>
-                    <SeverityBadge severity={f.severity} />
-                  </td>
-                  <td style={{ padding: 10 }}>
-                    <code>{f.checkId}</code>
-                  </td>
-                  <td style={{ padding: 10 }}>{f.title}</td>
-
-                  <td style={{ padding: 10, fontSize: 12 }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <Badge badge={evidenceBadge} />
-                      <span style={{ opacity: 0.75 }}>
-                        {supporting.length} observed
-                      </span>
-                    </div>
-
-                    {first ? (
-                      <div style={{ marginTop: 6 }}>
-                        <Link href={`/t/${tenantId}/runs/${runId}/observed/${first.id}`}>view observed</Link>
-                        <span style={{ opacity: 0.7 }}> · </span>
-                        <span style={{ opacity: 0.8 }}>{smallTime(first.observedAt)}</span>
-                        <span style={{ opacity: 0.7 }}> · </span>
-                        <code style={{ opacity: 0.9 }}>{first.collectorId}</code>
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: 6, opacity: 0.7 }}>No supporting observed checks found for this checkId.</div>
-                    )}
-
-                    {extra.length > 0 ? (
-                      <details style={{ marginTop: 6 }}>
-                        <summary style={{ cursor: "pointer" }}>More evidence ({supporting.length - 1})</summary>
-                        <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-                          {extra.map((o) => (
-                            <li key={o.id}>
-                              <Link href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>observed</Link>{" "}
-                              <span style={{ opacity: 0.75 }}>{smallTime(o.observedAt)}</span>{" "}
-                              <span style={{ opacity: 0.7 }}>·</span>{" "}
-                              <code style={{ fontSize: 12 }}>{o.collectorId}</code>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ) : null}
-                  </td>
-
-                  <td style={{ padding: 10, fontSize: 12, opacity: 0.9 }}>{f.recommendation ?? "—"}</td>
-                </tr>
-              );
-            })}
-
+            {findings.map((f) => (
+              <tr key={f.id}>
+                <td>{f.severity}</td>
+                <td>
+                  <code>{f.checkId}</code>
+                </td>
+                <td>{f.title}</td>
+                <td style={{ fontSize: 12, color: "var(--muted)" }}>{f.recommendation ?? "—"}</td>
+              </tr>
+            ))}
             {findings.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
+                <td colSpan={4} style={{ color: "var(--muted)" }}>
                   No findings recorded for this run.
                 </td>
               </tr>
@@ -752,9 +633,9 @@ export default async function RunPage({
         </table>
       </div>
 
-      <details style={{ marginTop: 16 }}>
-        <summary style={{ cursor: "pointer" }}>Debug: modulesEnabled</summary>
-        <pre style={{ whiteSpace: "pre-wrap" }}>{safeString(run.modulesEnabled)}</pre>
+      <details style={{ marginTop: 14 }}>
+        <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Debug: modulesEnabled</summary>
+        <pre className="pre">{safeString(run.modulesEnabled)}</pre>
       </details>
     </main>
   );
