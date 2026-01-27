@@ -1,58 +1,30 @@
 // apps/portal/src/app/t/[tenantId]/page.tsx
 import Link from "next/link";
-import { getTenantAuth, listRuns } from "@/lib/api";
+import { getTenantAuth, listTenantRuns } from "@/lib/api";
 
 function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
   return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const tone =
-    status === "succeeded"
-      ? { bg: "#e7f7ed", fg: "#116329" }
-      : status === "failed"
-        ? { bg: "#fde7e9", fg: "#a4262c" }
-        : status === "running"
-          ? { bg: "#e8f0fe", fg: "#1a73e8" }
-          : status === "queued"
-            ? { bg: "#f1f3f4", fg: "#444" }
-            : { bg: "#eee", fg: "#444" };
-
-  return (
-    <span
-      style={{
-        background: tone.bg,
-        color: tone.fg,
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 12,
-        whiteSpace: "nowrap"
-      }}
-    >
-      {status}
-    </span>
-  );
+  const s = String(status ?? "").toLowerCase();
+  const cls =
+    s === "succeeded"
+      ? "badge ok"
+      : s === "failed"
+        ? "badge bad"
+        : s === "running"
+          ? "badge warn"
+          : s === "queued"
+            ? "badge"
+            : "badge";
+  return <span className={cls}>{status}</span>;
 }
 
 function ProfileBadge({ profile }: { profile: string }) {
-  const tone =
-    profile === "full"
-      ? { bg: "#fff4d6", fg: "#8a5a00" }
-      : { bg: "#f1f3f4", fg: "#444" };
-
-  return (
-    <span
-      style={{
-        background: tone.bg,
-        color: tone.fg,
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 12
-      }}
-    >
-      {profile}
-    </span>
-  );
+  const p = String(profile ?? "").toLowerCase();
+  const cls = p === "full" ? "badge warn" : "badge";
+  return <span className={cls}>{profile}</span>;
 }
 
 export default async function TenantPage({
@@ -64,112 +36,140 @@ export default async function TenantPage({
 
   const [auth, runs] = await Promise.all([
     getTenantAuth(tenantId),
-    listRuns()
+    listTenantRuns(tenantId)
   ]);
 
-  const tenantRunsAll = runs
-    .filter((r) => r.tenant?.id === tenantId)
-    .sort(sortByCreatedDesc);
+  const tenantRunsAll = runs.slice().sort(sortByCreatedDesc);
 
   const maxRows = 20;
   const tenantRuns = tenantRunsAll.slice(0, maxRows);
 
   return (
     <main>
-      <p style={{ marginTop: 0 }}>
-        <Link href="/tenants">← Back to tenants</Link>
+      <p style={{ margin: "10px 0 0 0" }}>
+        <Link className="link" href="/tenants">← Back to tenants</Link>
       </p>
 
-      <h2 style={{ marginTop: 0 }}>
-        {auth.tenant.displayName ?? "(no display name)"}{" "}
-        <span style={{ fontSize: 14, opacity: 0.7 }}>
-          ({auth.tenant.primaryDomain})
-        </span>
-      </h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Tenant</h3>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>ID</div>
-          <div><code>{auth.tenant.id}</code></div>
-
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>Tenant GUID</div>
-          <div><code>{auth.tenant.tenantGuid}</code></div>
+      <div className="stack">
+        <div>
+          <h2 style={{ marginBottom: 6 }}>
+            {auth.tenant.displayName ?? "(no display name)"}{" "}
+            <span className="subtle">({auth.tenant.primaryDomain})</span>
+          </h2>
+          <div className="subtle">
+            Tenant ID: <code>{auth.tenant.id}</code>
+          </div>
         </div>
 
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
-          <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 16 }}>Auth</h3>
-          {auth.auth ? (
-            <>
-              <div>Status: <strong>{String(auth.auth.status)}</strong></div>
-              {auth.auth.lastError ? (
-                <div style={{ color: "#a00", marginTop: 6 }}>
-                  {auth.auth.lastError}
+        <div className="grid-2">
+          <div className="card card-pad">
+            <h3 style={{ marginTop: 0 }}>Tenant</h3>
+
+            <div className="kv">
+              <div className="k">ID</div>
+              <div className="v"><code>{auth.tenant.id}</code></div>
+
+              <div className="k">Tenant GUID</div>
+              <div className="v"><code>{auth.tenant.tenantGuid}</code></div>
+
+              <div className="k">Primary domain</div>
+              <div className="v">{auth.tenant.primaryDomain}</div>
+
+              <div className="k">Display</div>
+              <div className="v">{auth.tenant.displayName ?? "—"}</div>
+            </div>
+          </div>
+
+          <div className="card card-pad">
+            <h3 style={{ marginTop: 0 }}>Auth</h3>
+
+            {auth.auth ? (
+              <div className="stack">
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="subtle">Status</span>
+                  <span className="badge ok">{String(auth.auth.status)}</span>
+                  {auth.auth.consentedAt ? (
+                    <span className="subtle">Consented: {auth.auth.consentedAt}</span>
+                  ) : (
+                    <span className="subtle">Consented: —</span>
+                  )}
                 </div>
-              ) : (
-                <div style={{ opacity: 0.7, marginTop: 6 }}>No errors</div>
-              )}
-              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>
-                Consented: {auth.auth.consentedAt ?? "—"}
-              </div>
-            </>
-          ) : (
-            <div style={{ opacity: 0.7 }}>No auth record</div>
-          )}
-        </div>
-      </div>
 
-      <h3 style={{ marginTop: 0 }}>Recent runs</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Source: <code>GET /runs</code> (filtered client-side).{" "}
-        Showing {tenantRuns.length} of {tenantRunsAll.length}.
-      </p>
-
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ background: "#f6f6f6" }}>
-            <tr>
-              <th style={{ textAlign: "left", padding: 10 }}>Run</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Status</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Profile</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Created</th>
-              <th style={{ textAlign: "left", padding: 10 }}>Counts</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tenantRuns.map((r) => (
-              <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
-                <td style={{ padding: 10 }}>
-                  <Link href={`/t/${tenantId}/runs/${r.id}`}>
-                    <code>{r.id}</code>
-                  </Link>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>
-                    {r.triggeredBy ?? "—"}
+                {auth.auth.lastError ? (
+                  <div className="callout warn">
+                    <strong>Last error</strong>
+                    <div style={{ marginTop: 6 }}>{auth.auth.lastError}</div>
                   </div>
-                </td>
-                <td style={{ padding: 10 }}>
-                  <StatusBadge status={r.status} />
-                </td>
-                <td style={{ padding: 10 }}>
-                  <ProfileBadge profile={r.dataProfile} />
-                </td>
-                <td style={{ padding: 10 }}>
-                  <span style={{ opacity: 0.85 }}>{r.createdAt}</span>
-                </td>
-                <td style={{ padding: 10, fontSize: 12 }}>
-                  jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
-                </td>
-              </tr>
-            ))}
-            {tenantRuns.length === 0 && (
-              <tr>
-                <td colSpan={5} style={{ padding: 10, opacity: 0.7 }}>
-                  No runs found for this tenant.
-                </td>
-              </tr>
+                ) : (
+                  <div className="subtle">No auth errors recorded.</div>
+                )}
+              </div>
+            ) : (
+              <div className="callout warn">
+                <strong>No auth record</strong>
+                <div style={{ marginTop: 6 }}>
+                  This tenant has no stored auth status yet.
+                </div>
+              </div>
             )}
-          </tbody>
-        </table>
+          </div>
+        </div>
+
+        <div>
+          <h3 style={{ marginBottom: 6 }}>Recent runs</h3>
+          <p className="subtle">
+            Source: portal BFF <code>/api/tenants/[tenantId]/runs</code>. Showing {tenantRuns.length} of{" "}
+            {tenantRunsAll.length}.
+          </p>
+
+          <div className="card" style={{ overflow: "hidden" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Status</th>
+                  <th>Profile</th>
+                  <th>Created</th>
+                  <th>Counts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tenantRuns.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <Link className="link" href={`/t/${tenantId}/runs/${r.id}`}>
+                        <code>{r.id}</code>
+                      </Link>
+                      <div className="subtle">{r.triggeredBy ?? "—"}</div>
+                    </td>
+
+                    <td>
+                      <StatusBadge status={r.status} />
+                    </td>
+
+                    <td>
+                      <ProfileBadge profile={r.dataProfile} />
+                    </td>
+
+                    <td className="subtle">{r.createdAt}</td>
+
+                    <td className="subtle">
+                      jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
+                    </td>
+                  </tr>
+                ))}
+
+                {tenantRuns.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="subtle">
+                      No runs found for this tenant.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </main>
   );
