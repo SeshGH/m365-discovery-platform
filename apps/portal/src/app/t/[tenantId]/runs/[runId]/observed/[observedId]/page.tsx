@@ -1,7 +1,6 @@
 // apps/portal/src/app/t/[tenantId]/runs/[runId]/observed/[observedId]/page.tsx
 import Link from "next/link";
 import {
-  getObservedCheck,
   getRunObservedCheck,
   listRunObservedChecks,
   type ObservedCheckItem
@@ -71,8 +70,17 @@ function completenessFromData(data: unknown): {
 } {
   const d = data && typeof data === "object" ? (data as any) : null;
 
-  const permissionDenied =
-    d && Array.isArray(d.permissionDenied) ? d.permissionDenied.filter((x: any) => typeof x === "string") : [];
+  // Support both legacy and newer nested completeness forms
+  const permissionDeniedRaw =
+    d && Array.isArray(d.permissionDenied)
+      ? d.permissionDenied
+      : d?.completeness && Array.isArray(d.completeness.permissionDenied)
+        ? d.completeness.permissionDenied
+        : [];
+
+  const permissionDenied = (permissionDeniedRaw as unknown[]).filter(
+    (x) => typeof x === "string"
+  ) as string[];
 
   const truncated = Boolean(d?.truncated === true || d?.completeness?.truncated === true);
 
@@ -116,21 +124,25 @@ function pickKpiPairs(data: unknown): Array<[string, string]> {
   return out.slice(0, 6);
 }
 
-async function getObservedDetailWithFallback(runId: string, observedId: string): Promise<ObservedCheckItem> {
-  // Preferred: run-scoped detail route
+async function getObservedDetailWithFallback(params: {
+  tenantId: string;
+  runId: string;
+  observedId: string;
+}): Promise<ObservedCheckItem> {
+  const { tenantId, runId, observedId } = params;
+
+  // Preferred: tenant+run scoped detail route (BFF enforces tenant isolation)
   try {
-    return await getRunObservedCheck(runId, observedId);
+    return await getRunObservedCheck(tenantId, runId, observedId);
   } catch {
-    // Next: global detail route
-    try {
-      return await getObservedCheck(observedId);
-    } catch {
-      // Last resort: list + filter (keeps the page working even if detail routes drift)
-      const list = await listRunObservedChecks(runId);
-      const found = list.find((x) => x.id === observedId);
-      if (found) return found;
-      throw new Error(`[portal] Observed check not found (runId=${runId}, observedId=${observedId})`);
-    }
+    // Last resort: list + filter (keeps page resilient without breaking isolation)
+    const list = await listRunObservedChecks(tenantId, runId);
+    const found = list.find((x) => x.id === observedId);
+    if (found) return found;
+
+    throw new Error(
+      `[portal] Observed check not found (tenantId=${tenantId}, runId=${runId}, observedId=${observedId})`
+    );
   }
 }
 
@@ -141,7 +153,7 @@ export default async function ObservedCheckPage({
 }) {
   const { tenantId, runId, observedId } = await params;
 
-  const observed = await getObservedDetailWithFallback(runId, observedId);
+  const observed = await getObservedDetailWithFallback({ tenantId, runId, observedId });
 
   const { badge, permissionDenied, isComplete, profile } = completenessFromData(observed.data);
   const kpis = pickKpiPairs(observed.data);
