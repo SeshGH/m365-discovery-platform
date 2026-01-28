@@ -1,16 +1,35 @@
 // apps/portal/src/lib/api.ts
 import "server-only";
+import { headers } from "next/headers";
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`[portal] Missing env var: ${name}`);
-  return v;
+/**
+ * Portal data access MUST go through the portal BFF (/api/*),
+ * not directly to the backend Fastify API.
+ *
+ * In Next.js 16, headers() is async. In server components, fetch() requires absolute URLs.
+ * We derive the portal origin from request headers (forwarded headers preferred).
+ */
+
+async function getPortalOriginFromHeaders(): Promise<string> {
+  const h = await headers();
+
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+
+  if (!host) {
+    throw new Error("[portal] Unable to determine portal origin (missing Host headers).");
+  }
+
+  return `${proto}://${host}`;
 }
 
-const API_BASE = requireEnv("PORTAL_API_BASE_URL").replace(/\/+$/, "");
+async function bffFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const origin = await getPortalOriginFromHeaders();
+  const url = path.startsWith("http")
+    ? path
+    : `${origin}${path.startsWith("/") ? path : `/${path}`}`;
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(url, {
     ...init,
     cache: "no-store",
     headers: {
@@ -22,7 +41,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
-      `[portal] API error ${res.status} ${res.statusText} for ${path}${text ? ` :: ${text}` : ""}`
+      `[portal] BFF error ${res.status} ${res.statusText} for ${path}${text ? ` :: ${text}` : ""}`
     );
   }
 
@@ -30,7 +49,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** -----------------------------
- *  Types (match Fastify selects)
+ *  Types (match BFF responses)
  *  ----------------------------*/
 
 export type TenantListItem = {
@@ -119,7 +138,7 @@ export type FindingItem = {
   severity: string;
   title: string;
   description: string;
-  recommendation: string;
+  recommendation: string | null;
   evidence: unknown;
   references: unknown;
   createdAt: string;
@@ -135,7 +154,6 @@ export type ObservedCheckItem = {
   data: unknown;
   ruleId: string | null;
   references: unknown;
-  createdAt: string;
 };
 
 export type ArtefactItem = {
@@ -147,12 +165,12 @@ export type ArtefactItem = {
   bucket: string;
   key: string;
   hash: string | null;
-  sizeBytes: number;
+  sizeBytes: number | null;
   createdAt: string;
 };
 
 /** -----------------------------
- *  API calls
+ *  BFF calls
  *  ----------------------------*/
 
 export async function listTenants(params?: {
@@ -168,47 +186,48 @@ export async function listTenants(params?: {
   if (typeof params?.take === "number") q.set("take", String(params.take));
 
   const qs = q.toString();
-  return apiFetch<TenantListItem[]>(`/tenants${qs ? `?${qs}` : ""}`);
+  return bffFetch<TenantListItem[]>(`/api/tenants${qs ? `?${qs}` : ""}`);
 }
 
 export async function getTenantAuth(tenantId: string): Promise<TenantAuthResponse> {
-  return apiFetch<TenantAuthResponse>(`/tenants/${tenantId}/auth`);
+  return bffFetch<TenantAuthResponse>(`/api/tenants/${tenantId}/auth`);
 }
 
-export async function listRuns(): Promise<RunListItem[]> {
-  return apiFetch<RunListItem[]>(`/runs`);
+export async function listTenantRuns(tenantId: string): Promise<RunListItem[]> {
+  return bffFetch<RunListItem[]>(`/api/tenants/${tenantId}/runs`);
 }
 
-export async function getRun(runId: string): Promise<RunDetail> {
-  return apiFetch<RunDetail>(`/runs/${runId}`);
+export async function getRun(tenantId: string, runId: string): Promise<RunDetail> {
+  return bffFetch<RunDetail>(`/api/tenants/${tenantId}/runs/${runId}`);
 }
 
-export async function listRunJobs(runId: string): Promise<JobListItem[]> {
-  return apiFetch<JobListItem[]>(`/runs/${runId}/jobs`);
+export async function listRunJobs(tenantId: string, runId: string): Promise<JobListItem[]> {
+  return bffFetch<JobListItem[]>(`/api/tenants/${tenantId}/runs/${runId}/jobs`);
 }
 
-export async function listRunArtefacts(runId: string): Promise<ArtefactItem[]> {
-  return apiFetch<ArtefactItem[]>(`/runs/${runId}/artefacts`);
+export async function listRunArtefacts(tenantId: string, runId: string): Promise<ArtefactItem[]> {
+  return bffFetch<ArtefactItem[]>(`/api/tenants/${tenantId}/runs/${runId}/artefacts`);
 }
 
-export async function listRunObservedChecks(runId: string): Promise<ObservedCheckItem[]> {
-  return apiFetch<ObservedCheckItem[]>(`/runs/${runId}/observed-checks`);
+export async function listRunObservedChecks(
+  tenantId: string,
+  runId: string
+): Promise<ObservedCheckItem[]> {
+  return bffFetch<ObservedCheckItem[]>(
+    `/api/tenants/${tenantId}/runs/${runId}/observed-checks`
+  );
 }
 
-export async function listRunFindings(runId: string): Promise<FindingItem[]> {
-  return apiFetch<FindingItem[]>(`/runs/${runId}/findings`);
+export async function listRunFindings(tenantId: string, runId: string): Promise<FindingItem[]> {
+  return bffFetch<FindingItem[]>(`/api/tenants/${tenantId}/runs/${runId}/findings`);
 }
 
-/**
- * Observed check detail (preferred): run-scoped route
- */
-export async function getRunObservedCheck(runId: string, observedId: string): Promise<ObservedCheckItem> {
-  return apiFetch<ObservedCheckItem>(`/runs/${runId}/observed-checks/${observedId}`);
-}
-
-/**
- * Observed check detail (global): useful for linking without run context
- */
-export async function getObservedCheck(observedId: string): Promise<ObservedCheckItem> {
-  return apiFetch<ObservedCheckItem>(`/observed-checks/${observedId}`);
+export async function getRunObservedCheck(
+  tenantId: string,
+  runId: string,
+  observedId: string
+): Promise<ObservedCheckItem> {
+  return bffFetch<ObservedCheckItem>(
+    `/api/tenants/${tenantId}/runs/${runId}/observed-checks/${observedId}`
+  );
 }

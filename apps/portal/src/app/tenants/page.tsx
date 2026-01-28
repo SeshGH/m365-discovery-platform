@@ -28,7 +28,8 @@ export default async function TenantsPage() {
               <tr key={t.id} style={{ borderTop: "1px solid #eee" }}>
                 <td style={{ padding: 10 }}>
                   <div style={{ fontWeight: 600 }}>
-                    <Link href={`/t/${t.id}`} style={{ textDecoration: "none" }}>
+                    {/* Canonical route */}
+                    <Link href={`/tenants/${t.id}`} style={{ textDecoration: "none" }}>
                       {t.displayName ?? "(no display name)"}
                     </Link>
                   </div>
