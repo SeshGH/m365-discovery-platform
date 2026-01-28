@@ -1,9 +1,8 @@
 ﻿import dotenv from "dotenv";
 
-
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import crypto from "node:crypto";
 
 import { getDemoHtml } from "./demoPage.js";
 
@@ -36,6 +35,152 @@ app.addContentTypeParser(
 );
 
 // --------------------
+// Portal-minted internal token auth (Slice 1)
+// --------------------
+
+const INTERNAL_JWT_ISSUER = "m365-discovery-portal";
+const INTERNAL_JWT_AUDIENCE = "m365-discovery-api";
+
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`[api] Missing env var: ${name}`);
+  return v;
+}
+
+function base64urlToBuffer(input: string): Buffer {
+  const padded = input.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((input.length + 3) % 4);
+  return Buffer.from(padded, "base64");
+}
+
+function safeJsonParse<T>(buf: Buffer): T | null {
+  try {
+    return JSON.parse(buf.toString("utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+function signHs256(data: string, secret: string): Buffer {
+  return crypto.createHmac("sha256", secret).update(data).digest();
+}
+
+function timingSafeEqual(a: Buffer, b: Buffer): boolean {
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+type InternalClaims = {
+  iss?: string;
+  aud?: string;
+  sub?: string;
+  org_id?: string;
+  roles?: unknown;
+  tenant_mode?: "all" | "list";
+  tenant_ids?: unknown;
+  exp?: number;
+  nbf?: number;
+  iat?: number;
+  jti?: string;
+};
+
+function verifyInternalJwt(token: string, secret: string): { ok: true; claims: InternalClaims } | { ok: false } {
+  const parts = token.split(".");
+  if (parts.length !== 3) return { ok: false };
+
+  const [encodedHeader, encodedPayload, encodedSig] = parts;
+  const headerBuf = base64urlToBuffer(encodedHeader);
+  const payloadBuf = base64urlToBuffer(encodedPayload);
+  const sigBuf = base64urlToBuffer(encodedSig);
+
+  const header = safeJsonParse<{ alg?: string; typ?: string }>(headerBuf);
+  const claims = safeJsonParse<InternalClaims>(payloadBuf);
+  if (!header || !claims) return { ok: false };
+
+  if (header.alg !== "HS256") return { ok: false };
+
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const expectedSig = signHs256(signingInput, secret);
+  if (!timingSafeEqual(sigBuf, expectedSig)) return { ok: false };
+
+  // Standard claim checks
+  if (claims.iss !== INTERNAL_JWT_ISSUER) return { ok: false };
+  if (claims.aud !== INTERNAL_JWT_AUDIENCE) return { ok: false };
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.nbf === "number" && now < claims.nbf) return { ok: false };
+  if (typeof claims.exp === "number" && now >= claims.exp) return { ok: false };
+  if (typeof claims.exp !== "number") return { ok: false }; // require exp
+
+  if (typeof claims.org_id !== "string" || !claims.org_id.trim()) return { ok: false };
+  if (typeof claims.sub !== "string" || !claims.sub.trim()) return { ok: false };
+
+  return { ok: true, claims };
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    portalAuth?: {
+      orgId: string;
+      sub: string;
+      roles: string[];
+      tenantMode: "all" | "list";
+      tenantIds: string[];
+      jti?: string;
+    };
+  }
+}
+
+const INTERNAL_JWT_SECRET = requireEnv("PORTAL_INTERNAL_JWT_SECRET");
+
+app.addHook("onRequest", async (req, reply) => {
+  // Allow CORS preflight
+  if (req.method === "OPTIONS") return;
+
+  // Public endpoints
+  const pathOnly = (req.url ?? "").split("?")[0];
+  if (pathOnly === "/health" || pathOnly === "/demo") return;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || typeof authHeader !== "string") {
+    return reply.code(401).send({ error: "Missing Authorization header" });
+  }
+
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!m) {
+    return reply.code(401).send({ error: "Invalid Authorization header" });
+  }
+
+  const token = m[1]?.trim();
+  if (!token) {
+    return reply.code(401).send({ error: "Missing bearer token" });
+  }
+
+  const verified = verifyInternalJwt(token, INTERNAL_JWT_SECRET);
+  if (!verified.ok) {
+    return reply.code(401).send({ error: "Invalid token" });
+  }
+
+  const claims = verified.claims;
+
+  // Normalize roles / tenant claims (Slice 1 keeps it simple)
+  const roles = Array.isArray(claims.roles) ? claims.roles.filter((r) => typeof r === "string") : [];
+  const tenantMode: "all" | "list" = claims.tenant_mode === "list" ? "list" : "all";
+  const tenantIds =
+    tenantMode === "list" && Array.isArray(claims.tenant_ids)
+      ? claims.tenant_ids.filter((t) => typeof t === "string")
+      : [];
+
+  req.portalAuth = {
+    orgId: String(claims.org_id),
+    sub: String(claims.sub),
+    roles,
+    tenantMode,
+    tenantIds,
+    jti: typeof claims.jti === "string" ? claims.jti : undefined
+  };
+});
+
+// --------------------
 // Module -> Collector mapping
 // --------------------
 // IMPORTANT:
@@ -62,10 +207,7 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
 };
 
 // Always enqueue these report jobs at the end of a run
-const RUN_REPORT_COLLECTOR_IDS = [
-  "report.runSummary.csv",
-  "report.runSummary.xlsx"
-] as const;
+const RUN_REPORT_COLLECTOR_IDS = ["report.runSummary.csv", "report.runSummary.xlsx"] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -113,8 +255,7 @@ const S3_REGION = process.env.S3_REGION ?? "us-east-1";
 const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY;
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY;
 const S3_BUCKET = process.env.S3_BUCKET ?? "artefacts";
-const S3_FORCE_PATH_STYLE =
-  String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
+const S3_FORCE_PATH_STYLE = String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
 
 if (!S3_ENDPOINT || !S3_ACCESS_KEY || !S3_SECRET_KEY) {
   throw new Error(
@@ -246,8 +387,7 @@ app.get("/tenants", async (req) => {
   const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 200) : 50;
 
   const tenantGuid = typeof query.tenantGuid === "string" ? query.tenantGuid.trim() : "";
-  const primaryDomain =
-    typeof query.primaryDomain === "string" ? query.primaryDomain.trim() : "";
+  const primaryDomain = typeof query.primaryDomain === "string" ? query.primaryDomain.trim() : "";
   const q = typeof query.q === "string" ? query.q.trim() : "";
 
   const where: any = {};
