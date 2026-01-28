@@ -1,13 +1,21 @@
 /* apps/portal/src/app/globals.css */
 
+/* ================================
+   Theme tokens
+   ================================ */
+
 :root{
+  /* Dark-first theme */
   --bg: #0b1220;
+
   --panel: rgba(255,255,255,0.06);
   --panel-2: rgba(255,255,255,0.08);
+
   --border: rgba(255,255,255,0.10);
   --text: rgba(255,255,255,0.92);
   --muted: rgba(255,255,255,0.65);
   --muted2: rgba(255,255,255,0.50);
+
   --shadow: 0 12px 30px rgba(0,0,0,0.25);
   --radius: 14px;
 
@@ -22,6 +30,38 @@
 
   --muted-bg: rgba(255,255,255,0.12);
   --muted-fg: rgba(255,255,255,0.78);
+}
+
+/* Light mode must redefine ALL key tokens (including --text) */
+@media (prefers-color-scheme: light) {
+  :root{
+    --bg: #f6f7fb;
+
+    --panel: rgba(0,0,0,0.03);
+    --panel-2: rgba(0,0,0,0.05);
+
+    --border: rgba(0,0,0,0.14);
+    --text: rgba(17, 24, 39, 0.92);
+    --muted: rgba(17, 24, 39, 0.70);
+    --muted2: rgba(17, 24, 39, 0.52);
+
+    --shadow: 0 12px 30px rgba(0,0,0,0.10);
+    --radius: 14px;
+
+    --ok-bg: rgba(46, 204, 113, 0.14);
+    --ok-fg: rgba(17, 102, 41, 0.95);
+
+    --warn-bg: rgba(241, 196, 15, 0.18);
+    --warn-fg: rgba(138, 90, 0, 0.98);
+
+    --bad-bg: rgba(231, 76, 60, 0.14);
+    --bad-fg: rgba(164, 38, 44, 0.98);
+
+    --muted-bg: rgba(0,0,0,0.06);
+    --muted-fg: rgba(17, 24, 39, 0.78);
+  }
+
+  html{ color-scheme: light; }
 }
 
 *{ box-sizing: border-box; }
@@ -44,11 +84,29 @@ body{
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Ensure nothing falls back to default black */
+body,
+.page,
+.card,
+.table,
+.table th,
+.table td,
+h1, h2, h3, h4, h5, h6,
+strong {
+  color: var(--text);
+}
+
 a{ color: inherit; }
+
 code{
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.92em;
+  color: var(--text);
 }
+
+/* ================================
+   Layout
+   ================================ */
 
 .container{
   max-width: 1120px;
@@ -87,9 +145,22 @@ code{
   color: var(--muted);
 }
 
+.actions{
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  justify-content:flex-end;
+}
+
 .page h2{ margin: 16px 0 8px 0; font-size: 18px; }
-.page h3{ margin: 16px 0 8px 0; font-size: 15px; color: rgba(255,255,255,0.9); }
+.page h3{ margin: 16px 0 8px 0; font-size: 15px; color: var(--text); }
+
 .subtle{ color: var(--muted); font-size: 13px; margin-top: 0; }
+.muted2{ color: var(--muted2); }
+
+/* ================================
+   Components
+   ================================ */
 
 .grid-2{
   display:grid;
@@ -106,7 +177,6 @@ code{
   background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.035));
   box-shadow: var(--shadow);
 }
-
 .card-pad{ padding: 14px; }
 
 .kv{
@@ -130,13 +200,31 @@ code{
   background: rgba(255,255,255,0.06);
   border-bottom: 1px solid var(--border);
 }
+@media (prefers-color-scheme: light) {
+  .table thead th{
+    color: var(--muted);
+    background: rgba(0,0,0,0.03);
+  }
+}
+
 .table tbody td{
   padding: 10px 12px;
   border-top: 1px solid rgba(255,255,255,0.06);
   vertical-align: top;
 }
+@media (prefers-color-scheme: light) {
+  .table tbody td{
+    border-top: 1px solid rgba(0,0,0,0.06);
+  }
+}
+
 .table tbody tr:hover{
   background: rgba(255,255,255,0.04);
+}
+@media (prefers-color-scheme: light) {
+  .table tbody tr:hover{
+    background: rgba(0,0,0,0.03);
+  }
 }
 
 .badge{
@@ -152,6 +240,11 @@ code{
   color: var(--muted-fg);
   white-space: nowrap;
 }
+@media (prefers-color-scheme: light) {
+  .badge{
+    border-color: rgba(0,0,0,0.10);
+  }
+}
 
 .badge.ok{ background: var(--ok-bg); color: var(--ok-fg); border-color: rgba(46, 204, 113, 0.25); }
 .badge.warn{ background: var(--warn-bg); color: var(--warn-fg); border-color: rgba(241, 196, 15, 0.25); }
@@ -165,6 +258,11 @@ code{
   background: rgba(0,0,0,0.22);
   overflow-x: auto;
 }
+@media (prefers-color-scheme: light) {
+  .pre{
+    background: rgba(0,0,0,0.04);
+  }
+}
 
 .link{
   text-decoration: none;
@@ -174,12 +272,13 @@ code{
   text-decoration: underline;
   color: #fff;
 }
-
-.actions{
-  display:flex;
-  gap: 10px;
-  align-items:center;
-  justify-content:flex-end;
+@media (prefers-color-scheme: light) {
+  .link{
+    color: rgba(17,24,39,0.92);
+  }
+  .link:hover{
+    color: rgba(17,24,39,1);
+  }
 }
 
 .stack{
@@ -201,170 +300,4 @@ code{
 .callout.bad{
   border-color: rgba(231, 76, 60, 0.35);
   background: rgba(231, 76, 60, 0.12);
-}
-
-/* ---------- Portal components ---------- */
-
-:root{
-  --border: rgba(120,120,120,0.25);
-  --muted: rgba(255,255,255,0.72);
-  --muted2: rgba(255,255,255,0.55);
-
-  --ok-bg: rgba(46, 204, 113, 0.16);
-  --ok-fg: rgba(46, 204, 113, 0.95);
-
-  --warn-bg: rgba(241, 196, 15, 0.16);
-  --warn-fg: rgba(241, 196, 15, 0.98);
-
-  --bad-bg: rgba(231, 76, 60, 0.16);
-  --bad-fg: rgba(231, 76, 60, 0.98);
-
-  --radius: 12px;
-}
-
-/* Light mode tweaks (your globals already set --background/--foreground) */
-@media (prefers-color-scheme: light) {
-  :root{
-    --muted: rgba(0,0,0,0.70);
-    --muted2: rgba(0,0,0,0.50);
-    --border: rgba(0,0,0,0.14);
-
-    --ok-bg: rgba(46, 204, 113, 0.14);
-    --ok-fg: rgba(17, 102, 41, 0.95);
-
-    --warn-bg: rgba(241, 196, 15, 0.18);
-    --warn-fg: rgba(138, 90, 0, 0.98);
-
-    --bad-bg: rgba(231, 76, 60, 0.14);
-    --bad-fg: rgba(164, 38, 44, 0.98);
-  }
-}
-
-.subtle{ color: var(--muted); font-size: 12px; }
-.pre{
-  white-space: pre-wrap;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
-  background: rgba(255,255,255,0.04);
-  overflow-x: auto;
-}
-
-/* Cards */
-.card{
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: rgba(255,255,255,0.02);
-}
-.card-pad{ padding: 14px; }
-
-/* Two-col grid that collapses nicely */
-.grid-2{
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-@media (max-width: 900px){
-  .grid-2{ grid-template-columns: 1fr; }
-}
-
-/* Key/value grid inside cards */
-.kv{
-  display: grid;
-  grid-template-columns: 110px 1fr;
-  gap: 8px 12px;
-  align-items: baseline;
-}
-.kv .k{ color: var(--muted); font-size: 12px; }
-.kv .v{ font-size: 13px; }
-
-/* Tables */
-.table{
-  width: 100%;
-  border-collapse: collapse;
-}
-.table thead th{
-  text-align: left;
-  font-weight: 700;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.table tbody td{
-  padding: 10px 12px;
-  border-top: 1px solid rgba(120,120,120,0.18);
-  vertical-align: top;
-}
-.table tbody tr:hover{
-  background: rgba(255,255,255,0.03);
-}
-
-/* Badges */
-.badge{
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 18px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.04);
-}
-.badge.ok{
-  background: var(--ok-bg);
-  color: var(--ok-fg);
-  border-color: rgba(46, 204, 113, 0.35);
-}
-.badge.warn{
-  background: var(--warn-bg);
-  color: var(--warn-fg);
-  border-color: rgba(241, 196, 15, 0.40);
-}
-.badge.bad{
-  background: var(--bad-bg);
-  color: var(--bad-fg);
-  border-color: rgba(231, 76, 60, 0.40);
-}
-
-/* ---------- Text color normalization (dark theme safety) ---------- */
-
-body,
-.page,
-.card,
-.table,
-.table th,
-.table td {
-  color: var(--text);
-}
-
-h1, h2, h3, h4, h5, h6 {
-  color: var(--text);
-}
-
-strong {
-  color: var(--text);
-}
-
-code {
-  color: rgba(255,255,255,0.9);
-}
-
-/* Ensure links are readable on dark bg */
-a,
-.link {
-  color: rgba(255,255,255,0.92);
-}
-a:hover,
-.link:hover {
-  color: #ffffff;
-}
-
-/* Muted helpers (explicit, predictable) */
-.subtle {
-  color: var(--muted);
-}
-
-.muted2 {
-  color: var(--muted2);
 }
