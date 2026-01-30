@@ -3,87 +3,87 @@ import { NextResponse } from "next/server";
 import { backendFetchJson } from "@/lib/backend";
 
 /**
- * GET /api/tenants/:tenantId/runs
+ * BFF: tenant-scoped runs
  *
- * TEMPORARY:
- * Backend currently exposes GET /runs (global latest 50).
- * BFF filters to tenantId for tenant-first UX.
+ * GET:
+ * - backend currently exposes GET /runs (global latest 50).
+ * - BFF filters to tenantId for tenant-first UX.
+ *
+ * POST:
+ * - create a run for this tenant (portal-triggered)
+ * - backend create-run requires: tenantGuid, primaryDomain, triggeredBy
+ * - modulesEnabled MUST be an object (not an array) per backend validation
  */
+
+const DEFAULT_MODULE_KEYS = [
+  "entra.users",
+  "entra.conditionalAccess.policies",
+  "entra.directoryRoles.assignments",
+  "entra.enterpriseApps.permissions",
+  "exchange.mailboxes.inventory"
+] as const;
+
+function toModulesEnabledObject(keys: readonly string[]): Record<string, boolean> {
+  return keys.reduce<Record<string, boolean>>((acc, k) => {
+    acc[k] = true;
+    return acc;
+  }, {});
+}
+
 export async function GET(_req: Request, ctx: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = await ctx.params;
 
   const runs = await backendFetchJson<any[]>(`/runs`);
-  const filtered = Array.isArray(runs) ? runs.filter((r) => r?.tenant?.id === tenantId) : [];
+  const filtered = runs.filter((r) => r?.tenant?.id === tenantId);
 
   return NextResponse.json(filtered);
 }
 
-/**
- * POST /api/tenants/:tenantId/runs
- *
- * Backend /runs POST currently expects:
- * - tenantGuid
- * - primaryDomain
- * - triggeredBy
- * - dataProfile (optional but we send)
- *
- * Backend does NOT appear to expose GET /tenants/:id (DB id), so we:
- * 1) GET /tenants (list)
- * 2) Find tenant by id === tenantId
- * 3) POST /runs using tenantGuid + primaryDomain
- */
 export async function POST(req: Request, ctx: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = await ctx.params;
 
+  // Accept { dataProfile: "safe" | "full" }
   let body: any = {};
   try {
-    body = await req.json().catch(() => ({}));
+    body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    body = {};
   }
 
-  const dataProfile = body?.dataProfile === "full" ? "full" : "safe";
+  const rawProfile = String(body?.dataProfile ?? "safe").toLowerCase();
+  const dataProfile = rawProfile === "full" ? "full" : "safe";
 
-  // 1) Resolve tenantGuid + primaryDomain from backend list
-  const tenantsResp = await backendFetchJson<any>(`/tenants`);
+  // Reuse backend tenant auth endpoint (known-good from tenant page)
+  const tenantAuth = await backendFetchJson<any>(`/tenants/${tenantId}/auth`);
 
-  const tenants: any[] = Array.isArray(tenantsResp)
-    ? tenantsResp
-    : Array.isArray(tenantsResp?.items)
-      ? tenantsResp.items
-      : Array.isArray(tenantsResp?.tenants)
-        ? tenantsResp.tenants
-        : [];
-
-  const tenant = tenants.find((t) => t?.id === tenantId);
-
-  if (!tenant) {
-    return NextResponse.json(
-      { error: "Tenant not found via backend /tenants list", tenantId },
-      { status: 404 }
-    );
-  }
-
-  const tenantGuid: string | undefined = tenant?.tenantGuid;
-  const primaryDomain: string | undefined = tenant?.primaryDomain;
+  const tenantGuid = tenantAuth?.tenant?.tenantGuid;
+  const primaryDomain = tenantAuth?.tenant?.primaryDomain;
 
   if (!tenantGuid || !primaryDomain) {
     return NextResponse.json(
-      { error: "Tenant record missing tenantGuid/primaryDomain", tenantId },
-      { status: 500 }
+      { error: "Tenant auth did not include tenantGuid/primaryDomain (cannot create run)" },
+      { status: 400 }
     );
   }
 
-  // 2) Create run using backend's current contract
-  const run = await backendFetchJson<any>(`/runs`, {
+  const modulesEnabled = toModulesEnabledObject(DEFAULT_MODULE_KEYS);
+
+  const created = await backendFetchJson<any>(`/runs`, {
     method: "POST",
     body: {
       tenantGuid,
       primaryDomain,
       triggeredBy: "portal",
-      dataProfile
+      dataProfile,
+      modulesEnabled
     }
   });
 
-  return NextResponse.json(run, { status: 201 });
+  const runId = created?.runId ?? created?.id ?? created?.run?.id;
+  const jobIds = created?.jobIds ?? created?.jobs?.map((j: any) => j?.id).filter(Boolean) ?? [];
+
+  return NextResponse.json(
+    { runId, jobIds, tenantId, dataProfile, modulesEnabled },
+    { status: 201 }
+  );
 }

@@ -6,8 +6,8 @@ import { headers } from "next/headers";
  * Portal data access MUST go through the portal BFF (/api/*),
  * not directly to the backend Fastify API.
  *
- * In Next.js 16, headers() is async. In server components, fetch() requires absolute URLs.
- * We derive the portal origin from request headers (forwarded headers preferred).
+ * In Next.js 15+, headers() is async. In server components/actions,
+ * fetch() requires absolute URLs. We derive the portal origin from request headers.
  */
 
 async function getPortalOriginFromHeaders(): Promise<string> {
@@ -169,6 +169,13 @@ export type ArtefactItem = {
   createdAt: string;
 };
 
+export type CreateRunResponse = {
+  runId: string;
+  jobIds: string[];
+  tenantId: string;
+  dataProfile: string;
+};
+
 /** -----------------------------
  *  BFF calls
  *  ----------------------------*/
@@ -195,6 +202,19 @@ export async function getTenantAuth(tenantId: string): Promise<TenantAuthRespons
 
 export async function listTenantRuns(tenantId: string): Promise<RunListItem[]> {
   return bffFetch<RunListItem[]>(`/api/tenants/${tenantId}/runs`);
+}
+
+export async function createTenantRun(
+  tenantId: string,
+  params: { dataProfile: "safe" | "full" }
+): Promise<CreateRunResponse> {
+  return bffFetch<CreateRunResponse>(`/api/tenants/${tenantId}/runs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(params)
+  });
 }
 
 export async function getRun(tenantId: string, runId: string): Promise<RunDetail> {

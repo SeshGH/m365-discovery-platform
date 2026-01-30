@@ -1,6 +1,7 @@
 // apps/portal/src/app/t/[tenantId]/page.tsx
 import Link from "next/link";
 import { getTenantAuth, listTenantRuns } from "@/lib/api";
+import StartRunForm from "./StartRunForm";
 
 function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
   return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
@@ -27,17 +28,10 @@ function ProfileBadge({ profile }: { profile: string }) {
   return <span className={cls}>{profile}</span>;
 }
 
-export default async function TenantPage({
-  params
-}: {
-  params: Promise<{ tenantId: string }>;
-}) {
+export default async function TenantPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = await params;
 
-  const [auth, runs] = await Promise.all([
-    getTenantAuth(tenantId),
-    listTenantRuns(tenantId)
-  ]);
+  const [auth, runs] = await Promise.all([getTenantAuth(tenantId), listTenantRuns(tenantId)]);
 
   const tenantRunsAll = runs.slice().sort(sortByCreatedDesc);
 
@@ -47,7 +41,9 @@ export default async function TenantPage({
   return (
     <main>
       <p style={{ margin: "10px 0 0 0" }}>
-        <Link className="link" href="/tenants">← Back to tenants</Link>
+        <Link className="link" href="/tenants">
+          ← Back to tenants
+        </Link>
       </p>
 
       <div className="stack">
@@ -67,10 +63,14 @@ export default async function TenantPage({
 
             <div className="kv">
               <div className="k">ID</div>
-              <div className="v"><code>{auth.tenant.id}</code></div>
+              <div className="v">
+                <code>{auth.tenant.id}</code>
+              </div>
 
               <div className="k">Tenant GUID</div>
-              <div className="v"><code>{auth.tenant.tenantGuid}</code></div>
+              <div className="v">
+                <code>{auth.tenant.tenantGuid}</code>
+              </div>
 
               <div className="k">Primary domain</div>
               <div className="v">{auth.tenant.primaryDomain}</div>
@@ -107,13 +107,14 @@ export default async function TenantPage({
             ) : (
               <div className="callout warn">
                 <strong>No auth record</strong>
-                <div style={{ marginTop: 6 }}>
-                  This tenant has no stored auth status yet.
-                </div>
+                <div style={{ marginTop: 6 }}>This tenant has no stored auth status yet.</div>
               </div>
             )}
           </div>
         </div>
+
+        {/* C-2: Start run from portal */}
+        <StartRunForm tenantId={tenantId} />
 
         <div>
           <h3 style={{ marginBottom: 6 }}>Recent runs</h3>

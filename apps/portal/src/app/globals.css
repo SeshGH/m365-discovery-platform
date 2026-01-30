@@ -57,9 +57,11 @@
     --muted-bg: rgba(0,0,0,0.06);
     --muted-fg: rgba(17, 24, 39, 0.78);
   }
-
-  html{ color-scheme: light; }
 }
+
+/* ================================
+   Base
+   ================================ */
 
 *{ box-sizing: border-box; }
 html, body{ height:100%; }
@@ -115,19 +117,123 @@ code{
 .muted2{ color: var(--muted2); }
 
 /* ================================
-   C-2/D-2: Environment overview cards
+   Inputs / Selects
+   ================================ */
+
+.select{
+  appearance: none;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 220px;
+  outline: none;
+}
+
+.select option{
+  background: #ffffff;
+  color: #111827;
+}
+
+.select:disabled{
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (prefers-color-scheme: light) {
+  .select{
+    background: rgba(0,0,0,0.03);
+  }
+}
+
+/* ================================
+   Buttons
+   ================================ */
+
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn:hover{
+  background: rgba(255,255,255,0.10);
+}
+
+.btn:disabled{
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Primary CTA */
+.btn-primary{
+  border-color: rgba(99,102,241,0.40);
+  background: rgba(99,102,241,0.35);
+  color: rgba(255,255,255,0.95);
+}
+
+.btn-primary:hover{
+  background: rgba(99,102,241,0.45);
+}
+
+.btn-primary:disabled{
+  background: rgba(99,102,241,0.22);
+  border-color: rgba(99,102,241,0.25);
+}
+
+/* ================================
+   Run form layout
+   ================================ */
+
+.runform{
+  display:grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+@media (max-width: 900px){
+  .runform{
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
+.runform-cta{
+  display:flex;
+  align-items:flex-end;
+}
+
+.runform-help{
+  align-self:center;
+}
+
+/* ================================
+   Environment overview
    ================================ */
 
 .env-grid{
   display:grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0,1fr));
   gap: 10px;
 }
 
-@media (max-width: 1100px){
-  .env-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width:1100px){
+  .env-grid{ grid-template-columns: repeat(2,1fr); }
 }
-@media (max-width: 560px){
+@media (max-width:560px){
   .env-grid{ grid-template-columns: 1fr; }
 }
 
@@ -138,50 +244,13 @@ code{
   background: rgba(255,255,255,0.04);
 }
 
-@media (prefers-color-scheme: light) {
-  .env-card{
-    background: rgba(0,0,0,0.02);
-  }
-}
+.env-k{ font-size: 12px; color: var(--muted); }
+.env-v{ margin-top: 4px; font-size: 18px; font-weight: 800; }
+.env-h, .env-s{ margin-top: 4px; font-size: 12px; color: var(--muted2); }
 
-.env-k{
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.env-v{
-  margin-top: 4px;
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 0.2px;
-}
-
-.env-h{
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--muted2);
-}
-
-.env-s{
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--muted2);
-}
-
-/* tones */
-.env-card.tone-ok{
-  border-color: rgba(46, 204, 113, 0.25);
-}
-.env-card.tone-warn{
-  border-color: rgba(241, 196, 15, 0.28);
-}
-.env-card.tone-bad{
-  border-color: rgba(231, 76, 60, 0.28);
-}
-.env-card.tone-muted{
-  border-color: var(--border);
-}
-
+.env-card.tone-ok{ border-color: rgba(46,204,113,0.25); }
+.env-card.tone-warn{ border-color: rgba(241,196,15,0.28); }
+.env-card.tone-bad{ border-color: rgba(231,76,60,0.28); }
 
 /* ================================
    Tables
@@ -194,8 +263,8 @@ code{
 }
 
 .table thead th{
-  text-align:left;
   padding: 10px 12px;
+  text-align:left;
   background: rgba(255,255,255,0.06);
   border-bottom: 1px solid var(--border);
 }
@@ -206,62 +275,9 @@ code{
   vertical-align: top;
 }
 
-.table.table-scan tbody tr:hover{
-  background: rgba(255,255,255,0.055);
-}
-
-/* ================================
-   B-1: Observed checks table
-   ================================ */
-
-.table-oc thead th{
-  font-size: 12px;
-  letter-spacing: 0.2px;
-}
-
-.table-oc tbody tr:nth-child(odd){
-  background: rgba(255,255,255,0.02);
-}
-
-.table-oc tbody tr:hover{
-  background: rgba(255,255,255,0.05);
-}
-
 .table-oc .meta{
   font-size: 12px;
   color: var(--muted2);
-}
-
-/* ================================
-   Action links (single source)
-   ================================ */
-
-.link-action{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.05);
-  text-decoration: none;
-  font-weight: 700;
-}
-
-.link-action:hover{
-  background: rgba(255,255,255,0.08);
-  text-decoration: none;
-}
-
-@media (prefers-color-scheme: light) {
-  .link-action
-  {
-    background: rgba(0,0,0,0.03);
-  }
-  .link-action:hover
-  {
-    background: rgba(0,0,0,0.06);
-  }
 }
 
 /* ================================
@@ -285,36 +301,18 @@ code{
 .badge.bad{ background: var(--bad-bg); color: var(--bad-fg); }
 
 /* ================================
-   A-2: Run hero strip
+   Run hero
    ================================ */
 
 .hero{
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 4px);
+  padding: 14px;
   background:
     radial-gradient(700px 260px at 12% 10%, rgba(99,102,241,0.18), transparent 55%),
     radial-gradient(600px 260px at 90% 20%, rgba(16,185,129,0.14), transparent 55%),
     linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035));
   box-shadow: var(--shadow);
-  padding: 14px;
-}
-
-.hero-top{
-  display:flex;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.hero-badges{
-  display:flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.hero-right{
-  display:flex;
-  gap: 10px;
 }
 
 .metric{
@@ -327,19 +325,3 @@ code{
 
 .metric-k{ font-size: 12px; color: var(--muted); }
 .metric-v{ font-size: 18px; font-weight: 800; }
-
-.hero-sub{
-  margin-top: 12px;
-  display:flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.hero-sub-item{
-  padding: 6px 8px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-
-.hero-foot{ margin-top: 10px; }
