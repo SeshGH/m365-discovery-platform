@@ -160,11 +160,23 @@ export const entraUsersCollector: Collector = {
             isComplete,
             permissionDenied,
             notes,
+
+            // Canonical metrics surface for portal "Environment overview" (best-effort)
+            counts: {
+              users: total,
+              usersEnabled: enabled,
+              usersDisabled: disabled,
+              usersMembers: members,
+              usersGuests: guests
+            },
+
+            // Back-compat (existing fields) — keep for now
             totalUsers: total,
             enabledUsers: enabled,
             disabledUsers: disabled,
             memberUsers: members,
             guestUsers: guests,
+
             fullExported
           },
           references: []
