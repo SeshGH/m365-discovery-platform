@@ -35,7 +35,7 @@ app.addContentTypeParser(
 );
 
 // --------------------
-// Portal-minted internal token auth (Slice 1)
+// Portal-minted internal token auth (Slice 1) + Org scoping (Slice 2)
 // --------------------
 
 const INTERNAL_JWT_ISSUER = "m365-discovery-portal";
@@ -83,7 +83,10 @@ type InternalClaims = {
   jti?: string;
 };
 
-function verifyInternalJwt(token: string, secret: string): { ok: true; claims: InternalClaims } | { ok: false } {
+function verifyInternalJwt(
+  token: string,
+  secret: string
+): { ok: true; claims: InternalClaims } | { ok: false } {
   const parts = token.split(".");
   if (parts.length !== 3) return { ok: false };
 
@@ -162,7 +165,7 @@ app.addHook("onRequest", async (req, reply) => {
 
   const claims = verified.claims;
 
-  // Normalize roles / tenant claims (Slice 1 keeps it simple)
+  // Normalize roles / tenant claims (Slice 2 uses orgId only for now)
   const roles = Array.isArray(claims.roles) ? claims.roles.filter((r) => typeof r === "string") : [];
   const tenantMode: "all" | "list" = claims.tenant_mode === "list" ? "list" : "all";
   const tenantIds =
@@ -179,6 +182,50 @@ app.addHook("onRequest", async (req, reply) => {
     jti: typeof claims.jti === "string" ? claims.jti : undefined
   };
 });
+
+// --------------------
+// Org scoping helpers (Slice 2)
+// --------------------
+
+function requirePortalAuth(req: any) {
+  if (!req.portalAuth?.orgId) {
+    // Should not happen because onRequest enforces token, but keep fail-closed.
+    throw new Error("Missing portal auth context");
+  }
+  return req.portalAuth as {
+    orgId: string;
+    sub: string;
+    roles: string[];
+    tenantMode: "all" | "list";
+    tenantIds: string[];
+    jti?: string;
+  };
+}
+
+async function assertTenantInOrg(params: { tenantId: string; orgId: string }): Promise<boolean> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: params.tenantId, orgId: params.orgId },
+    select: { id: true }
+  });
+  return Boolean(tenant);
+}
+
+async function assertTenantGuidInOrg(params: {
+  tenantGuid: string;
+  orgId: string;
+}): Promise<{ id: string } | null> {
+  return prisma.tenant.findFirst({
+    where: { tenantGuid: params.tenantGuid, orgId: params.orgId },
+    select: { id: true }
+  });
+}
+
+async function assertRunInOrg(params: { runId: string; orgId: string }) {
+  return prisma.run.findFirst({
+    where: { id: params.runId, tenant: { orgId: params.orgId } },
+    select: { id: true, tenantId: true }
+  });
+}
 
 // --------------------
 // Module -> Collector mapping
@@ -255,7 +302,8 @@ const S3_REGION = process.env.S3_REGION ?? "us-east-1";
 const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY;
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY;
 const S3_BUCKET = process.env.S3_BUCKET ?? "artefacts";
-const S3_FORCE_PATH_STYLE = String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
+const S3_FORCE_PATH_STYLE =
+  String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
 
 if (!S3_ENDPOINT || !S3_ACCESS_KEY || !S3_SECRET_KEY) {
   throw new Error(
@@ -318,14 +366,18 @@ async function presignArtefactDownload(params: { bucket: string; key: string }) 
 }
 
 // --------------------
-// Artefact download (GLOBAL)
+// Artefact download (GLOBAL)  [Slice 2: org scoped]
 // GET /artefacts/:artefactId/download
 // --------------------
 app.get("/artefacts/:artefactId/download", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { artefactId } = req.params as { artefactId: string };
 
-  const artefact = await prisma.artefact.findUnique({
-    where: { id: artefactId }
+  const artefact = await prisma.artefact.findFirst({
+    where: {
+      id: artefactId,
+      run: { tenant: { orgId: auth.orgId } }
+    }
   });
 
   if (!artefact) {
@@ -342,14 +394,23 @@ app.get("/artefacts/:artefactId/download", async (req, reply) => {
 });
 
 // --------------------
-// Artefact download (run-scoped) - keep for backwards compatibility
+// Artefact download (run-scoped) - keep for backwards compatibility  [Slice 2: org scoped]
 // GET /runs/:runId/artefacts/:artefactId/download
 // --------------------
 app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId, artefactId } = req.params as { runId: string; artefactId: string };
 
+  // Ensure run is in-org (fail-closed)
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
+
   const artefact = await prisma.artefact.findFirst({
-    where: { id: artefactId, runId }
+    where: {
+      id: artefactId,
+      runId,
+      run: { tenant: { orgId: auth.orgId } }
+    }
   });
 
   if (!artefact) {
@@ -366,10 +427,12 @@ app.get("/runs/:runId/artefacts/:artefactId/download", async (req, reply) => {
 });
 
 // --------------------
-// Tenants - list / lookup for portal UX
+// Tenants - list / lookup for portal UX  [Slice 2: org scoped]
 // GET /tenants?tenantGuid=...&primaryDomain=...&q=...&take=...
 // --------------------
 app.get("/tenants", async (req) => {
+  const auth = requirePortalAuth(req);
+
   const query = (req.query ?? {}) as {
     tenantGuid?: string;
     primaryDomain?: string;
@@ -390,7 +453,8 @@ app.get("/tenants", async (req) => {
   const primaryDomain = typeof query.primaryDomain === "string" ? query.primaryDomain.trim() : "";
   const q = typeof query.q === "string" ? query.q.trim() : "";
 
-  const where: any = {};
+  // Slice 2: always scope tenants by orgId
+  const where: any = { orgId: auth.orgId };
 
   if (tenantGuid) where.tenantGuid = tenantGuid;
   if (primaryDomain) where.primaryDomain = primaryDomain;
@@ -443,7 +507,7 @@ app.get("/tenants", async (req) => {
 });
 
 // --------------------
-// TenantAuth
+// TenantAuth  [Slice 2: org scoped]
 // --------------------
 
 function mapTenantAuthResponse(tenant: {
@@ -474,10 +538,14 @@ function mapTenantAuthResponse(tenant: {
 
 // GET /tenants/:tenantId/auth
 app.get("/tenants/:tenantId/auth", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { tenantId } = req.params as { tenantId: string };
 
+  const ok = await assertTenantInOrg({ tenantId, orgId: auth.orgId });
+  if (!ok) return reply.code(404).send({ error: "Tenant not found" });
+
   const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId }, // FIX: tenant primary key is id
+    where: { id: tenantId },
     select: {
       id: true,
       tenantGuid: true,
@@ -504,7 +572,11 @@ app.get("/tenants/:tenantId/auth", async (req, reply) => {
 
 // POST /tenants/:tenantId/auth/test
 app.post("/tenants/:tenantId/auth/test", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { tenantId } = req.params as { tenantId: string };
+
+  const ok = await assertTenantInOrg({ tenantId, orgId: auth.orgId });
+  if (!ok) return reply.code(404).send({ error: "Tenant not found" });
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
@@ -538,9 +610,13 @@ app.post("/tenants/:tenantId/auth/test", async (req, reply) => {
   });
 });
 
-// GET /tenants/by-guid/:tenantGuid/auth
+// GET /tenants/by-guid/:tenantGuid/auth  [Slice 2: org scoped]
 app.get("/tenants/by-guid/:tenantGuid/auth", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { tenantGuid } = req.params as { tenantGuid: string };
+
+  const inOrg = await assertTenantGuidInOrg({ tenantGuid, orgId: auth.orgId });
+  if (!inOrg) return reply.code(404).send({ error: "Tenant not found" });
 
   const tenant = await prisma.tenant.findUnique({
     where: { tenantGuid },
@@ -568,9 +644,13 @@ app.get("/tenants/by-guid/:tenantGuid/auth", async (req, reply) => {
   return mapTenantAuthResponse(tenant);
 });
 
-// POST /tenants/by-guid/:tenantGuid/auth/test
+// POST /tenants/by-guid/:tenantGuid/auth/test  [Slice 2: org scoped]
 app.post("/tenants/by-guid/:tenantGuid/auth/test", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { tenantGuid } = req.params as { tenantGuid: string };
+
+  const inOrg = await assertTenantGuidInOrg({ tenantGuid, orgId: auth.orgId });
+  if (!inOrg) return reply.code(404).send({ error: "Tenant not found" });
 
   const tenant = await prisma.tenant.findUnique({
     where: { tenantGuid },
@@ -606,9 +686,11 @@ app.post("/tenants/by-guid/:tenantGuid/auth/test", async (req, reply) => {
 });
 
 // --------------------
-// Create Run + Jobs
+// Create Run + Jobs  [Slice 2: org scoped tenant ownership]
 // --------------------
 app.post("/runs", async (request, reply) => {
+  const auth = requirePortalAuth(request);
+
   const parsed = CreateRunSchema.safeParse(request.body);
 
   if (!parsed.success) {
@@ -622,7 +704,17 @@ app.post("/runs", async (request, reply) => {
 
   const dataProfile = input.dataProfile === "full" ? "full" : "safe";
 
-  // 1) Upsert tenant
+  // Slice 2: prevent cross-org tenantGuid reuse (hide existence across orgs)
+  const existing = await prisma.tenant.findUnique({
+    where: { tenantGuid: input.tenantGuid },
+    select: { id: true, orgId: true }
+  });
+
+  if (existing?.orgId && existing.orgId !== auth.orgId) {
+    return reply.code(404).send({ error: "Tenant not found" });
+  }
+
+  // 1) Upsert tenant (create includes orgId; update does NOT change orgId)
   const tenant = await prisma.tenant.upsert({
     where: { tenantGuid: input.tenantGuid },
     update: {
@@ -632,9 +724,18 @@ app.post("/runs", async (request, reply) => {
     create: {
       tenantGuid: input.tenantGuid,
       primaryDomain: input.primaryDomain,
-      displayName: input.displayName
+      displayName: input.displayName,
+      orgId: auth.orgId
     }
   });
+
+  // If tenant exists but orgId is NULL (legacy row), adopt it into this org (dev/backfill safety)
+  if (!tenant.orgId) {
+    await prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { orgId: auth.orgId }
+    });
+  }
 
   // 2) Create run
   const run = await prisma.run.create({
@@ -696,12 +797,15 @@ app.post("/runs", async (request, reply) => {
 });
 
 // --------------------
-// Read-only endpoints
+// Read-only endpoints  [Slice 2: org scoped]
 // --------------------
 
 // List runs (latest first) + use _count for perf
-app.get("/runs", async () => {
+app.get("/runs", async (req) => {
+  const auth = requirePortalAuth(req);
+
   const runs = await prisma.run.findMany({
+    where: { tenant: { orgId: auth.orgId } },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: {
@@ -753,10 +857,11 @@ app.get("/runs", async () => {
 
 // Get a single run (with tenant + counts)
 app.get("/runs/:runId", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId } = req.params as { runId: string };
 
-  const run = await prisma.run.findUnique({
-    where: { id: runId },
+  const run = await prisma.run.findFirst({
+    where: { id: runId, tenant: { orgId: auth.orgId } },
     select: {
       id: true,
       status: true,
@@ -812,14 +917,11 @@ function isTerminalJobStatus(status: unknown): boolean {
 
 // List jobs for a run (real 1:N now)
 app.get("/runs/:runId/jobs", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId } = req.params as { runId: string };
 
-  const runExists = await prisma.run.findUnique({
-    where: { id: runId },
-    select: { id: true }
-  });
-
-  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
 
   const jobs = await prisma.job.findMany({
     where: { runId },
@@ -868,13 +970,11 @@ app.get("/runs/:runId/jobs", async (req, reply) => {
 
 // List findings for a run
 app.get("/runs/:runId/findings", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId } = req.params as { runId: string };
 
-  const runExists = await prisma.run.findUnique({
-    where: { id: runId },
-    select: { id: true }
-  });
-  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
 
   const findings = await prisma.finding.findMany({
     where: { runId },
@@ -901,14 +1001,11 @@ app.get("/runs/:runId/findings", async (req, reply) => {
 // GET /runs/:runId/observed-checks
 // --------------------
 app.get("/runs/:runId/observed-checks", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId } = req.params as { runId: string };
 
-  // Keep consistent with other run-scoped endpoints: validate run exists first
-  const runExists = await prisma.run.findUnique({
-    where: { id: runId },
-    select: { id: true }
-  });
-  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
 
   const observed = await prisma.observedCheck.findMany({
     where: { runId },
@@ -919,13 +1016,14 @@ app.get("/runs/:runId/observed-checks", async (req, reply) => {
 });
 
 // --------------------
-// GET /observed-checks/:observedId  (GLOBAL detail)
+// GET /observed-checks/:observedId  (GLOBAL detail)  [Slice 2: org scoped]
 // --------------------
 app.get("/observed-checks/:observedId", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { observedId } = req.params as { observedId: string };
 
-  const observed = await prisma.observedCheck.findUnique({
-    where: { id: observedId }
+  const observed = await prisma.observedCheck.findFirst({
+    where: { id: observedId, run: { tenant: { orgId: auth.orgId } } }
   });
 
   if (!observed) return reply.code(404).send({ error: "Observed check not found" });
@@ -937,18 +1035,15 @@ app.get("/observed-checks/:observedId", async (req, reply) => {
 // GET /runs/:runId/observed-checks/:observedId  (run-scoped detail)
 // --------------------
 app.get("/runs/:runId/observed-checks/:observedId", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId, observedId } = req.params as { runId: string; observedId: string };
 
-  // Keep consistent with other run-scoped endpoints: validate run exists first
-  const runExists = await prisma.run.findUnique({
-    where: { id: runId },
-    select: { id: true }
-  });
-  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
 
   // Fail-closed: observed check must belong to the run
   const observed = await prisma.observedCheck.findFirst({
-    where: { id: observedId, runId }
+    where: { id: observedId, runId, run: { tenant: { orgId: auth.orgId } } }
   });
 
   if (!observed) return reply.code(404).send({ error: "Observed check not found for run" });
@@ -958,13 +1053,11 @@ app.get("/runs/:runId/observed-checks/:observedId", async (req, reply) => {
 
 // List artefacts for a run (includes bucket/key + jobId)
 app.get("/runs/:runId/artefacts", async (req, reply) => {
+  const auth = requirePortalAuth(req);
   const { runId } = req.params as { runId: string };
 
-  const runExists = await prisma.run.findUnique({
-    where: { id: runId },
-    select: { id: true }
-  });
-  if (!runExists) return reply.code(404).send({ error: "Run not found" });
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
 
   const artefacts = await prisma.artefact.findMany({
     where: { runId },

@@ -1,0 +1,3 @@
+﻿UPDATE "Tenant"
+SET "orgId" = 'dev-org-00000000-0000-0000-0000-000000000000'
+WHERE "orgId" IS NULL;

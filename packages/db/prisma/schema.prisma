@@ -77,7 +77,13 @@ model Tenant {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
+  /// Slice 2: org scoping boundary (portal-minted token carries org_id)
+  /// Nullable initially for migration/backfill.
+  orgId String?
+
   runs Run[]
+
+  @@index([orgId])
 }
 
 model Run {
