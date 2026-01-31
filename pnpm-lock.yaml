@@ -11,6 +11,12 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
+      eslint:
+        specifier: ^9
+        version: 9.39.2
+      eslint-config-next:
+        specifier: latest
+        version: 16.1.6(@typescript-eslint/parser@8.54.0(eslint@9.39.2)(typescript@5.9.3))(eslint@9.39.2)(typescript@5.9.3)
       prisma:
         specifier: ^5.22.0
         version: 5.22.0
