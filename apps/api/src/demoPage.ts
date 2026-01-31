@@ -217,34 +217,6 @@ export function getDemoHtml(): string {
       margin-left: auto;
     }
 
-    .exportRow {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-top: 8px;
-    }
-    .exportRow a.buttonLink {
-      display: inline-block;
-      text-decoration: none;
-      padding: 8px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      font-weight: 700;
-      font-size: 13px;
-      color: var(--text);
-      background: #fff;
-    }
-    .exportRow a.buttonLink.primaryLink {
-      background: var(--btn);
-      color: var(--btnfg);
-      border-color: var(--btn);
-    }
-    .exportRow a.buttonLink[aria-disabled="true"] {
-      opacity: 0.55;
-      pointer-events: none;
-    }
-
     .runHeaderLine { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .toast { margin-left: 10px; font-size: 12px; color: var(--muted); }
     .pollMeta { margin-top: 4px; font-size: 12px; color: var(--muted); }
@@ -367,7 +339,7 @@ export function getDemoHtml(): string {
           <div class="checkrow">
             ${modulesHtml}
           </div>
-          <div class="note">Report collectors are always enqueued at the end of a run.</div>
+          <div class="note">Exports are provided by the portal as report snapshots (legacy CSV/XLSX run summaries are deprecated).</div>
         </div>
       </div>
 
@@ -417,7 +389,7 @@ export function getDemoHtml(): string {
         </details>
       </div>
 
-      <!-- Summary tiles (restored) -->
+      <!-- Summary tiles -->
       <div class="tiles" aria-label="Run summary tiles">
         <div class="tile span3">
           <div class="kicker">
@@ -468,29 +440,26 @@ export function getDemoHtml(): string {
         </div>
 
         <div class="tile span6">
-  <div class="kicker" style="justify-content:flex-start; gap: 8px;">
-    <span>Conditional Access</span>
-    <span class="chip" id="tileCaProfile">—</span>
-  </div>
-  <div class="subline" style="margin-top: 10px;">
-    <span class="chip" id="tileCaTotal">total: —</span>
-    <span class="chip" id="tileCaEnabled">enabled: —</span>
-    <span class="chip" id="tileCaMfa">with MFA: —</span>
-    <span class="chip" id="tileCaAllUsers">target all users: —</span>
-  </div>
-</div>
+          <div class="kicker" style="justify-content:flex-start; gap: 8px;">
+            <span>Conditional Access</span>
+            <span class="chip" id="tileCaProfile">—</span>
+          </div>
+          <div class="subline" style="margin-top: 10px;">
+            <span class="chip" id="tileCaTotal">total: —</span>
+            <span class="chip" id="tileCaEnabled">enabled: —</span>
+            <span class="chip" id="tileCaMfa">with MFA: —</span>
+            <span class="chip" id="tileCaAllUsers">target all users: —</span>
+          </div>
+        </div>
 
-<div class="tile span6">
-  <div style="font-weight:800; font-size: 12px; color: var(--muted);">Run summary exports</div>
-  <div class="muted" style="margin-top: 6px;">These appear once report jobs finish.</div>
-  <div class="exportRow" style="margin-top: 10px;">
-    <a id="runSummaryXlsx" class="buttonLink primaryLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download XLSX</a>
-    <a id="runSummaryCsv" class="buttonLink" aria-disabled="true" href="#" target="_blank" rel="noreferrer">Download CSV</a>
-    <span id="runSummaryStatus" class="muted">Not ready yet.</span>
-  </div>
-</div>
+        <div class="tile span6">
+          <div style="font-weight:800; font-size: 12px; color: var(--muted);">Exports</div>
+          <div class="muted" style="margin-top: 6px;">
+            Run exports are provided by the portal as report snapshots (PDF). Legacy CSV/XLSX run summaries are deprecated.
+          </div>
+        </div>
+      </div>
 
-      <!-- Default collapsed now: no "open" attribute -->
       <details style="margin-top: 14px;">
         <summary>
           <span>Jobs</span>
@@ -820,45 +789,6 @@ export function getDemoHtml(): string {
     $("artefactsBody").innerHTML = rows || "<tr><td colspan=\\"5\\" class=\\"muted\\">No artefacts yet</td></tr>";
   };
 
-  const setRunSummaryLinks = (artefacts) => {
-    const xlsxEl = $("runSummaryXlsx");
-    const csvEl = $("runSummaryCsv");
-    const statusEl = $("runSummaryStatus");
-
-    const list = Array.isArray(artefacts) ? artefacts : [];
-
-    const findByFilename = (name) => {
-      for (const a of list) {
-        const fn = filenameFromKey(a);
-        if (fn === name) return a;
-      }
-      return null;
-    };
-
-    const xlsx = findByFilename("run-summary.xlsx");
-    const csv = findByFilename("run-summary.csv");
-
-    const setLink = (el, artefact) => {
-      if (!el) return;
-      if (artefact && artefact.id) {
-        el.setAttribute("href", "/artefacts/" + artefact.id + "/download");
-        el.setAttribute("aria-disabled", "false");
-      } else {
-        el.setAttribute("href", "#");
-        el.setAttribute("aria-disabled", "true");
-      }
-    };
-
-    setLink(xlsxEl, xlsx);
-    setLink(csvEl, csv);
-
-    if (statusEl) {
-      if (xlsx && csv) statusEl.textContent = "Ready.";
-      else if (xlsx || csv) statusEl.textContent = "Partially ready (one report still running).";
-      else statusEl.textContent = "Not ready yet.";
-    }
-  };
-
   const persistLastRunId = (runId) => {
     try {
       if (!runId) return;
@@ -914,9 +844,6 @@ export function getDemoHtml(): string {
     $("runIdPill").textContent = runId;
     setLinksForRun(runId);
 
-    // reset summary links until next artefact poll
-    setRunSummaryLinks([]);
-
     // reset tiles until first poll
     renderSummaryTiles(null, [], [], []);
 
@@ -961,9 +888,6 @@ export function getDemoHtml(): string {
         renderJobs(jobsList);
         renderArtefacts(artefactList);
         renderObserved(observed);
-
-        // Update run-summary export buttons near the top
-        setRunSummaryLinks(artefactList);
 
         // Restore overview tiles
         renderSummaryTiles(run, jobsList, observed, artefactList);
@@ -1024,8 +948,7 @@ export function getDemoHtml(): string {
     if ($("observedBody")) $("observedBody").innerHTML = "";
     if ($("existingRunId")) $("existingRunId").value = "";
 
-    // reset summary links/tiles
-    setRunSummaryLinks([]);
+    // reset tiles
     renderSummaryTiles(null, [], [], []);
 
     // DO NOT clear localStorage: it's for demo convenience

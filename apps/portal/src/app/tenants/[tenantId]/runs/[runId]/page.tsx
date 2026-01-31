@@ -53,6 +53,38 @@ function Badge({ badge }: { badge: BadgeModel }) {
 }
 
 /** -----------------------------
+ *  Safe helpers (no any)
+ *  ----------------------------*/
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function getRecord(v: unknown): Record<string, unknown> | null {
+  return isRecord(v) ? v : null;
+}
+
+function getBool(obj: Record<string, unknown>, key: string): boolean | undefined {
+  const v = obj[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function getNumber(obj: Record<string, unknown>, key: string): number | undefined {
+  const v = obj[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function getStringArray(obj: Record<string, unknown>, key: string): string[] {
+  const v = obj[key];
+  if (!Array.isArray(v)) return [];
+  return v.filter((x) => typeof x === "string") as string[];
+}
+
+function getNestedRecord(obj: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  return getRecord(obj[key]);
+}
+
+/** -----------------------------
  *  Completeness signals
  *  ----------------------------*/
 
@@ -62,18 +94,18 @@ function badgeForObservedChecks(observed: ObservedCheckItem[]): BadgeModel {
   let sawIncomplete = false;
 
   for (const oc of observed) {
-    const d = oc.data as any;
-    if (d && typeof d === "object") {
-      if (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) sawPermissionDenied = true;
-      if (d.truncated === true) sawTruncated = true;
-      if (d.isComplete === false) sawIncomplete = true;
+    const d = getRecord(oc.data);
+    if (!d) continue;
 
-      if (d.completeness && typeof d.completeness === "object") {
-        if (Array.isArray(d.completeness.permissionDenied) && d.completeness.permissionDenied.length > 0)
-          sawPermissionDenied = true;
-        if (d.completeness.truncated === true) sawTruncated = true;
-        if (d.completeness.isComplete === false) sawIncomplete = true;
-      }
+    if (getStringArray(d, "permissionDenied").length > 0) sawPermissionDenied = true;
+    if (getBool(d, "truncated") === true) sawTruncated = true;
+    if (getBool(d, "isComplete") === false) sawIncomplete = true;
+
+    const c = getNestedRecord(d, "completeness");
+    if (c) {
+      if (getStringArray(c, "permissionDenied").length > 0) sawPermissionDenied = true;
+      if (getBool(c, "truncated") === true) sawTruncated = true;
+      if (getBool(c, "isComplete") === false) sawIncomplete = true;
     }
   }
 
@@ -89,25 +121,23 @@ function extractSignals(observed: ObservedCheckItem[]) {
   const incompleteChecks: string[] = [];
 
   for (const oc of observed) {
-    const d = oc.data as any;
-    if (!d || typeof d !== "object") continue;
+    const d = getRecord(oc.data);
+    if (!d) continue;
 
-    const pd = (Array.isArray(d.permissionDenied) ? d.permissionDenied : []) as unknown[];
-    for (const x of pd) if (typeof x === "string") permissionDenied.push(x);
+    for (const x of getStringArray(d, "permissionDenied")) permissionDenied.push(x);
 
-    if (d.truncated === true) truncatedChecks.push(oc.checkId);
-    if (d.isComplete === false) incompleteChecks.push(oc.checkId);
+    if (getBool(d, "truncated") === true) truncatedChecks.push(String(oc.checkId));
+    if (getBool(d, "isComplete") === false) incompleteChecks.push(String(oc.checkId));
 
-    if (d.completeness && typeof d.completeness === "object") {
-      const pd2 = (Array.isArray(d.completeness.permissionDenied) ? d.completeness.permissionDenied : []) as unknown[];
-      for (const x of pd2) if (typeof x === "string") permissionDenied.push(x);
-
-      if (d.completeness.truncated === true) truncatedChecks.push(oc.checkId);
-      if (d.completeness.isComplete === false) incompleteChecks.push(oc.checkId);
+    const c = getNestedRecord(d, "completeness");
+    if (c) {
+      for (const x of getStringArray(c, "permissionDenied")) permissionDenied.push(x);
+      if (getBool(c, "truncated") === true) truncatedChecks.push(String(oc.checkId));
+      if (getBool(c, "isComplete") === false) incompleteChecks.push(String(oc.checkId));
     }
   }
 
-  const uniq = (xs: string[]) => Array.from(new Set(xs));
+  const uniq = (xs: string[]) => Array.from(new Set(xs)).filter(Boolean);
 
   return {
     permissionDenied: uniq(permissionDenied),
@@ -165,8 +195,9 @@ function phaseForRun(
   if (summary.running > 0) return { label: "phase: running", tone: "warn" };
   if (run.startedAt && !run.endedAt) return { label: "phase: running", tone: "warn" };
 
-  if (run.endedAt && status !== "succeeded" && status !== "failed")
+  if (run.endedAt && status !== "succeeded" && status !== "failed") {
     return { label: "phase: ended (non-terminal)", tone: "warn" };
+  }
 
   return { label: "phase: queued", tone: "muted" };
 }
@@ -176,18 +207,18 @@ function phaseForRun(
  *  ----------------------------*/
 
 function observedRowSignals(o: ObservedCheckItem): string[] {
-  const d = o.data as any;
-  if (!d || typeof d !== "object") return [];
+  const d = getRecord(o.data);
+  if (!d) return [];
 
-  const hasPd =
-    (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) ||
-    (Array.isArray(d?.completeness?.permissionDenied) && d.completeness.permissionDenied.length > 0);
+  const pd1 = getStringArray(d, "permissionDenied").length > 0;
+  const c = getNestedRecord(d, "completeness");
+  const pd2 = c ? getStringArray(c, "permissionDenied").length > 0 : false;
 
-  const isTruncated = d.truncated === true || d?.completeness?.truncated === true;
-  const isIncomplete = d.isComplete === false || d?.completeness?.isComplete === false;
+  const isTruncated = getBool(d, "truncated") === true || (c ? getBool(c, "truncated") === true : false);
+  const isIncomplete = getBool(d, "isComplete") === false || (c ? getBool(c, "isComplete") === false : false);
 
   const sigs: string[] = [];
-  if (hasPd) sigs.push("permissionDenied");
+  if (pd1 || pd2) sigs.push("permissionDenied");
   if (isTruncated) sigs.push("truncated");
   if (isIncomplete) sigs.push("incomplete");
   return sigs;
@@ -296,41 +327,34 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
 
   // Exchange: EXO_MAILBOXES_OBS_001 cards
   const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
-  if (exo && exo.data && typeof exo.data === "object") {
-    const d: any = exo.data;
+  const exoData = exo ? getRecord(exo.data) : null;
 
-    const totalMailboxes =
-      typeof d.totalMailboxes === "number" && Number.isFinite(d.totalMailboxes) ? d.totalMailboxes : null;
+  if (exo && exoData) {
+    const totalMailboxes = getNumber(exoData, "totalMailboxes") ?? null;
 
-    const sizeBuckets = d.sizeBuckets && typeof d.sizeBuckets === "object" ? d.sizeBuckets : null;
-
+    const sizeBuckets = getNestedRecord(exoData, "sizeBuckets");
     const near50 =
       sizeBuckets && typeof sizeBuckets["40to50GB"] === "number" && Number.isFinite(sizeBuckets["40to50GB"])
-        ? sizeBuckets["40to50GB"]
+        ? (sizeBuckets["40to50GB"] as number)
         : null;
 
     const over50 =
       sizeBuckets && typeof sizeBuckets["over50GB"] === "number" && Number.isFinite(sizeBuckets["over50GB"])
-        ? sizeBuckets["over50GB"]
+        ? (sizeBuckets["over50GB"] as number)
         : null;
 
-    const isComplete = typeof d.isComplete === "boolean" ? d.isComplete : null;
+    const isComplete = getBool(exoData, "isComplete") ?? null;
+    const permissionDenied = getStringArray(exoData, "permissionDenied");
+    const notesRaw = exoData["notes"];
+    const notes = Array.isArray(notesRaw) ? (notesRaw.filter((x) => typeof x === "string") as string[]) : [];
 
-    const permissionDenied = Array.isArray(d.permissionDenied)
-      ? d.permissionDenied.filter((x: any) => typeof x === "string")
-      : [];
-
-    const notes = Array.isArray(d.notes) ? d.notes.filter((x: any) => typeof x === "string") : [];
-
-    const exoTone: EnvMetricTone =
-      permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+    const exoTone: EnvMetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
 
     const exoHint =
       permissionDenied.length > 0
         ? `Permission missing: ${permissionDenied.join(", ")}`
         : isComplete === false
-          ? notes[0] ??
-            "Exchange reporting is not available yet (Graph reports)."
+          ? (notes[0] ?? "Exchange reporting is not available yet (Graph reports).")
           : "Derived from Microsoft Graph mailbox usage reports.";
 
     const exoSources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
@@ -373,25 +397,35 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
 type CollectorOverviewRow = {
   collectorId: string;
   observedChecks: number;
-  items: number | null; // best-effort derived
+  items: number | null;
   signals: { permissionDenied: boolean; truncated: boolean; incomplete: boolean };
 };
 
-function tryDeriveItemCountFromObservedData(data: any): number | null {
-  if (!data || typeof data !== "object") return null;
+function tryDeriveItemCountFromObservedData(data: unknown): number | null {
+  const d = getRecord(data);
+  if (!d) return null;
 
-  const numericKeys = ["count", "total", "totalCount", "itemCount", "itemsCount"];
+  const numericKeys = ["count", "total", "totalCount", "itemCount", "itemsCount"] as const;
+
   for (const k of numericKeys) {
-    if (typeof data[k] === "number" && Number.isFinite(data[k])) return data[k];
+    const n = getNumber(d, k);
+    if (typeof n === "number") return n;
   }
 
-  if (Array.isArray(data.items)) return data.items.length;
-  if (Array.isArray(data.value)) return data.value.length;
-  if (Array.isArray(data.results)) return data.results.length;
+  const items = d["items"];
+  if (Array.isArray(items)) return items.length;
 
-  if (data.summary && typeof data.summary === "object") {
+  const value = d["value"];
+  if (Array.isArray(value)) return value.length;
+
+  const results = d["results"];
+  if (Array.isArray(results)) return results.length;
+
+  const summary = getNestedRecord(d, "summary");
+  if (summary) {
     for (const k of numericKeys) {
-      if (typeof data.summary[k] === "number" && Number.isFinite(data.summary[k])) return data.summary[k];
+      const n = getNumber(summary, k);
+      if (typeof n === "number") return n;
     }
   }
 
@@ -403,6 +437,7 @@ function buildCollectorOverview(observed: ObservedCheckItem[]): CollectorOvervie
 
   for (const oc of observed) {
     const key = String(oc.collectorId ?? "unknown");
+
     const row =
       map.get(key) ??
       ({
@@ -414,23 +449,22 @@ function buildCollectorOverview(observed: ObservedCheckItem[]): CollectorOvervie
 
     row.observedChecks += 1;
 
-    const d = oc.data as any;
-    if (d && typeof d === "object") {
-      const hasPd =
-        (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) ||
-        (Array.isArray(d?.completeness?.permissionDenied) && d.completeness.permissionDenied.length > 0);
+    const d = getRecord(oc.data);
+    if (d) {
+      const pd1 = getStringArray(d, "permissionDenied").length > 0;
+      const c = getNestedRecord(d, "completeness");
+      const pd2 = c ? getStringArray(c, "permissionDenied").length > 0 : false;
 
-      const isTruncated = d.truncated === true || d?.completeness?.truncated === true;
-      const isIncomplete = d.isComplete === false || d?.completeness?.isComplete === false;
+      const isTruncated = getBool(d, "truncated") === true || (c ? getBool(c, "truncated") === true : false);
+      const isIncomplete = getBool(d, "isComplete") === false || (c ? getBool(c, "isComplete") === false : false);
 
-      if (hasPd) row.signals.permissionDenied = true;
+      if (pd1 || pd2) row.signals.permissionDenied = true;
       if (isTruncated) row.signals.truncated = true;
       if (isIncomplete) row.signals.incomplete = true;
 
       const derived = tryDeriveItemCountFromObservedData(d);
       if (typeof derived === "number") {
-        if (row.items === null) row.items = derived;
-        else row.items = Math.max(row.items, derived);
+        row.items = row.items === null ? derived : Math.max(row.items, derived);
       }
     }
 
@@ -467,7 +501,7 @@ export default async function RunPage({
   const completeness = badgeForObservedChecks(observed);
   const signals = extractSignals(observed);
 
-  const artefacts: ArtefactRow[] = (artefactsRaw as ArtefactItem[]).map((a) => ({
+  const artefacts: ArtefactRow[] = artefactsRaw.map((a: ArtefactItem) => ({
     id: a.id,
     type: a.type,
     key: a.key,
@@ -496,7 +530,6 @@ export default async function RunPage({
   const runStatusBadge = statusBadgeForRunStatus(run.status);
 
   const env = buildEnvironmentOverview(observed);
-
   const collectorOverview = buildCollectorOverview(observed);
 
   return (
@@ -585,27 +618,24 @@ export default async function RunPage({
         {env.length === 0 ? (
           <div className="subtle">No observed checks recorded yet, so no environment overview is available.</div>
         ) : (
-          <>
-            <div className="env-grid" style={{ marginTop: 8 }}>
-              {env.map((m) => (
-                <div key={m.key} className={`env-card tone-${m.tone}`}>
-                  <div className="env-k">{m.label}</div>
-                  <div className="env-v">{m.value}</div>
-                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
-                  {m.sources && m.sources.length > 0 ? (
-                    <div className="env-s">
-                      <span className="subtle">sources:</span>{" "}
-                      <span className="muted2">{m.sources.join(", ")}</span>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </>
+          <div className="env-grid" style={{ marginTop: 8 }}>
+            {env.map((m) => (
+              <div key={m.key} className={`env-card tone-${m.tone}`}>
+                <div className="env-k">{m.label}</div>
+                <div className="env-v">{m.value}</div>
+                {m.hint ? <div className="env-h">{m.hint}</div> : null}
+                {m.sources && m.sources.length > 0 ? (
+                  <div className="env-s">
+                    <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* D-1: existing collector table */}
+      {/* D-1: collector table */}
       <div className="card card-pad" style={{ marginTop: 12 }}>
         <h3 style={{ marginTop: 0 }}>Collector overview</h3>
         <p className="subtle" style={{ marginBottom: 10 }}>
@@ -655,7 +685,7 @@ export default async function RunPage({
             )}
           </div>
         ) : (
-          <div className="subtle">No observed checks recorded yet, so no environment overview is available.</div>
+          <div className="subtle">No observed checks recorded yet, so no collector overview is available.</div>
         )}
       </div>
 
@@ -789,11 +819,7 @@ export default async function RunPage({
                 <td>{j.status}</td>
                 <td>{j.attempts}</td>
                 <td style={{ fontSize: 12 }}>
-                  {j.lastError ? (
-                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
-                  ) : (
-                    <span style={{ color: "var(--muted)" }}>—</span>
-                  )}
+                  {j.lastError ? <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span> : <span className="subtle">—</span>}
                 </td>
               </tr>
             ))}

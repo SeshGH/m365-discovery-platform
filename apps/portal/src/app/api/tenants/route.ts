@@ -2,6 +2,10 @@
 import { NextResponse } from "next/server";
 import { backendFetchJson } from "@/lib/backend";
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
 
@@ -20,7 +24,11 @@ export async function GET(req: Request) {
   if (primaryDomain) params.set("primaryDomain", primaryDomain);
 
   const qs = params.toString();
-  const data = await backendFetchJson<any[]>(`/tenants${qs ? `?${qs}` : ""}`);
+
+  const raw: unknown = await backendFetchJson<unknown>(`/tenants${qs ? `?${qs}` : ""}`);
+
+  // The API returns an array of tenant objects; fail-closed to [] if unexpected.
+  const data = Array.isArray(raw) ? raw.filter((t) => isRecord(t)) : [];
 
   return NextResponse.json(data);
 }

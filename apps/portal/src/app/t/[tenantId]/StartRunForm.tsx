@@ -8,10 +8,44 @@ type Props = {
   tenantId: string;
 };
 
+type DataProfile = "safe" | "full";
+
+type StartRunResponse = {
+  runId?: string;
+  id?: string;
+  run?: { id?: string };
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function parseDataProfile(value: string): DataProfile {
+  return value.toLowerCase() === "full" ? "full" : "safe";
+}
+
+function extractRunId(json: unknown): string | null {
+  if (!isRecord(json)) return null;
+
+  const direct =
+    typeof json.runId === "string"
+      ? json.runId
+      : typeof json.id === "string"
+        ? json.id
+        : null;
+
+  if (direct) return direct;
+
+  const run = json.run;
+  if (isRecord(run) && typeof run.id === "string") return run.id;
+
+  return null;
+}
+
 export default function StartRunForm({ tenantId }: Props) {
   const router = useRouter();
 
-  const [profile, setProfile] = useState<"safe" | "full">("safe");
+  const [profile, setProfile] = useState<DataProfile>("safe");
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,8 +72,8 @@ export default function StartRunForm({ tenantId }: Props) {
         throw new Error(text || `Start run failed (${res.status})`);
       }
 
-      const json = (await res.json()) as any;
-      const runId = json?.runId;
+      const json: unknown = (await res.json()) as StartRunResponse;
+      const runId = extractRunId(json);
 
       if (!runId) {
         throw new Error("Start run succeeded but response did not include runId.");
@@ -48,8 +82,10 @@ export default function StartRunForm({ tenantId }: Props) {
       // Redirect to the run page
       router.push(`/t/${tenantId}/runs/${runId}`);
       router.refresh();
-    } catch (e: any) {
-      setError(e?.message ? String(e.message) : "Start run failed.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Start run failed.";
+      setError(message);
       setIsStarting(false);
     }
   }
@@ -68,7 +104,7 @@ export default function StartRunForm({ tenantId }: Props) {
             className="select"
             value={profile}
             disabled={isStarting}
-            onChange={(e) => setProfile((String(e.target.value).toLowerCase() === "full" ? "full" : "safe") as any)}
+            onChange={(e) => setProfile(parseDataProfile(e.target.value))}
           >
             <option value="safe">Safe (counts only)</option>
             <option value="full">Full (sensitive data)</option>

@@ -253,8 +253,9 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   "exchange.mailboxes.inventory": "exchange.mailboxes.inventory"
 };
 
-// Always enqueue these report jobs at the end of a run
-const RUN_REPORT_COLLECTOR_IDS = ["report.runSummary.csv", "report.runSummary.xlsx"] as const;
+// Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.
+// Portal-derived report snapshots (PDF/HTML) will replace these exports.
+const RUN_REPORT_COLLECTOR_IDS = [] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -769,24 +770,8 @@ app.post("/runs", async (request, reply) => {
     )
   );
 
-  // Always enqueue report jobs LAST (so they naturally run after module collectors)
-  const reportJobs = await prisma.$transaction(
-    RUN_REPORT_COLLECTOR_IDS.map((collectorId) =>
-      prisma.job.create({
-        data: {
-          runId: run.id,
-          status: "queued",
-          collectorId,
-          payload: {
-            tenantId: tenant.id,
-            tenantGuid: tenant.tenantGuid,
-            module: "runReport",
-            dataProfile
-          }
-        }
-      })
-    )
-  );
+  // Legacy report collectors are no longer scheduled by default.
+  const reportJobs: { id: string }[] = [];
 
   return reply.status(201).send({
     runId: run.id,
@@ -904,9 +889,9 @@ app.get("/runs/:runId", async (req, reply) => {
     dataProfile: run.dataProfile ?? "safe",
     tenant: run.tenant,
     counts: {
-      jobs: run._count.jobs,
-      findings: run._count.findings,
-      artefacts: run._count.artefacts
+      jobs: r._count.jobs,
+      findings: r._count.findings,
+      artefacts: r._count.artefacts
     }
   };
 });

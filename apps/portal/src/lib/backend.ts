@@ -13,6 +13,12 @@ export type BackendFetchOptions = {
 const INTERNAL_JWT_ISSUER = "m365-discovery-portal";
 const INTERNAL_JWT_AUDIENCE = "m365-discovery-api";
 
+type NotFoundError = Error & { code: "NOT_FOUND" };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`[portal] Missing env var: ${name}`);
@@ -62,14 +68,14 @@ function mintPortalInternalJwt(): string {
   });
 }
 
-export function notFoundError(): Error {
-  const err = new Error("NOT_FOUND");
-  (err as any).code = "NOT_FOUND";
+export function notFoundError(): NotFoundError {
+  const err = new Error("NOT_FOUND") as NotFoundError;
+  err.code = "NOT_FOUND";
   return err;
 }
 
-export function isNotFoundError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as any).code === "NOT_FOUND";
+export function isNotFoundError(err: unknown): err is NotFoundError {
+  return isRecord(err) && err.code === "NOT_FOUND";
 }
 
 export function toNotFoundResponse() {
@@ -111,7 +117,8 @@ export async function backendFetchJson<T>(path: string, opts: BackendFetchOption
     );
   }
 
-  return (await res.json()) as T;
+  const data: unknown = await res.json();
+  return data as T;
 }
 
 /**
@@ -121,10 +128,15 @@ export async function backendFetchJson<T>(path: string, opts: BackendFetchOption
 export async function assertRunBelongsToTenant(params: {
   tenantId: string;
   runId: string;
-}): Promise<any> {
-  const run = await backendFetchJson<any>(`/runs/${params.runId}`);
+}): Promise<Record<string, unknown>> {
+  const run: unknown = await backendFetchJson<unknown>(`/runs/${params.runId}`);
 
-  const runTenantId: string | undefined = run?.tenant?.id;
+  if (!isRecord(run)) throw notFoundError();
+
+  const tenant = run.tenant;
+  if (!isRecord(tenant)) throw notFoundError();
+
+  const runTenantId = typeof tenant.id === "string" ? tenant.id : "";
   if (!runTenantId || runTenantId !== params.tenantId) throw notFoundError();
 
   return run;

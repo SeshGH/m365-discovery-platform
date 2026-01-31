@@ -11,6 +11,59 @@ import {
   type ArtefactItem
 } from "@/lib/api";
 
+/** -----------------------------
+ *  Tiny runtime helpers
+ *  ----------------------------*/
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function getPath(obj: unknown, path: string): unknown {
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (!isRecord(cur)) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+function readBool(obj: unknown, key: string): boolean | null {
+  if (!isRecord(obj)) return null;
+  const v = obj[key];
+  return typeof v === "boolean" ? v : null;
+}
+
+function readNumber(obj: unknown, key: string): number | null {
+  if (!isRecord(obj)) return null;
+  const v = obj[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function readStringArray(obj: unknown, key: string): string[] {
+  if (!isRecord(obj)) return [];
+  const v = obj[key];
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+}
+
+function readNumberAtPath(obj: unknown, paths: string[]): number | undefined {
+  for (const p of paths) {
+    const v = getPath(obj, p);
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return undefined;
+}
+
+function uniq(xs: string[]) {
+  return Array.from(new Set(xs)).filter(Boolean);
+}
+
 function smallTime(iso: string | null | undefined) {
   if (!iso) return "—";
   return iso;
@@ -56,25 +109,33 @@ function Badge({ badge }: { badge: BadgeModel }) {
  *  Completeness signals
  *  ----------------------------*/
 
+function ocPermissionDeniedList(data: unknown): string[] {
+  // supports either:
+  // - data.permissionDenied: string[]
+  // - data.completeness.permissionDenied: string[]
+  const direct = readStringArray(data, "permissionDenied");
+  const nested = readStringArray(getPath(data, "completeness"), "permissionDenied");
+  return uniq([...direct, ...nested]);
+}
+
+function ocIsTruncated(data: unknown): boolean {
+  return readBool(data, "truncated") === true || readBool(getPath(data, "completeness"), "truncated") === true;
+}
+
+function ocIsIncomplete(data: unknown): boolean {
+  return readBool(data, "isComplete") === false || readBool(getPath(data, "completeness"), "isComplete") === false;
+}
+
 function badgeForObservedChecks(observed: ObservedCheckItem[]): BadgeModel {
   let sawPermissionDenied = false;
   let sawTruncated = false;
   let sawIncomplete = false;
 
   for (const oc of observed) {
-    const d = oc.data as any;
-    if (d && typeof d === "object") {
-      if (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) sawPermissionDenied = true;
-      if (d.truncated === true) sawTruncated = true;
-      if (d.isComplete === false) sawIncomplete = true;
-
-      if (d.completeness && typeof d.completeness === "object") {
-        if (Array.isArray(d.completeness.permissionDenied) && d.completeness.permissionDenied.length > 0)
-          sawPermissionDenied = true;
-        if (d.completeness.truncated === true) sawTruncated = true;
-        if (d.completeness.isComplete === false) sawIncomplete = true;
-      }
-    }
+    const d = oc.data;
+    if (ocPermissionDeniedList(d).length > 0) sawPermissionDenied = true;
+    if (ocIsTruncated(d)) sawTruncated = true;
+    if (ocIsIncomplete(d)) sawIncomplete = true;
   }
 
   if (sawPermissionDenied) return { label: "permission-denied", tone: "warn" };
@@ -89,25 +150,12 @@ function extractSignals(observed: ObservedCheckItem[]) {
   const incompleteChecks: string[] = [];
 
   for (const oc of observed) {
-    const d = oc.data as any;
-    if (!d || typeof d !== "object") continue;
+    const d = oc.data;
 
-    const pd = (Array.isArray(d.permissionDenied) ? d.permissionDenied : []) as unknown[];
-    for (const x of pd) if (typeof x === "string") permissionDenied.push(x);
-
-    if (d.truncated === true) truncatedChecks.push(oc.checkId);
-    if (d.isComplete === false) incompleteChecks.push(oc.checkId);
-
-    if (d.completeness && typeof d.completeness === "object") {
-      const pd2 = (Array.isArray(d.completeness.permissionDenied) ? d.completeness.permissionDenied : []) as unknown[];
-      for (const x of pd2) if (typeof x === "string") permissionDenied.push(x);
-
-      if (d.completeness.truncated === true) truncatedChecks.push(oc.checkId);
-      if (d.completeness.isComplete === false) incompleteChecks.push(oc.checkId);
-    }
+    for (const x of ocPermissionDeniedList(d)) permissionDenied.push(x);
+    if (ocIsTruncated(d)) truncatedChecks.push(oc.checkId);
+    if (ocIsIncomplete(d)) incompleteChecks.push(oc.checkId);
   }
-
-  const uniq = (xs: string[]) => Array.from(new Set(xs));
 
   return {
     permissionDenied: uniq(permissionDenied),
@@ -176,20 +224,13 @@ function phaseForRun(
  *  ----------------------------*/
 
 function observedRowSignals(o: ObservedCheckItem): string[] {
-  const d = o.data as any;
-  if (!d || typeof d !== "object") return [];
-
-  const hasPd =
-    (Array.isArray(d.permissionDenied) && d.permissionDenied.length > 0) ||
-    (Array.isArray(d?.completeness?.permissionDenied) && d.completeness.permissionDenied.length > 0);
-
-  const isTruncated = d.truncated === true || d?.completeness?.truncated === true;
-  const isIncomplete = d.isComplete === false || d?.completeness?.isComplete === false;
-
+  const d = o.data;
   const sigs: string[] = [];
-  if (hasPd) sigs.push("permissionDenied");
-  if (isTruncated) sigs.push("truncated");
-  if (isIncomplete) sigs.push("incomplete");
+
+  if (ocPermissionDeniedList(d).length > 0) sigs.push("permissionDenied");
+  if (ocIsTruncated(d)) sigs.push("truncated");
+  if (ocIsIncomplete(d)) sigs.push("incomplete");
+
   return sigs;
 }
 
@@ -256,19 +297,8 @@ type EnvMetric = {
   sources?: string[]; // checkIds/collectorIds that contributed
 };
 
-function firstNumberLike(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
 function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   const out: EnvMetric[] = [];
-
-  const uniq = (xs: string[]) => Array.from(new Set(xs)).filter(Boolean);
 
   const sourcesFor = (predicate: (o: ObservedCheckItem) => boolean) =>
     uniq(
@@ -277,34 +307,11 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
         .flatMap((o) => [o.checkId, o.collectorId].filter(Boolean) as string[])
     );
 
-  const getByPath = (obj: any, path: string): unknown => {
-    const parts = path.split(".");
-    let cur = obj;
-    for (const p of parts) {
-      if (!cur || typeof cur !== "object") return undefined;
-      cur = cur[p];
-    }
-    return cur;
-  };
-
-  const firstNumber = (obj: any, paths: string[]): number | undefined => {
-    for (const p of paths) {
-      const v = getByPath(obj, p);
-      if (typeof v === "number" && Number.isFinite(v)) return v;
-      if (typeof v === "string") {
-        const n = Number(v);
-        if (Number.isFinite(n)) return n;
-      }
-    }
-    return undefined;
-  };
-
   const findCount = (match: (o: ObservedCheckItem) => boolean, paths: string[]) => {
     for (const oc of observed) {
       if (!match(oc)) continue;
-      const d: any = oc.data;
-      if (!d || typeof d !== "object") continue;
-      const n = firstNumber(d, paths);
+      const d = oc.data;
+      const n = readNumberAtPath(d, paths);
       if (n !== undefined) return n;
     }
     return undefined;
@@ -386,22 +393,8 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   const ca = findCount(mCA, pathsCA);
   const mailboxesHeuristic = findCount(mMail, pathsMailboxes);
 
-  const anyPermissionDenied = observed.some((o) => {
-    const d: any = o.data;
-    if (!d || typeof d !== "object") return false;
-    const pd1 = Array.isArray(d.permissionDenied) ? d.permissionDenied.length > 0 : false;
-    const pd2 =
-      d.completeness && typeof d.completeness === "object" && Array.isArray(d.completeness.permissionDenied)
-        ? d.completeness.permissionDenied.length > 0
-        : false;
-    return pd1 || pd2;
-  });
-
-  const anyTruncated = observed.some((o) => {
-    const d: any = o.data;
-    if (!d || typeof d !== "object") return false;
-    return d.truncated === true || d?.completeness?.truncated === true;
-  });
+  const anyPermissionDenied = observed.some((o) => ocPermissionDeniedList(o.data).length > 0);
+  const anyTruncated = observed.some((o) => ocIsTruncated(o.data));
 
   const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
   const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
@@ -424,7 +417,7 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: []
   });
 
-  // Common platform “counts” cards (best-effort)
+  // Common “counts” cards (best-effort)
   out.push({
     key: "users",
     label: "Users",
@@ -461,7 +454,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: sourcesFor(mCA)
   });
 
-  // Baseline mailbox count (heuristic)
   out.push({
     key: "mailboxes",
     label: "Mailboxes",
@@ -475,41 +467,36 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   // Exchange Online (Graph-only) – explicit cards from EXO_MAILBOXES_OBS_001
   // -------------------------
   const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
-  if (exo && exo.data && typeof exo.data === "object") {
-    const d: any = exo.data;
+  if (exo) {
+    const d = exo.data;
 
-    const totalMailboxes =
-      typeof d.totalMailboxes === "number" && Number.isFinite(d.totalMailboxes) ? d.totalMailboxes : null;
+    const totalMailboxes = readNumber(d, "totalMailboxes");
 
-    const sizeBuckets = d.sizeBuckets && typeof d.sizeBuckets === "object" ? d.sizeBuckets : null;
-
+    const sizeBuckets = getPath(d, "sizeBuckets");
     const near50 =
-      sizeBuckets && typeof sizeBuckets["40to50GB"] === "number" && Number.isFinite(sizeBuckets["40to50GB"])
-        ? sizeBuckets["40to50GB"]
+      typeof getPath(sizeBuckets, "40to50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "40to50GB") as number)
+        ? (getPath(sizeBuckets, "40to50GB") as number)
         : null;
-
     const over50 =
-      sizeBuckets && typeof sizeBuckets["over50GB"] === "number" && Number.isFinite(sizeBuckets["over50GB"])
-        ? sizeBuckets["over50GB"]
+      typeof getPath(sizeBuckets, "over50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "over50GB") as number)
+        ? (getPath(sizeBuckets, "over50GB") as number)
         : null;
 
-    const isComplete = typeof d.isComplete === "boolean" ? d.isComplete : null;
+    const isComplete = readBool(d, "isComplete");
+    const permissionDenied = ocPermissionDeniedList(d);
 
-    const permissionDenied = Array.isArray(d.permissionDenied)
-      ? d.permissionDenied.filter((x: any) => typeof x === "string")
+    const notesRaw = isRecord(d) && Array.isArray(d.notes) ? d.notes : [];
+    const notes = Array.isArray(notesRaw)
+      ? notesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : [];
 
-    const notes = Array.isArray(d.notes) ? d.notes.filter((x: any) => typeof x === "string") : [];
-
-    const exoTone: EnvMetricTone =
-      permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+    const exoTone: EnvMetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
 
     const exoHint =
       permissionDenied.length > 0
         ? `Permission missing: ${permissionDenied.join(", ")}`
         : isComplete === false
-          ? notes[0] ??
-            "Exchange reporting is not available yet (Graph reports)."
+          ? notes[0] ?? "Exchange reporting is not available yet (Graph reports)."
           : "Derived from Microsoft Graph mailbox usage reports.";
 
     const exoSources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);

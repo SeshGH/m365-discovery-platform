@@ -1,5 +1,6 @@
 // apps/portal/src/app/layout.tsx
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +19,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span>prototype (contract-consumer)</span>
             </div>
             <div className="actions">
-              <a className="link" href="/tenants">Tenants</a>
+              <Link className="link" href="/tenants">
+                Tenants
+              </Link>
             </div>
           </header>
 

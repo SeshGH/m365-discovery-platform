@@ -11,6 +11,35 @@ import {
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
 type BadgeModel = { label: string; tone: BadgeTone };
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function readString(obj: unknown, key: string): string | null {
+  if (!isRecord(obj)) return null;
+  const v = obj[key];
+  return typeof v === "string" && v.trim() ? v : null;
+}
+
+function readBool(obj: unknown, key: string): boolean | null {
+  if (!isRecord(obj)) return null;
+  const v = obj[key];
+  return typeof v === "boolean" ? v : null;
+}
+
+function readStringArray(obj: unknown, key: string): string[] {
+  if (!isRecord(obj)) return [];
+  const v = obj[key];
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+}
+
+function readUnknownArray(obj: unknown, key: string): unknown[] {
+  if (!isRecord(obj)) return [];
+  const v = obj[key];
+  return Array.isArray(v) ? v : [];
+}
+
 function Badge({ badge }: { badge: BadgeModel }) {
   const bg =
     badge.tone === "ok"
@@ -86,18 +115,12 @@ function completenessFromData(data: unknown): {
   truncated: boolean;
   profile: string | null;
 } {
-  const d = data && typeof data === "object" ? (data as any) : null;
+  const permissionDenied = readStringArray(data, "permissionDenied");
+  const truncated = readBool(data, "truncated") === true;
+  const isComplete = readBool(data, "isComplete"); // boolean | null
 
-  const permissionDenied =
-    Array.isArray(d?.permissionDenied)
-      ? d.permissionDenied.filter((x: any) => typeof x === "string")
-      : [];
-
-  const truncated = Boolean(d?.truncated === true);
-  const isComplete =
-    typeof d?.isComplete === "boolean" ? d.isComplete : null;
-
-  const profile = typeof d?.dataProfile === "string" ? d.dataProfile : null;
+  // Some checks may store profile as "dataProfile" (current) or "profile" (older)
+  const profile = readString(data, "dataProfile") ?? readString(data, "profile");
 
   let statusBadge: BadgeModel;
 
@@ -114,21 +137,26 @@ function completenessFromData(data: unknown): {
   return { statusBadge, permissionDenied, truncated, profile };
 }
 
-function pickKpiPairs(data: unknown): Array<[string, string]> {
-  const d = data && typeof data === "object" ? (data as any) : null;
-  if (!d) return [];
+function pickNumber(obj: unknown, key: string): number | null {
+  if (!isRecord(obj)) return null;
+  const v = obj[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
-  const candidates: Array<[string, unknown]> = [
-    ["totalUsers", d.totalUsers],
-    ["memberUsers", d.memberUsers],
-    ["guestUsers", d.guestUsers],
-    ["enabledUsers", d.enabledUsers],
-    ["disabledUsers", d.disabledUsers],
-    ["totalMailboxes", d.totalMailboxes]
+function pickKpiPairs(data: unknown): Array<[string, string]> {
+  if (!isRecord(data)) return [];
+
+  const candidates: Array<[string, number | null]> = [
+    ["totalUsers", pickNumber(data, "totalUsers")],
+    ["memberUsers", pickNumber(data, "memberUsers")],
+    ["guestUsers", pickNumber(data, "guestUsers")],
+    ["enabledUsers", pickNumber(data, "enabledUsers")],
+    ["disabledUsers", pickNumber(data, "disabledUsers")],
+    ["totalMailboxes", pickNumber(data, "totalMailboxes")]
   ];
 
   return candidates
-    .filter(([, v]) => typeof v === "number" && Number.isFinite(v))
+    .filter(([, v]) => typeof v === "number")
     .slice(0, 6)
     .map(([k, v]) => [k, String(v)]);
 }
@@ -168,15 +196,13 @@ export default async function ObservedCheckPage({
     .filter((f) => String(f.checkId) === String(observed.checkId))
     .sort(sortByCreatedDesc);
 
-  const { statusBadge, permissionDenied, profile } =
-    completenessFromData(observed.data);
+  const { statusBadge, permissionDenied, profile } = completenessFromData(observed.data);
 
   const kpis = pickKpiPairs(observed.data);
 
-  const notes =
-    Array.isArray((observed.data as any)?.notes)
-      ? ((observed.data as any).notes as unknown[]).filter((x) => typeof x === "string")
-      : [];
+  const notes = readUnknownArray(observed.data, "notes").filter(
+    (x): x is string => typeof x === "string" && x.trim().length > 0
+  );
 
   const showReferences = isMeaningful(observed.references);
 
@@ -238,7 +264,14 @@ export default async function ObservedCheckPage({
       </div>
 
       {permissionDenied.length > 0 ? (
-        <div style={{ border: "1px solid #f2d39b", background: "#fff9ec", borderRadius: 10, padding: 12 }}>
+        <div
+          style={{
+            border: "1px solid #f2d39b",
+            background: "#fff9ec",
+            borderRadius: 10,
+            padding: 12
+          }}
+        >
           <strong>Permission denied</strong>
           <div style={{ fontSize: 13 }}>{permissionDenied.join(", ")}</div>
         </div>
