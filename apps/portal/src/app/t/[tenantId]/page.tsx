@@ -2,36 +2,19 @@
 import Link from "next/link";
 import { getTenantAuth, listTenantRuns } from "@/lib/api";
 import StartRunForm from "./StartRunForm";
+import RunsList from "./runs-list";
 
 function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
   return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s = String(status ?? "").toLowerCase();
-  const cls =
-    s === "succeeded"
-      ? "badge ok"
-      : s === "failed"
-        ? "badge bad"
-        : s === "running"
-          ? "badge warn"
-          : s === "queued"
-            ? "badge"
-            : "badge";
-  return <span className={cls}>{status}</span>;
-}
-
-function ProfileBadge({ profile }: { profile: string }) {
-  const p = String(profile ?? "").toLowerCase();
-  const cls = p === "full" ? "badge warn" : "badge";
-  return <span className={cls}>{profile}</span>;
-}
-
 export default async function TenantPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = await params;
 
-  const [auth, runs] = await Promise.all([getTenantAuth(tenantId), listTenantRuns(tenantId)]);
+  const [auth, runs] = await Promise.all([
+    getTenantAuth(tenantId),
+    listTenantRuns(tenantId)
+  ]);
 
   const tenantRunsAll = runs.slice().sort(sortByCreatedDesc);
 
@@ -113,64 +96,15 @@ export default async function TenantPage({ params }: { params: Promise<{ tenantI
           </div>
         </div>
 
-        {/* C-2: Start run from portal */}
+        {/* Start run */}
         <StartRunForm tenantId={tenantId} />
 
-        <div>
-          <h3 style={{ marginBottom: 6 }}>Recent runs</h3>
-          <p className="subtle">
-            Source: portal BFF <code>/api/tenants/[tenantId]/runs</code>. Showing {tenantRuns.length} of{" "}
-            {tenantRunsAll.length}.
-          </p>
-
-          <div className="card" style={{ overflow: "hidden" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Run</th>
-                  <th>Status</th>
-                  <th>Profile</th>
-                  <th>Created</th>
-                  <th>Counts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tenantRuns.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link className="link" href={`/t/${tenantId}/runs/${r.id}`}>
-                        <code>{r.id}</code>
-                      </Link>
-                      <div className="subtle">{r.triggeredBy ?? "—"}</div>
-                    </td>
-
-                    <td>
-                      <StatusBadge status={r.status} />
-                    </td>
-
-                    <td>
-                      <ProfileBadge profile={r.dataProfile} />
-                    </td>
-
-                    <td className="subtle">{r.createdAt}</td>
-
-                    <td className="subtle">
-                      jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
-                    </td>
-                  </tr>
-                ))}
-
-                {tenantRuns.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="subtle">
-                      No runs found for this tenant.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        {/* Runs (polling client component) */}
+        <RunsList
+          tenantId={tenantId}
+          initialRuns={tenantRuns}
+          totalRuns={tenantRunsAll.length}
+        />
       </div>
     </main>
   );
