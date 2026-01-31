@@ -1,0 +1,248 @@
+# Optional EXO PowerShell Runner – Design Sketch
+
+## Purpose
+
+This document outlines the **design and integration model** for an **optional Exchange Online (EXO) PowerShell runner** within the M365 Discovery Platform.
+
+The goal is to:
+
+* Enable **deep Exchange-only insights** that are **not available via Microsoft Graph**
+* **Preserve Linux/container-first SaaS viability**
+* Avoid forcing **Windows infrastructure** for all users
+* Treat EXO PowerShell as an **opt-in enrichment layer**, not a core dependency
+
+This runner is **explicitly out-of-band** from the primary worker.
+
+---
+
+## Non-goals (explicit)
+
+The EXO runner will **not**:
+
+* Be required for baseline Exchange discovery
+* Block or fail runs when absent
+* Be bundled into the main worker
+* Be assumed present in SaaS deployments
+
+Graph-only Exchange discovery remains **fully supported and complete by default**.
+
+---
+
+## High-level Architecture
+
+```
+┌────────────┐        ┌──────────────┐        ┌─────────────────┐
+│  Portal    │ ───▶   │   API        │ ───▶   │   Job Queue     │
+└────────────┘        └──────────────┘        └─────────────────┘
+                                                        │
+                                ┌───────────────────────┴───────────────────────┐
+                                │                                               │
+                        ┌──────────────────┐                         ┌──────────────────┐
+                        │ Linux Worker     │                         │ EXO Runner       │
+                        │ (Graph-only)     │                         │ (Windows-only)   │
+                        └──────────────────┘                         └──────────────────┘
+```
+
+Key principle:
+
+> **Jobs declare capabilities; runners opt in based on capability support.**
+
+---
+
+## Runner Classification
+
+### Main Worker (existing)
+
+* OS: Linux / container
+* Capabilities:
+
+  * Graph collectors
+  * Report generation
+* Always present
+
+### EXO Runner (new, optional)
+
+* OS: Windows Server / Windows VM / Windows container
+* Capabilities:
+
+  * `exchange.exo`
+* Optional
+* May exist:
+
+  * per environment
+  * per customer
+  * per MSP
+
+---
+
+## Job Capability Model
+
+Each job declares **required capabilities**.
+
+Example:
+
+```ts
+{
+  module: "exchange.mailboxes.exo",
+  requires: ["exchange.exo"],
+  dataProfile: "full"
+}
+```
+
+API scheduling rules:
+
+* If no runner advertises the required capability → job is **not enqueued**
+* Run still succeeds
+* Observed checks record the absence as **not implemented**, not failed
+
+---
+
+## Runner Registration
+
+EXO runner registers with the API on startup:
+
+```json
+{
+  "runnerId": "exo-runner-01",
+  "capabilities": ["exchange.exo"],
+  "os": "windows",
+  "version": "1.0.0"
+}
+```
+
+API maintains:
+
+* active runners
+* last heartbeat
+* supported capabilities
+
+---
+
+## Authentication Model
+
+### EXO Runner auth
+
+* Uses **certificate-based app-only auth** where possible
+* Or delegated auth (tenant consented)
+* No shared secrets with Linux worker
+
+### Access scope
+
+* Scoped per tenant
+* Scoped per run
+* No lateral access between tenants
+
+---
+
+## Data Flow
+
+1. API creates a run
+2. Graph-only jobs are always enqueued
+3. EXO-only jobs are conditionally enqueued
+4. EXO runner:
+
+   * pulls eligible jobs
+   * executes EXO PowerShell
+   * produces artefacts
+   * emits observed checks
+5. API aggregates results
+
+---
+
+## Exchange EXO Use Cases (Initial)
+
+These **cannot** be reliably sourced from Graph:
+
+* Mailbox type (User / Shared / Room / Equipment)
+* Archive mailbox enabled
+* Litigation hold enabled
+* Exact mailbox quota
+* HiddenFromAddressLists
+* Soft-deleted mailbox visibility
+
+All of these remain **optional enrichments**.
+
+---
+
+## Observed Check Contracts
+
+EXO checks must:
+
+* Have **distinct check IDs** from Graph equivalents
+* Explicitly state `source: "exo"`
+* Never overwrite Graph checks
+
+Example:
+
+```json
+{
+  "checkId": "EXO_MAILBOX_FEATURES_OBS_001",
+  "source": "exo",
+  "implemented": true,
+  "data": {
+    "archiveEnabled": 42,
+    "litigationHoldEnabled": 3
+  }
+}
+```
+
+---
+
+## Portal UX Behaviour
+
+When EXO runner is absent:
+
+* UI displays:
+
+  > “Advanced Exchange insights require the optional EXO runner.”
+* Cards appear in **muted / unavailable** state
+* No red failures
+
+When EXO runner is present:
+
+* Cards populate normally
+* Licensing recommendations become richer
+
+---
+
+## Commercial & Deployment Implications
+
+### SaaS (Cloud-native)
+
+* Linux-only
+* Graph-only Exchange
+* No Windows requirement
+
+### MSP / Self-hosted
+
+* Optional Windows VM
+* Enables deeper Exchange insights
+
+This preserves **maximum market reach**.
+
+---
+
+## Future Extensions
+
+This runner model also supports:
+
+* On-prem Exchange
+* Hybrid Exchange
+* Legacy reporting
+* Historical trend capture
+
+---
+
+## Summary
+
+* EXO PowerShell is **not a platform dependency**
+* It is an **optional capability runner**
+* Graph remains the baseline
+* UX, contracts, and API all treat EXO as enrichment
+
+This design keeps the M365 Discovery Platform:
+
+* SaaS-friendly
+* MSP-friendly
+* Enterprise-capable
+* Future-proof

@@ -50,17 +50,13 @@ function Badge({ badge }: { badge: BadgeModel }) {
 function SeverityBadge({ severity }: { severity: string }) {
   const s = String(severity ?? "").toLowerCase();
   const badge: BadgeModel =
-    s === "critical"
-      ? { label: "critical", tone: "bad" }
-      : s === "high"
-        ? { label: "high", tone: "bad" }
-        : s === "medium"
-          ? { label: "medium", tone: "warn" }
-          : s === "low"
-            ? { label: "low", tone: "muted" }
-            : s === "info"
-              ? { label: "info", tone: "muted" }
-              : { label: s || "unknown", tone: "muted" };
+    s === "critical" || s === "high"
+      ? { label: s, tone: "bad" }
+      : s === "medium"
+        ? { label: "medium", tone: "warn" }
+        : s === "low" || s === "info"
+          ? { label: s, tone: "muted" }
+          : { label: s || "unknown", tone: "muted" };
 
   return <Badge badge={badge} />;
 }
@@ -81,35 +77,41 @@ function isMeaningful(value: unknown): boolean {
   return true;
 }
 
+/**
+ * Convert raw observed.data into human-readable completeness state
+ */
 function completenessFromData(data: unknown): {
-  badge: BadgeModel;
+  statusBadge: BadgeModel;
   permissionDenied: string[];
   truncated: boolean;
-  isComplete: boolean | null;
   profile: string | null;
 } {
   const d = data && typeof data === "object" ? (data as any) : null;
 
   const permissionDenied =
-    d && Array.isArray(d.permissionDenied) ? d.permissionDenied.filter((x: any) => typeof x === "string") : [];
+    Array.isArray(d?.permissionDenied)
+      ? d.permissionDenied.filter((x: any) => typeof x === "string")
+      : [];
 
-  const truncated = Boolean(d?.truncated === true || d?.completeness?.truncated === true);
+  const truncated = Boolean(d?.truncated === true);
+  const isComplete =
+    typeof d?.isComplete === "boolean" ? d.isComplete : null;
 
-  const isCompleteRaw =
-    typeof d?.isComplete === "boolean"
-      ? d.isComplete
-      : typeof d?.completeness?.isComplete === "boolean"
-        ? d.completeness.isComplete
-        : null;
+  const profile = typeof d?.dataProfile === "string" ? d.dataProfile : null;
 
-  const profile = typeof d?.profile === "string" ? d.profile : null;
+  let statusBadge: BadgeModel;
 
-  let badge: BadgeModel = { label: "ok", tone: "ok" };
-  if (permissionDenied.length > 0) badge = { label: "permission-denied", tone: "warn" };
-  else if (truncated) badge = { label: "truncated", tone: "warn" };
-  else if (isCompleteRaw === false) badge = { label: "partial", tone: "warn" };
+  if (permissionDenied.length > 0) {
+    statusBadge = { label: "Permission missing", tone: "warn" };
+  } else if (truncated) {
+    statusBadge = { label: "Truncated", tone: "warn" };
+  } else if (isComplete === false) {
+    statusBadge = { label: "Incomplete", tone: "warn" };
+  } else {
+    statusBadge = { label: "Complete", tone: "ok" };
+  }
 
-  return { badge, permissionDenied, truncated, isComplete: isCompleteRaw, profile };
+  return { statusBadge, permissionDenied, truncated, profile };
 }
 
 function pickKpiPairs(data: unknown): Array<[string, string]> {
@@ -122,33 +124,31 @@ function pickKpiPairs(data: unknown): Array<[string, string]> {
     ["guestUsers", d.guestUsers],
     ["enabledUsers", d.enabledUsers],
     ["disabledUsers", d.disabledUsers],
-    ["totalGroups", d.totalGroups],
-    ["totalApps", d.totalApps],
-    ["totalPolicies", d.totalPolicies]
+    ["totalMailboxes", d.totalMailboxes]
   ];
 
-  const out: Array<[string, string]> = [];
-  for (const [k, v] of candidates) {
-    if (typeof v === "number" && Number.isFinite(v)) out.push([k, String(v)]);
-  }
-
-  return out.slice(0, 6);
+  return candidates
+    .filter(([, v]) => typeof v === "number" && Number.isFinite(v))
+    .slice(0, 6)
+    .map(([k, v]) => [k, String(v)]);
 }
 
 function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
   return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
 }
 
-async function getObservedDetailWithFallback(tenantId: string, runId: string, observedId: string): Promise<ObservedCheckItem> {
-  // Preferred: run-scoped detail route (tenant-scoped via BFF in lib/api)
+async function getObservedDetailWithFallback(
+  tenantId: string,
+  runId: string,
+  observedId: string
+): Promise<ObservedCheckItem> {
   try {
     return await getRunObservedCheck(tenantId, runId, observedId);
   } catch {
-    // Last resort: list + filter (keeps the page working even if detail routes drift)
     const list = await listRunObservedChecks(tenantId, runId);
     const found = list.find((x) => x.id === observedId);
     if (found) return found;
-    throw new Error(`[portal] Observed check not found (runId=${runId}, observedId=${observedId})`);
+    throw new Error(`[portal] Observed check not found (${observedId})`);
   }
 }
 
@@ -165,14 +165,16 @@ export default async function ObservedCheckPage({
   ]);
 
   const related: FindingItem[] = findings
-    .filter((f) => String(f.checkId ?? "") === String(observed.checkId ?? ""))
+    .filter((f) => String(f.checkId) === String(observed.checkId))
     .sort(sortByCreatedDesc);
 
-  const { badge, permissionDenied, isComplete, profile } = completenessFromData(observed.data);
+  const { statusBadge, permissionDenied, profile } =
+    completenessFromData(observed.data);
+
   const kpis = pickKpiPairs(observed.data);
 
   const notes =
-    observed.data && typeof observed.data === "object" && Array.isArray((observed.data as any).notes)
+    Array.isArray((observed.data as any)?.notes)
       ? ((observed.data as any).notes as unknown[]).filter((x) => typeof x === "string")
       : [];
 
@@ -180,11 +182,11 @@ export default async function ObservedCheckPage({
 
   return (
     <main>
-      <p style={{ marginTop: 0 }}>
+      <p>
         <Link href={`/t/${tenantId}/runs/${runId}`}>← Back to run</Link>
       </p>
 
-      <h2 style={{ marginTop: 0 }}>Observed check</h2>
+      <h2>Observed check</h2>
 
       {/* Summary strip */}
       <div
@@ -200,30 +202,27 @@ export default async function ObservedCheckPage({
           background: "#fafafa"
         }}
       >
-        <Badge badge={badge} />
+        <Badge badge={statusBadge} />
         {profile ? <Badge badge={{ label: `profile: ${profile}`, tone: "muted" }} /> : null}
-        {isComplete === true ? <Badge badge={{ label: "isComplete: true", tone: "ok" }} /> : null}
-        {isComplete === false ? <Badge badge={{ label: "isComplete: false", tone: "warn" }} /> : null}
-        {permissionDenied.length > 0 ? <Badge badge={{ label: `permissionDenied: ${permissionDenied.length}`, tone: "warn" }} /> : null}
+        {permissionDenied.length > 0 ? (
+          <Badge badge={{ label: `${permissionDenied.length} permission issue(s)`, tone: "warn" }} />
+        ) : null}
         {kpis.map(([k, v]) => (
           <Badge key={k} badge={{ label: `${k}: ${v}`, tone: "muted" }} />
         ))}
       </div>
 
+      {/* Metadata */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
           <div style={{ fontSize: 12, opacity: 0.75 }}>Observed ID</div>
-          <div>
-            <code>{observed.id}</code>
-          </div>
+          <code>{observed.id}</code>
 
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>Observed At</div>
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>Observed at</div>
           <div>{observed.observedAt ?? "—"}</div>
 
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>Check ID</div>
-          <div>
-            <code>{observed.checkId}</code>
-          </div>
+          <code>{observed.checkId}</code>
         </div>
 
         <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12 }}>
@@ -231,44 +230,38 @@ export default async function ObservedCheckPage({
           <div>{observed.collectorId ?? "—"}</div>
 
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>Job</div>
-          <div>
-            <code>{observed.jobId ?? "—"}</code>
-          </div>
+          <code>{observed.jobId ?? "—"}</code>
 
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>Rule ID</div>
-          <div>
-            <code>{observed.ruleId ?? "—"}</code>
-          </div>
+          <code>{observed.ruleId ?? "—"}</code>
         </div>
       </div>
 
       {permissionDenied.length > 0 ? (
-        <div style={{ border: "1px solid #f2d39b", background: "#fff9ec", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Permission denied</div>
-          <div style={{ fontSize: 13, opacity: 0.9 }}>{permissionDenied.join(", ")}</div>
+        <div style={{ border: "1px solid #f2d39b", background: "#fff9ec", borderRadius: 10, padding: 12 }}>
+          <strong>Permission denied</strong>
+          <div style={{ fontSize: 13 }}>{permissionDenied.join(", ")}</div>
         </div>
       ) : null}
 
       {notes.length > 0 ? (
-        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Notes</div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
+        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 12, marginTop: 12 }}>
+          <strong>Notes</strong>
+          <ul>
             {notes.map((n, i) => (
-              <li key={`${i}-${n}`} style={{ fontSize: 13, opacity: 0.9 }}>
-                {n}
-              </li>
+              <li key={i}>{n}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {/* NEW: related findings */}
-      <h3 style={{ marginTop: 0 }}>Related findings</h3>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Findings derived from this checkId (<code>{observed.checkId}</code>) in this run.
+      {/* Findings */}
+      <h3>Related findings</h3>
+      <p style={{ opacity: 0.75 }}>
+        Findings derived from <code>{observed.checkId}</code>
       </p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ background: "#f6f6f6" }}>
             <tr>
@@ -284,25 +277,19 @@ export default async function ObservedCheckPage({
                   <SeverityBadge severity={f.severity} />
                 </td>
                 <td style={{ padding: 10 }}>
-                  <div style={{ fontWeight: 600 }}>{f.title}</div>
+                  <strong>{f.title}</strong>
                   <div style={{ fontSize: 12, opacity: 0.7 }}>
-                    finding: <code>{f.id}</code>
-                    {f.jobId ? (
-                      <>
-                        {" "}
-                        · job: <code>{f.jobId}</code>
-                      </>
-                    ) : null}
+                    <code>{f.id}</code>
                   </div>
                 </td>
-                <td style={{ padding: 10, fontSize: 12, opacity: 0.9 }}>{f.recommendation ?? "—"}</td>
+                <td style={{ padding: 10, fontSize: 12 }}>{f.recommendation ?? "—"}</td>
               </tr>
             ))}
 
             {related.length === 0 ? (
               <tr>
                 <td colSpan={3} style={{ padding: 10, opacity: 0.7 }}>
-                  No findings in this run reference this checkId.
+                  No findings reference this check.
                 </td>
               </tr>
             ) : null}
@@ -310,7 +297,7 @@ export default async function ObservedCheckPage({
         </table>
       </div>
 
-      <h3 style={{ marginTop: 0 }}>Data</h3>
+      <h3>Data</h3>
       <pre
         style={{
           whiteSpace: "pre-wrap",
@@ -324,18 +311,16 @@ export default async function ObservedCheckPage({
         {safeJson(observed.data)}
       </pre>
 
-      {/* Hide empty references */}
       {showReferences ? (
         <>
-          <h3 style={{ marginTop: 16 }}>References</h3>
+          <h3>References</h3>
           <pre
             style={{
               whiteSpace: "pre-wrap",
               border: "1px solid #ddd",
               borderRadius: 10,
               padding: 12,
-              background: "#fafafa",
-              overflowX: "auto"
+              background: "#fafafa"
             }}
           >
             {safeJson(observed.references)}

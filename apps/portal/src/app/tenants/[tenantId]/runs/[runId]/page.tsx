@@ -255,7 +255,119 @@ function findingSeverityBadge(sevRaw: string | null | undefined): BadgeModel {
 }
 
 /** -----------------------------
- *  D-1: Environment overview (derived from Observed Checks)
+ *  D-2: Environment overview CARDS (derived from Observed Checks)
+ *  ----------------------------*/
+
+type EnvMetricTone = "ok" | "warn" | "bad" | "muted";
+
+type EnvMetric = {
+  key: string;
+  label: string;
+  value: string;
+  tone: EnvMetricTone;
+  hint?: string;
+  sources?: string[];
+};
+
+function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
+  const out: EnvMetric[] = [];
+
+  const uniq = (xs: string[]) => Array.from(new Set(xs)).filter(Boolean);
+
+  const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
+  const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
+
+  out.push({
+    key: "collectors",
+    label: "Collectors seen",
+    value: collectorsSeen.length ? String(collectorsSeen.length) : "—",
+    tone: collectorsSeen.length ? "ok" : "muted",
+    hint: collectorsSeen.length ? collectorsSeen.join(", ") : "No observed checks yet",
+    sources: []
+  });
+
+  out.push({
+    key: "checks",
+    label: "Observed checks",
+    value: checksSeen.length ? String(checksSeen.length) : "—",
+    tone: checksSeen.length ? "ok" : "muted",
+    sources: []
+  });
+
+  // Exchange: EXO_MAILBOXES_OBS_001 cards
+  const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
+  if (exo && exo.data && typeof exo.data === "object") {
+    const d: any = exo.data;
+
+    const totalMailboxes =
+      typeof d.totalMailboxes === "number" && Number.isFinite(d.totalMailboxes) ? d.totalMailboxes : null;
+
+    const sizeBuckets = d.sizeBuckets && typeof d.sizeBuckets === "object" ? d.sizeBuckets : null;
+
+    const near50 =
+      sizeBuckets && typeof sizeBuckets["40to50GB"] === "number" && Number.isFinite(sizeBuckets["40to50GB"])
+        ? sizeBuckets["40to50GB"]
+        : null;
+
+    const over50 =
+      sizeBuckets && typeof sizeBuckets["over50GB"] === "number" && Number.isFinite(sizeBuckets["over50GB"])
+        ? sizeBuckets["over50GB"]
+        : null;
+
+    const isComplete = typeof d.isComplete === "boolean" ? d.isComplete : null;
+
+    const permissionDenied = Array.isArray(d.permissionDenied)
+      ? d.permissionDenied.filter((x: any) => typeof x === "string")
+      : [];
+
+    const notes = Array.isArray(d.notes) ? d.notes.filter((x: any) => typeof x === "string") : [];
+
+    const exoTone: EnvMetricTone =
+      permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+
+    const exoHint =
+      permissionDenied.length > 0
+        ? `Permission missing: ${permissionDenied.join(", ")}`
+        : isComplete === false
+          ? notes[0] ??
+            "Exchange reporting is not available yet (Graph reports)."
+          : "Derived from Microsoft Graph mailbox usage reports.";
+
+    const exoSources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
+
+    out.push({
+      key: "exo_mailboxes_total",
+      label: "EXO mailboxes",
+      value: totalMailboxes === null ? "—" : totalMailboxes.toLocaleString(),
+      tone: exoTone,
+      hint: exoHint,
+      sources: exoSources
+    });
+
+    out.push({
+      key: "exo_mailboxes_near50",
+      label: "EXO near 50GB",
+      value: near50 === null ? "—" : near50.toLocaleString(),
+      tone: near50 !== null && near50 > 0 ? "warn" : exoTone,
+      hint: "Mailboxes in the 40–50GB range (licensing threshold watchlist).",
+      sources: exoSources
+    });
+
+    out.push({
+      key: "exo_mailboxes_over50",
+      label: "EXO over 50GB",
+      value: over50 === null ? "—" : over50.toLocaleString(),
+      tone: over50 !== null && over50 > 0 ? "warn" : exoTone,
+      hint: "Mailboxes above 50GB (often require EXO Plan 2 / E3/E5+).",
+      sources: exoSources
+    });
+  }
+
+  return out;
+}
+
+/** -----------------------------
+ *  D-1: Environment overview TABLE (collector summary)
  *  ----------------------------*/
 
 type CollectorOverviewRow = {
@@ -268,7 +380,6 @@ type CollectorOverviewRow = {
 function tryDeriveItemCountFromObservedData(data: any): number | null {
   if (!data || typeof data !== "object") return null;
 
-  // common patterns: { count }, { total }, { totalCount }, { items: [] }, { value: [] }
   const numericKeys = ["count", "total", "totalCount", "itemCount", "itemsCount"];
   for (const k of numericKeys) {
     if (typeof data[k] === "number" && Number.isFinite(data[k])) return data[k];
@@ -278,7 +389,6 @@ function tryDeriveItemCountFromObservedData(data: any): number | null {
   if (Array.isArray(data.value)) return data.value.length;
   if (Array.isArray(data.results)) return data.results.length;
 
-  // sometimes nested
   if (data.summary && typeof data.summary === "object") {
     for (const k of numericKeys) {
       if (typeof data.summary[k] === "number" && Number.isFinite(data.summary[k])) return data.summary[k];
@@ -317,8 +427,6 @@ function buildCollectorOverview(observed: ObservedCheckItem[]): CollectorOvervie
       if (isTruncated) row.signals.truncated = true;
       if (isIncomplete) row.signals.incomplete = true;
 
-      // best effort item count:
-      // take the max we see per collector (avoid shrinking due to partial pages)
       const derived = tryDeriveItemCountFromObservedData(d);
       if (typeof derived === "number") {
         if (row.items === null) row.items = derived;
@@ -348,7 +456,6 @@ export default async function RunPage({
 }) {
   const { tenantId, runId } = await params;
 
-  // All calls tenant-scoped via portal BFF (fail-closed)
   const [run, jobs, artefactsRaw, observed, findings] = await Promise.all([
     getRun(tenantId, runId),
     listRunJobs(tenantId, runId),
@@ -384,12 +491,12 @@ export default async function RunPage({
     signals.truncatedChecks.length > 0 ||
     signals.incompleteChecks.length > 0;
 
-  // Oldest -> newest
   const observedSorted = observed.slice().sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
 
   const runStatusBadge = statusBadgeForRunStatus(run.status);
 
-  // D-1: derived overview
+  const env = buildEnvironmentOverview(observed);
+
   const collectorOverview = buildCollectorOverview(observed);
 
   return (
@@ -402,7 +509,6 @@ export default async function RunPage({
 
       <h2 style={{ marginBottom: 8 }}>Run</h2>
 
-      {/* A: HERO STRIP (hierarchy + scannability) */}
       <div className="hero">
         <div className="hero-top">
           <div className="hero-left">
@@ -469,9 +575,39 @@ export default async function RunPage({
         </div>
       </div>
 
-      {/* D-1: Environment overview (derived from observed checks) */}
+      {/* D-2: Environment overview cards */}
+      <div className="card card-pad" style={{ marginTop: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+          <h3 style={{ marginTop: 0, marginBottom: 6 }}>Environment overview</h3>
+          <span className="subtle">Derived from observed checks (best effort)</span>
+        </div>
+
+        {env.length === 0 ? (
+          <div className="subtle">No observed checks recorded yet, so no environment overview is available.</div>
+        ) : (
+          <>
+            <div className="env-grid" style={{ marginTop: 8 }}>
+              {env.map((m) => (
+                <div key={m.key} className={`env-card tone-${m.tone}`}>
+                  <div className="env-k">{m.label}</div>
+                  <div className="env-v">{m.value}</div>
+                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
+                  {m.sources && m.sources.length > 0 ? (
+                    <div className="env-s">
+                      <span className="subtle">sources:</span>{" "}
+                      <span className="muted2">{m.sources.join(", ")}</span>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* D-1: existing collector table */}
       <div className="card card-pad" style={{ marginTop: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Environment overview</h3>
+        <h3 style={{ marginTop: 0 }}>Collector overview</h3>
         <p className="subtle" style={{ marginBottom: 10 }}>
           Derived from observed checks (best-effort counts where available). No silent assumptions.
         </p>
@@ -523,105 +659,7 @@ export default async function RunPage({
         )}
       </div>
 
-      {/* Keep the detailed completeness card, but visually subordinate */}
-      <div className="grid-2" style={{ marginBottom: 12, marginTop: 12 }}>
-        <div className="card card-pad">
-          <h3 style={{ marginTop: 0 }}>Run details</h3>
-          <div className="kv">
-            <div className="k">Tenant</div>
-            <div className="v">
-              <code>{tenantId}</code>
-            </div>
-
-            <div className="k">Run</div>
-            <div className="v">
-              <code>{runId}</code>
-            </div>
-
-            <div className="k">Status</div>
-            <div className="v">
-              <strong>{run.status}</strong>{" "}
-              <span style={{ marginLeft: 8 }}>
-                <Badge badge={phase} />
-              </span>
-            </div>
-
-            <div className="k">Counts</div>
-            <div className="v">
-              jobs {run.counts.jobs} · findings {run.counts.findings} · artefacts {run.counts.artefacts}
-            </div>
-          </div>
-        </div>
-
-        <div className="card card-pad">
-          <h3 style={{ marginTop: 0 }}>Completeness</h3>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Badge badge={completeness} />
-            <span className="subtle">Derived from observed checks (no silent assumptions).</span>
-          </div>
-
-          <div className="subtle" style={{ marginTop: 10 }}>
-            Observed checks: {observed.length} · Findings: {findings.length} · Artefacts: {artefacts.length}
-          </div>
-
-          {hasCompletenessIssues ? (
-            <div style={{ marginTop: 10, fontSize: 13 }}>
-              {signals.permissionDenied.length > 0 ? (
-                <div style={{ marginBottom: 6 }}>
-                  <strong>Permission denied:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.permissionDenied.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.truncatedChecks.length > 0 ? (
-                <div style={{ marginBottom: 6 }}>
-                  <strong>Truncated checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.truncatedChecks.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.incompleteChecks.length > 0 ? (
-                <div>
-                  <strong>Incomplete checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.incompleteChecks.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.permissionDenied.length === 0 &&
-              signals.truncatedChecks.length === 0 &&
-              signals.incompleteChecks.length === 0 ? (
-                <div style={{ color: "var(--muted)" }}>
-                  Completeness warning present but no explicit details found in observed data.
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="subtle" style={{ marginTop: 10 }}>
-              No completeness warnings detected in observed checks.
-            </div>
-          )}
-
-          {observed.length > 0 ? (
-            <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: "pointer" }}>Show observed check IDs</summary>
-              <ul style={{ marginTop: 8, paddingLeft: 18, color: "var(--muted)" }}>
-                {observed.map((o) => (
-                  <li key={o.id}>
-                    <code>{o.checkId}</code> <span style={{ opacity: 0.8 }}>({o.collectorId})</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : (
-            <div className="subtle" style={{ marginTop: 10 }}>
-              No observed checks recorded yet for this run.
-            </div>
-          )}
-        </div>
-      </div>
-
-      <h3>Observed checks</h3>
+      <h3 style={{ marginTop: 14 }}>Observed checks</h3>
       <p className="subtle">Source of truth for posture + completeness signals. Findings are derived from these checks.</p>
 
       <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
@@ -751,7 +789,11 @@ export default async function RunPage({
                 <td>{j.status}</td>
                 <td>{j.attempts}</td>
                 <td style={{ fontSize: 12 }}>
-                  {j.lastError ? <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span> : <span style={{ color: "var(--muted)" }}>—</span>}
+                  {j.lastError ? (
+                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
+                  ) : (
+                    <span style={{ color: "var(--muted)" }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -814,7 +856,6 @@ export default async function RunPage({
         </table>
       </div>
 
-      {/* C-1: Findings table hierarchy */}
       <h3>Findings</h3>
       <p className="subtle">
         Derived view (not a source of truth). Use observed checks above to understand completeness context.

@@ -1,5 +1,7 @@
+// apps/worker/src/collectors/runSummaryCsvReportCollector.ts
 import type { Collector } from "./types";
 import { assertReportReadyOrThrow, deriveRunStatus } from "./reportUtils";
+import { deriveAndPersistFindingsForRun } from "../findings";
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -40,9 +42,29 @@ export const runSummaryCsvReportCollector: Collector = {
     }
 
     const jobs = run.jobs ?? [];
-    const findings = run.findings ?? [];
     const observedChecks = run.observedChecks ?? [];
     const artefacts = run.artefacts ?? [];
+
+    // ---------------------------------------------
+    // Derived findings hook (idempotent, best-effort)
+    // ---------------------------------------------
+    // We derive findings from observed checks here so reports always reflect
+    // the latest "derived view" without moving business logic into report code.
+    try {
+      await deriveAndPersistFindingsForRun({
+        prisma: ctx.prisma,
+        runId: run.id,
+        observedChecks
+      });
+    } catch {
+      // Report generation must not fail because a derived finding rule had an issue.
+      // Any problems should be debugged via worker logs and fixed in derivation code.
+    }
+
+    // Re-load findings after derivation so CSV includes derived records
+    const findings = (await ctx.prisma.finding.findMany({
+      where: { runId: run.id }
+    })) as any[];
 
     const derivedStatus = deriveRunStatus(jobs);
     const generatedAt = new Date().toISOString();
@@ -155,17 +177,17 @@ export const runSummaryCsvReportCollector: Collector = {
           sevCounts.low,
           sevCounts.info,
           sevCounts.unknown,
-          f.id,
-          f.checkId,
+          f.id ?? "",
+          f.checkId ?? "",
           f.ruleId ?? "",
           (f as any).category ?? "",
-          f.severity,
+          f.severity ?? "",
           (f as any).confidence ?? "",
           (f as any).status ?? "",
           (f as any).score ?? "",
-          f.title,
+          f.title ?? "",
           f.jobId ?? "",
-          f.createdAt ? f.createdAt.toISOString() : "",
+          f.createdAt ? new Date(f.createdAt).toISOString() : "",
           "", "", "", "", "", "" // job cols
         ])
       );
