@@ -128,9 +128,8 @@ Observed checks are exposed via:
 Findings are **interpreted signals** intended to be decision-ready.
 
 * `checkId` values are **stable contracts**.
-* Implemented findings live in:
-
-  * `docs/findings-registry.md`
+* Implemented findings live in a dedicated derivation layer (`apps/worker/src/findings/*`).
+* Findings are derived **only** from observed checks (never directly from raw artefacts).
 
 Model guidance:
 
@@ -214,7 +213,6 @@ Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOr
 
 * Users inventory JSON (profile-aware candidates consumed by reporting):
 
-  * `users-inventory.json` (legacy)
   * `users-inventory.safe.json`
   * `users-inventory.full.json`
 
@@ -239,7 +237,6 @@ Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOr
 
 * Enterprise app permissions JSON (profile-aware candidates consumed by reporting):
 
-  * `enterprise-app-permissions.json` (legacy)
   * `enterprise-app-permissions.safe.json`
   * `enterprise-app-permissions.full.json`
 
@@ -268,31 +265,6 @@ Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOr
 
   * `conditional-access-policies.safe.json`
   * `conditional-access-policies.full.json`
-
-Notes:
-
-* Report-only policies do not count as enforcement for findings.
-* Demo-only / guardrail limits must surface as completeness signals (e.g. `truncated`).
-
----
-
-### `entra.auth.test`
-
-**Purpose**
-
-* Validates app-only Graph access and updates tenant auth state.
-
-**Observed checks**
-
-* None (current)
-
-**Findings**
-
-* None (status is expressed via `TenantAuth`)
-
-**Artefacts**
-
-* None
 
 ---
 
@@ -323,11 +295,52 @@ Notes:
   * `directory-roles-assignments.safe.json`
   * `directory-roles-assignments.full.json`
 
+---
+
+### `exchange.mailboxes.inventory`
+
+**Purpose**
+
+* Provides a **Graph-only** Exchange Online mailbox inventory for scoping and licensing awareness.
+* Designed to avoid any dependency on Windows or Exchange Online PowerShell.
+
+**Key design decisions (locked)**
+
+* Uses **Microsoft Graph mailbox usage reports** only
+* No EXO PowerShell, no Windows worker dependency
+* Data may lag real-time usage and is treated as advisory
+* Any future EXO PowerShell-based collector is explicitly deferred and optional
+
+**Observed checks (current)**
+
+* `EXO_MAILBOXES_OBS_001` — Mailbox usage summary
+
+  * total mailboxes
+  * size buckets (`under1GB`, `1to10GB`, `10to50GB`, `40to50GB`, `over50GB`)
+  * completeness flags (`isComplete`, `truncated`, `permissionDenied`)
+
+* `EXO_MAILBOXES_OBS_010` — Derived mailbox licensing signal
+
+  * near-limit (40–50GB) count
+  * over-limit (>50GB) count
+  * advisory signal strength
+
+**Findings (current)**
+
+* `EXO_LICENSE_001` — Mailbox licensing pressure (severity: `info`)
+
+  * Advisory / scoping reminder only
+  * Emitted when mailboxes are nearing or exceeding 50GB
+  * Intended to prevent future quota-related support issues post-migration
+
+**Artefacts (current)**
+
+* None (Graph-only summary via observed checks)
+
 Notes:
 
-* Permission gaps (Graph 403) on any slice are treated as **completeness signals**, not hard failures
-* The collector continues execution and emits observed checks + artefacts with `isComplete=false`
-* Demo or permission limits must surface via completeness signals (see `ENTRA_DIRROLES_OBS_005`)
+* Missing or unavailable Graph reports surface as **completeness signals**, not failures
+* This collector is intentionally conservative and never emits `high`/`critical` findings
 
 ---
 
