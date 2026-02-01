@@ -3,7 +3,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { listTenantRuns, type RunItem } from "@/lib/api";
+import { listTenantRuns } from "@/lib/api";
+
+type RunItem = Awaited<ReturnType<typeof listTenantRuns>>[number];
 
 function StatusBadge({ status }: { status: string }) {
   const s = String(status ?? "").toLowerCase();
@@ -38,7 +40,7 @@ type Props = {
 
 export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
   const [runs, setRuns] = useState<RunItem[]>(initialRuns);
-  const timer = useRef<NodeJS.Timeout | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const hasActive = runs.some(isActive);
 
@@ -70,8 +72,7 @@ export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
 
       <p className="subtle">
         Source: portal BFF <code>/api/tenants/[tenantId]/runs</code>. Showing {runs.length} of{" "}
-        {totalRuns}.
-        {hasActive ? " Updating automatically…" : ""}
+        {totalRuns}.{hasActive ? " Updating automatically…" : ""}
       </p>
 
       <div className="card" style={{ overflow: "hidden" }}>
@@ -106,8 +107,7 @@ export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
                 <td className="subtle">{r.createdAt}</td>
 
                 <td className="subtle">
-                  jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts{" "}
-                  {r.counts.artefacts}
+                  jobs {r.counts.jobs} · findings {r.counts.findings} · artefacts {r.counts.artefacts}
                 </td>
               </tr>
             ))}

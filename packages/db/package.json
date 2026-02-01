@@ -1,19 +1,20 @@
 {
-  "name": "@acme/db",
-  "private": true,
-  "type": "module",
-  "version": "0.0.1",
-  "exports": {
-    ".": "./src/client.ts"
-  },
-  "dependencies": {
-    "@prisma/client": "^5.22.0"
-  },
-  "devDependencies": {
-    "prisma": "^5.22.0"
-  },
-  "scripts": {
-    "prisma": "prisma",
-    "generate": "prisma generate"
-  }
+    "name":  "@acme/db",
+    "private":  true,
+    "type":  "module",
+    "version":  "0.0.1",
+    "exports":  {
+                    ".":  "./src/client.ts"
+                },
+    "dependencies":  {
+                         "@prisma/client":  "^5.22.0"
+                     },
+    "devDependencies":  {
+                            "prisma":  "^5.22.0"
+                        },
+    "scripts":  {
+                    "generate":  "prisma generate",
+                    "prisma":  "prisma",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit"
+                }
 }

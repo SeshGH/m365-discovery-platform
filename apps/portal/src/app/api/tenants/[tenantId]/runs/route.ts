@@ -40,7 +40,7 @@ function readStringPath(obj: unknown, path: readonly string[]): string | null {
     if (!isRecord(cur)) return null;
     cur = cur[key];
   }
-  return typeof cur === "string" && cur.trim() ? cur : null;
+  return typeof cur === "string" && cur.trim().length > 0 ? cur : null;
 }
 
 function readArray(obj: unknown, key: string): unknown[] | null {
@@ -71,8 +71,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ tenantId: stri
     body = {};
   }
 
-  const rawProfile =
-    isRecord(body) && typeof body.dataProfile === "string" ? body.dataProfile : "safe";
+  const rawProfile = isRecord(body) && typeof body.dataProfile === "string" ? body.dataProfile : "safe";
   const dataProfile = String(rawProfile).toLowerCase() === "full" ? "full" : "safe";
 
   // Reuse backend tenant auth endpoint (known-good from tenant page)
@@ -111,19 +110,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ tenantId: stri
 
   const jobIds =
     (jobIdsFromTop ?? [])
-      .filter((x) => typeof x === "string" && x.trim())
-      .map((x) => String(x)) ??
-    [];
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => String(x)) ?? [];
 
   const jobIdsFromJobs =
     (jobsArray ?? [])
       .map((j) => readStringPath(j, ["id"]))
-      .filter((id): id is string => typeof id === "string" && id.trim()) ?? [];
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0) ?? [];
 
   const finalJobIds = jobIds.length > 0 ? jobIds : jobIdsFromJobs;
 
-  return NextResponse.json(
-    { runId, jobIds: finalJobIds, tenantId, dataProfile, modulesEnabled },
-    { status: 201 }
-  );
+  return NextResponse.json({ runId, jobIds: finalJobIds, tenantId, dataProfile, modulesEnabled }, { status: 201 });
 }

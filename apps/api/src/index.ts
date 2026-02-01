@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 
-import { getDemoHtml } from "./demoPage.js";
+import { getDemoHtml, registerDemoPage } from "./demoPage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,9 +19,6 @@ import { prisma } from "@acme/db";
 
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-
-// DEMO-ONLY UI page (moved out of this file)
-import registerDemoPage from "./demoPage.js";
 
 const app = Fastify({ logger: true });
 
@@ -889,9 +886,9 @@ app.get("/runs/:runId", async (req, reply) => {
     dataProfile: run.dataProfile ?? "safe",
     tenant: run.tenant,
     counts: {
-      jobs: r._count.jobs,
-      findings: r._count.findings,
-      artefacts: r._count.artefacts
+      jobs: run._count.jobs,
+      findings: run._count.findings,
+      artefacts: run._count.artefacts
     }
   };
 });
@@ -1070,3 +1067,6 @@ app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });
+
+
+

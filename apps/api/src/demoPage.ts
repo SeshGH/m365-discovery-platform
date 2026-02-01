@@ -3,7 +3,15 @@
  * DEMO-ONLY UI
  * This file is intentionally demo-only.
  * Long-term UI will live in a dedicated portal app.
+ *
+ * NOTE:
+ * - This file exports:
+ *   - getDemoHtml() for the HTML payload
+ *   - registerDemoPage(app) as a named export
+ *   - default export registerDemoPage for compatibility with existing imports
  */
+
+import type { FastifyInstance } from "fastify";
 
 export type DemoModule = {
   // Key used in modulesEnabled payload (legacy-friendly)
@@ -1040,3 +1048,17 @@ export function getDemoHtml(): string {
 </body>
 </html>`;
 }
+
+/**
+ * Registers the demo-only UI route(s) against the Fastify instance.
+ * Keep this tiny; the portal is the real UI going forward.
+ */
+export function registerDemoPage(app: FastifyInstance) {
+  // Demo home (HTML)
+  app.get("/", async (_req, reply) => {
+    reply.type("text/html; charset=utf-8").send(getDemoHtml());
+  });
+}
+
+// Default export to match existing import style in apps/api/src/index.ts
+export default registerDemoPage;

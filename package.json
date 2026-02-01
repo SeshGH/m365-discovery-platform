@@ -12,9 +12,9 @@
   },
   "devDependencies": {
     "@prisma/client": "^5.22.0",
-    "prisma": "^5.22.0",
-    "typescript": "^5.6.3",
     "eslint": "^9",
-    "eslint-config-next": "latest"
+    "eslint-config-next": "latest",
+    "prisma": "^5.22.0",
+    "typescript": "^5.9.3"
   }
 }
