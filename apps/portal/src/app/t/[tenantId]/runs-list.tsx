@@ -3,9 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { listTenantRuns } from "@/lib/api";
-
-type RunItem = Awaited<ReturnType<typeof listTenantRuns>>[number];
+import { listTenantRuns, type RunItem } from "@/lib/api.client";
 
 function StatusBadge({ status }: { status: string }) {
   const s = String(status ?? "").toLowerCase();
