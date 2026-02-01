@@ -11,10 +11,7 @@ function sortByCreatedDesc(a: { createdAt: string }, b: { createdAt: string }) {
 export default async function TenantPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = await params;
 
-  const [auth, runs] = await Promise.all([
-    getTenantAuth(tenantId),
-    listTenantRuns(tenantId)
-  ]);
+  const [auth, runs] = await Promise.all([getTenantAuth(tenantId), listTenantRuns(tenantId)]);
 
   const tenantRunsAll = runs.slice().sort(sortByCreatedDesc);
 
@@ -99,12 +96,15 @@ export default async function TenantPage({ params }: { params: Promise<{ tenantI
         {/* Start run */}
         <StartRunForm tenantId={tenantId} />
 
+        {/* Runs: keep RunsList's own heading, just add a link above it */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+          <Link className="link subtle" href={`/t/${tenantId}/runs`}>
+            View all runs →
+          </Link>
+        </div>
+
         {/* Runs (polling client component) */}
-        <RunsList
-          tenantId={tenantId}
-          initialRuns={tenantRuns}
-          totalRuns={tenantRunsAll.length}
-        />
+        <RunsList tenantId={tenantId} initialRuns={tenantRuns} totalRuns={tenantRunsAll.length} />
       </div>
     </main>
   );
