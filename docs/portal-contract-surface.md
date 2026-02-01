@@ -36,6 +36,42 @@ The BFF calls the existing backend API (Fastify) and enforces:
 
 ---
 
+### Server vs client API usage (Next.js)
+
+The portal distinguishes between **server-only** and **client-safe** API access:
+
+#### Server-only access
+Used by:
+- Server Components
+- Route Handlers (`/app/api/*`)
+- Server Actions (future)
+
+Characteristics:
+- Uses `next/headers`
+- Derives absolute origin
+- May import `server-only`
+
+Implementation:
+- `apps/portal/src/lib/api.ts`
+
+⚠️ This module MUST NOT be imported by Client Components.
+
+#### Client-safe access
+Used by:
+- Client Components (e.g. polling, live status updates)
+
+Characteristics:
+- No `server-only` imports
+- No `next/headers`
+- Uses relative `/api/*` paths
+- Relies on browser cookies/session
+
+Implementation:
+- `apps/portal/src/lib/api.client.ts`
+
+Client Components MUST import from `api.client.ts`, never `api.ts`.
+
+
 ## Canonical module keys for `modulesEnabled`
 
 The portal must send canonical keys only:
