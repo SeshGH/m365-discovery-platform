@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export type BadgeTone = "ok" | "warn" | "bad" | "muted";
 export type BadgeModel = { label: string; tone: BadgeTone };
@@ -148,6 +148,17 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     []
   );
 
+  // NEW: callback for "view evidence" from inside Findings
+  const goToEvidenceObservedChecks = () => {
+    setTab("evidence");
+    // wait for tab content to render, then scroll
+    requestAnimationFrame(() => {
+      document
+        .getElementById("evidence-observed-checks")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     <main>
       <p style={{ margin: "10px 0 0 0" }}>
@@ -236,7 +247,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
       </div>
 
       {tab === "summary" ? <SummaryTab vm={vm} /> : null}
-      {tab === "findings" ? <FindingsTab vm={vm} /> : null}
+      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={goToEvidenceObservedChecks} /> : null}
       {tab === "evidence" ? <EvidenceTab vm={vm} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
@@ -373,44 +384,325 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
   );
 }
 
-function FindingsTab({ vm }: { vm: RunDetailViewModel }) {
+function severityRank(s: string): number {
+  const x = String(s ?? "").toLowerCase();
+  // conservative, handles typical sets
+  if (x === "critical") return 0;
+  if (x === "high") return 1;
+  if (x === "medium") return 2;
+  if (x === "low") return 3;
+  if (x === "info" || x === "informational") return 4;
+  return 9;
+}
+
+function severityTone(s: string): "bad" | "warn" | "muted" {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "critical" || x === "high") return "bad";
+  if (x === "medium") return "warn";
+  return "muted";
+}
+
+function FindingsTab({
+  vm,
+  onGoEvidence
+}: {
+  vm: RunDetailViewModel;
+  onGoEvidence: () => void;
+}) {
+  const findingsSorted = useMemo(() => {
+    const xs = vm.findings.slice();
+    xs.sort((a, b) => {
+      const ra = severityRank(a.severity);
+      const rb = severityRank(b.severity);
+      if (ra !== rb) return ra - rb;
+      return String(a.title ?? "").localeCompare(String(b.title ?? ""));
+    });
+    return xs;
+  }, [vm.findings]);
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // select first finding by default
+    if (findingsSorted.length === 0) {
+      setSelectedId(null);
+      return;
+    }
+    if (selectedId && findingsSorted.some((f) => f.id === selectedId)) return;
+    setSelectedId(findingsSorted[0].id);
+  }, [findingsSorted, selectedId]);
+
+  const selected = useMemo(
+    () => findingsSorted.find((f) => f.id === selectedId) ?? null,
+    [findingsSorted, selectedId]
+  );
+
+  const evidenceObserved = useMemo(() => {
+    if (!selected) return [];
+    // best-effort evidence linkage using checkId equality
+    return vm.observedChecks.filter((o) => o.checkId === selected.checkId);
+  }, [selected, vm.observedChecks]);
+
+  const evidenceJobIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const o of evidenceObserved) if (o.jobId) ids.add(o.jobId);
+    return Array.from(ids);
+  }, [evidenceObserved]);
+
+  const evidenceArtefacts = useMemo(() => {
+    if (evidenceJobIds.length === 0) return [];
+    return vm.artefacts.filter((a) => a.jobId && evidenceJobIds.includes(a.jobId));
+  }, [vm.artefacts, evidenceJobIds]);
+
   return (
     <>
-      <h3>Findings</h3>
-      <p className="subtle">
-        Derived view (not a source of truth). Use observed checks in Evidence to understand completeness context.
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+        <div>
+          <h3 style={{ marginBottom: 6 }}>Findings</h3>
+          <p className="subtle" style={{ marginTop: 0 }}>
+            Findings are derived signals. Evidence is shown from observed checks (source of truth).
+          </p>
+        </div>
+        <div className="subtle">
+          {vm.findings.length} finding{vm.findings.length === 1 ? "" : "s"} · {vm.observedChecks.length} observed check
+          {vm.observedChecks.length === 1 ? "" : "s"}
+        </div>
+      </div>
 
-      <div className="card" style={{ overflow: "hidden" }}>
-        <table className="table table-scan">
-          <thead>
-            <tr>
-              <th>Severity</th>
-              <th>Check</th>
-              <th>Title</th>
-              <th>Recommendation</th>
-            </tr>
-          </thead>
-          <tbody>
-            {vm.findings.map((f) => (
-              <tr key={f.id}>
-                <td>{f.severity}</td>
-                <td>
-                  <code>{f.checkId}</code>
-                </td>
-                <td>{f.title}</td>
-                <td style={{ fontSize: 12, color: "var(--muted)" }}>{f.recommendation ?? "—"}</td>
-              </tr>
-            ))}
-            {vm.findings.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ color: "var(--muted)" }}>
-                  No findings recorded for this run.
-                </td>
-              </tr>
+      <div
+        className="card"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "380px 1fr",
+          gap: 12,
+          padding: 12,
+          alignItems: "start"
+        }}
+      >
+        {/* Left: list */}
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 14,
+            overflow: "hidden",
+            background: "var(--card)"
+          }}
+        >
+          <div style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontWeight: 800 }}>All findings</div>
+            <div className="subtle" style={{ marginTop: 4 }}>
+              Click an item to see details + evidence.
+            </div>
+          </div>
+
+          <div style={{ maxHeight: 520, overflow: "auto" }}>
+            {findingsSorted.map((f) => {
+              const active = f.id === selectedId;
+              const tone = severityTone(f.severity);
+              const sevBadge: BadgeModel = { label: String(f.severity), tone: tone };
+
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setSelectedId(f.id)}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: 12,
+                    border: "none",
+                    borderTop: "1px solid var(--border)",
+                    background: active ? "rgba(0,0,0,0.04)" : "transparent",
+                    cursor: "pointer",
+                    color: "var(--fg)"
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <Badge badge={sevBadge} />
+                    <div style={{ fontWeight: 800 }}>{f.title}</div>
+                  </div>
+                  <div className="subtle" style={{ marginTop: 6 }}>
+                    check: <code>{f.checkId}</code>
+                  </div>
+                </button>
+              );
+            })}
+
+            {findingsSorted.length === 0 ? (
+              <div style={{ padding: 12 }} className="subtle">
+                No findings were recorded for this run.
+              </div>
             ) : null}
-          </tbody>
-        </table>
+          </div>
+        </div>
+
+        {/* Right: detail */}
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 14,
+            padding: 12,
+            background: "var(--card)"
+          }}
+        >
+          {!selected ? (
+            <div className="subtle">
+              Select a finding on the left to view details. If there are no findings, this run may still have observed
+              checks and artefacts to review under Evidence.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>{selected.title}</div>
+                  <div className="subtle" style={{ marginTop: 4 }}>
+                    check: <code>{selected.checkId}</code>
+                  </div>
+                </div>
+
+                <Badge badge={{ label: String(selected.severity), tone: severityTone(selected.severity) }} />
+              </div>
+
+              {vm.completenessSignals.hasCompletenessIssues ? (
+                <div className="callout warn" style={{ marginTop: 12 }}>
+                  <strong>Completeness signals present</strong>
+                  <div className="subtle" style={{ marginTop: 6 }}>
+                    Findings are derived from observed checks. This run includes warnings (e.g. truncated, permissionDenied)
+                    that may affect interpretation.
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Recommendation</div>
+                {selected.recommendation ? (
+                  <div style={{ whiteSpace: "pre-wrap" }}>{selected.recommendation}</div>
+                ) : (
+                  <div className="subtle">No recommendation provided for this finding.</div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Evidence</div>
+
+                  {/* CHANGED: this now goes to actual evidence (Evidence tab + scroll to observed checks) */}
+                  <button
+                    type="button"
+                    className="link subtle"
+                    onClick={onGoEvidence}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer"
+                    }}
+                  >
+                    View supporting evidence →
+                  </button>
+                </div>
+
+                <div className="subtle" style={{ marginTop: 6 }}>
+                  Evidence is shown from observed checks (source of truth) and related artefacts (raw outputs), best-effort.
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Observed checks</div>
+
+                  {evidenceObserved.length === 0 ? (
+                    <div className="subtle">
+                      No observed checks matched this finding’s <code>checkId</code>. This indicates the portal cannot
+                      currently link evidence for this finding without additional referencing.
+                    </div>
+                  ) : (
+                    <div className="card" style={{ overflow: "hidden" }}>
+                      <table className="table table-scan">
+                        <thead>
+                          <tr>
+                            <th>Observed</th>
+                            <th>Collector</th>
+                            <th>Signals</th>
+                            <th>Data</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {evidenceObserved.map((o) => (
+                            <tr key={o.id}>
+                              <td className="subtle" style={{ width: 170 }}>
+                                {o.observedAt ?? "—"}
+                              </td>
+                              <td style={{ fontSize: 12 }}>
+                                <code>{o.collectorId}</code>
+                                {o.jobId ? (
+                                  <div className="subtle" style={{ marginTop: 4 }}>
+                                    job: <code>{o.jobId}</code>
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="subtle" style={{ width: 220 }}>
+                                {o.signals.length > 0 ? o.signals.join(", ") : "—"}
+                              </td>
+                              <td style={{ width: 80 }}>
+                                <Link className="link link-action" href={o.viewHref}>
+                                  View
+                                </Link>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Related artefacts</div>
+
+                  {evidenceArtefacts.length === 0 ? (
+                    <div className="subtle">
+                      No related artefacts found for the matched observed checks (job-linked best-effort). See the Evidence tab
+                      for full artefact lists.
+                    </div>
+                  ) : (
+                    <div className="card" style={{ overflow: "hidden" }}>
+                      <table className="table table-scan">
+                        <thead>
+                          <tr>
+                            <th>Filename</th>
+                            <th>Size</th>
+                            <th>Download</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {evidenceArtefacts.map((a) => (
+                            <tr key={a.id}>
+                              <td>
+                                <div style={{ fontWeight: 700 }}>{a.filename}</div>
+                                <div className="subtle" style={{ fontSize: 12 }}>
+                                  job: <code>{a.jobId ?? "—"}</code>
+                                </div>
+                              </td>
+                              <td className="subtle">{a.sizeLabel}</td>
+                              <td style={{ width: 110 }}>
+                                <a className="link link-action" href={a.downloadHref} target="_blank" rel="noreferrer">
+                                  Download
+                                </a>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="subtle" style={{ marginTop: 10 }}>
+                  Tip: the Evidence tab shows the full observed-check timeline and all artefacts for the run.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </>
   );
@@ -419,7 +711,8 @@ function FindingsTab({ vm }: { vm: RunDetailViewModel }) {
 function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
   return (
     <>
-      <h3>Observed checks</h3>
+      {/* CHANGED: anchor so Findings can scroll to real evidence */}
+      <h3 id="evidence-observed-checks">Observed checks</h3>
       <p className="subtle">Source of truth for posture + completeness signals. Findings are derived from these checks.</p>
 
       <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
