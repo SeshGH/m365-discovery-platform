@@ -35,6 +35,12 @@ export default async function TenantPage({ params }: { params: Promise<{ tenantI
           <div className="subtle">
             Tenant ID: <code>{auth.tenant.id}</code>
           </div>
+
+          <div className="subtle" style={{ marginTop: 8, maxWidth: 900 }}>
+            This page is a tenant-level entry point into discovery runs. Runs produce <strong>observed checks</strong> (source of truth),
+            raw <strong>artefacts</strong>, and derived <strong>findings</strong>. Start a run when you’re ready, then use “Recent runs”
+            to jump into the latest results.
+          </div>
         </div>
 
         <div className="grid-2">
@@ -81,7 +87,9 @@ export default async function TenantPage({ params }: { params: Promise<{ tenantI
                     <div style={{ marginTop: 6 }}>{auth.auth.lastError}</div>
                   </div>
                 ) : (
-                  <div className="subtle">No auth errors recorded.</div>
+                  <div className="subtle">
+                    No auth errors recorded. If a run shows permissionDenied or incomplete signals, check consent/scopes and rerun.
+                  </div>
                 )}
               </div>
             ) : (

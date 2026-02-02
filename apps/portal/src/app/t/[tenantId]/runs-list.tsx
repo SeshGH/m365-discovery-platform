@@ -68,9 +68,10 @@ export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
     <div>
       <h3 style={{ marginBottom: 6 }}>Recent runs</h3>
 
-      <p className="subtle">
-        Source: portal BFF <code>/api/tenants/[tenantId]/runs</code>. Showing {runs.length} of{" "}
-        {totalRuns}.{hasActive ? " Updating automatically…" : ""}
+      <p className="subtle" style={{ maxWidth: 950 }}>
+        Showing {runs.length} of {totalRuns}. The counts reflect what has been recorded so far (jobs, derived findings, and stored artefacts).
+        For authoritative detail and completeness warnings, open a run and review its observed checks (source of truth).
+        {hasActive ? " Updating automatically while a run is active…" : ""}
       </p>
 
       <div className="card" style={{ overflow: "hidden" }}>
