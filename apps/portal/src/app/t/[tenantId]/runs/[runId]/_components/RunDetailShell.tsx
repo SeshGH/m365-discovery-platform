@@ -27,6 +27,12 @@ export type RunDetailViewModel = {
   phaseBadge: BadgeModel;
   completenessBadge: BadgeModel;
 
+  confidence: {
+    level: "high" | "medium" | "low";
+    tone: BadgeTone;
+    reasons: string[];
+  };
+
   jobSummary: { queued: number; running: number; succeeded: number; failed: number; other: number };
 
   completenessSignals: {
@@ -38,6 +44,18 @@ export type RunDetailViewModel = {
     findingsCount: number;
     artefactsCount: number;
   };
+
+  nextActions: Array<{
+    id: string;
+    title: string;
+    tone: BadgeTone;
+    detail: string;
+    cta: {
+      label: string;
+      evidenceQuery?: string;
+      goToTab?: "summary" | "findings" | "evidence" | "jobs";
+    };
+  }>;
 
   environmentOverview: Array<{
     key: string;
@@ -209,6 +227,9 @@ function EstateSizingNarrative({
 export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   const [tab, setTab] = useState<TabKey>("summary");
 
+  // Evidence filter must be shell-owned so Next Actions can drive it.
+  const [evidenceQuery, setEvidenceQuery] = useState<string>("");
+
   const tabs = useMemo(
     () => [
       { key: "summary" as const, label: "Summary" },
@@ -219,10 +240,18 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     []
   );
 
-  const goToEvidenceObservedChecks = () => {
+  const goToEvidenceObservedChecks = (q?: string) => {
+    if (typeof q === "string") setEvidenceQuery(q);
     setTab("evidence");
     requestAnimationFrame(() => {
       document.getElementById("evidence-observed-checks")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const goToReports = () => {
+    setTab("evidence");
+    requestAnimationFrame(() => {
+      document.getElementById("evidence-reports")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
 
@@ -239,6 +268,23 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
       document.getElementById("jobs-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
+
+  const goToFindings = () => setTab("findings");
+
+  const onAction = (a: RunDetailViewModel["nextActions"][number]) => {
+    if (a.cta.goToTab === "findings") return goToFindings();
+    if (a.cta.goToTab === "summary") return setTab("summary");
+    if (a.cta.goToTab === "jobs") return goToJobs();
+
+    // Evidence-driven CTAs
+    if (a.cta.label.toLowerCase().includes("report")) return goToReports();
+    return goToEvidenceObservedChecks(a.cta.evidenceQuery ?? "");
+  };
+
+  const confidenceBadge: BadgeModel = useMemo(() => {
+    const label = `confidence: ${vm.confidence.level}`;
+    return { label, tone: vm.confidence.tone };
+  }, [vm.confidence.level, vm.confidence.tone]);
 
   return (
     <main>
@@ -264,15 +310,10 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
               <Badge badge={vm.runStatusBadge} />
               <Badge badge={vm.phaseBadge} />
               <Badge badge={vm.completenessBadge} />
-              {vm.completenessSignals.hasCompletenessIssues ? (
-                <span className="subtle" style={{ marginLeft: 6 }}>
-                  completeness signals present
-                </span>
-              ) : (
-                <span className="subtle" style={{ marginLeft: 6 }}>
-                  no completeness warnings
-                </span>
-              )}
+              <Badge badge={confidenceBadge} />
+              <span className="subtle" style={{ marginLeft: 6 }}>
+                {vm.confidence.reasons.join(" · ")}
+              </span>
             </div>
           </div>
 
@@ -325,10 +366,21 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
       </div>
 
       {tab === "summary" ? (
-        <SummaryTab vm={vm} onGoHeadlineSizing={goToHeadlineSizing} onGoEvidence={goToEvidenceObservedChecks} onGoJobs={goToJobs} />
+        <SummaryTab
+          vm={vm}
+          onGoHeadlineSizing={goToHeadlineSizing}
+          onGoEvidence={() => goToEvidenceObservedChecks("")}
+          onGoEvidenceQuery={(q) => goToEvidenceObservedChecks(q)}
+          onGoReports={goToReports}
+          onGoJobs={goToJobs}
+          onGoFindings={goToFindings}
+          onAction={onAction}
+        />
       ) : null}
-      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={goToEvidenceObservedChecks} /> : null}
-      {tab === "evidence" ? <EvidenceTab vm={vm} /> : null}
+      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} /> : null}
+      {tab === "evidence" ? (
+        <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} />
+      ) : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
   );
@@ -338,12 +390,20 @@ function SummaryTab({
   vm,
   onGoHeadlineSizing,
   onGoEvidence,
-  onGoJobs
+  onGoEvidenceQuery,
+  onGoReports,
+  onGoJobs,
+  onGoFindings,
+  onAction
 }: {
   vm: RunDetailViewModel;
   onGoHeadlineSizing: () => void;
   onGoEvidence: () => void;
+  onGoEvidenceQuery: (q: string) => void;
+  onGoReports: () => void;
   onGoJobs: () => void;
+  onGoFindings: () => void;
+  onAction: (a: RunDetailViewModel["nextActions"][number]) => void;
 }) {
   const headlineMetrics = useMemo(() => vm.environmentOverview.filter((m) => m.key !== "signals"), [vm.environmentOverview]);
 
@@ -355,7 +415,7 @@ function SummaryTab({
             <div style={{ fontWeight: 900, fontSize: 16 }}>Scoping summary</div>
             <div className="subtle" style={{ marginTop: 4 }}>
               This run provides an inventory-style view of the tenant using <strong>observed checks</strong> (source of truth) and raw
-              artefacts. Use the headline sizing and the <strong>Environment overview</strong> below to understand estate size and scope.
+              artefacts. Use headline sizing and Environment overview to understand estate size and scope.
             </div>
           </div>
           <div className="subtle">Run {vm.run.id}</div>
@@ -396,6 +456,38 @@ function SummaryTab({
 
           <button
             type="button"
+            onClick={onGoReports}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+              cursor: "pointer",
+              fontWeight: 700,
+              color: "var(--fg)"
+            }}
+          >
+            Reports
+          </button>
+
+          <button
+            type="button"
+            onClick={onGoFindings}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+              cursor: "pointer",
+              fontWeight: 700,
+              color: "var(--fg)"
+            }}
+          >
+            Findings
+          </button>
+
+          <button
+            type="button"
             onClick={onGoJobs}
             style={{
               padding: "8px 12px",
@@ -407,21 +499,56 @@ function SummaryTab({
               color: "var(--fg)"
             }}
           >
-            View jobs
+            Jobs
           </button>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 900 }}>What do we have?</div>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900 }}>Next actions</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and artefacts if you need detail.
+            Derived from explicit observed completeness signals only (no silent assumptions).
           </div>
-        </div>
 
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 900 }}>What should we review next?</div>
-          <div className="subtle" style={{ marginTop: 4 }}>
-            When you’re ready to move from inventory to interpretation, check the <strong>Findings</strong> tab for derived signals (risks / notable conditions), and use the <strong>Evidence</strong> tab to inspect the underlying data.
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+            {vm.nextActions.map((a) => (
+              <div key={a.id} className="card card-pad" style={{ background: "var(--card)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900 }}>{a.title}</div>
+                  <Badge badge={{ label: a.tone, tone: a.tone }} />
+                </div>
+                <div className="subtle" style={{ marginTop: 6 }}>
+                  {a.detail}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => onAction(a)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--border)",
+                      background: "var(--card)",
+                      cursor: "pointer",
+                      fontWeight: 800,
+                      color: "var(--fg)"
+                    }}
+                  >
+                    {a.cta.label}
+                  </button>
+
+                  {a.cta.evidenceQuery ? (
+                    <button
+                      type="button"
+                      className="link subtle"
+                      onClick={() => onGoEvidenceQuery("")}
+                      style={{ marginLeft: 10, background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                    >
+                      Clear evidence filter
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -430,7 +557,7 @@ function SummaryTab({
           <Badge badge={vm.completenessBadge} />
           <span className="subtle">
             {vm.completenessSignals.hasCompletenessIssues
-              ? "Some checks reported warnings (e.g. permissionDenied / truncated / incomplete). Interpret inventory + findings with that context."
+              ? "Some checks reported warnings (permissionDenied / truncated / incomplete). Interpret inventory + findings with that context."
               : "No completeness warnings detected in observed checks."}
           </span>
         </div>
@@ -466,16 +593,21 @@ function SummaryTab({
         </div>
 
         <div className="card card-pad">
-          <h3 style={{ marginTop: 0 }}>Completeness</h3>
+          <h3 style={{ marginTop: 0 }}>Completeness & confidence</h3>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <Badge badge={vm.completenessBadge} />
-            <span className="subtle">Derived from observed checks (no silent assumptions).</span>
+            <Badge badge={{ label: `confidence: ${vm.confidence.level}`, tone: vm.confidence.tone }} />
+            <span className="subtle">Derived from observed checks only.</span>
           </div>
 
           <div className="subtle" style={{ marginTop: 10 }}>
             Observed checks: {vm.completenessSignals.observedCount} · Findings: {vm.completenessSignals.findingsCount} · Artefacts:{" "}
             {vm.completenessSignals.artefactsCount}
+          </div>
+
+          <div className="subtle" style={{ marginTop: 8 }}>
+            {vm.confidence.reasons.join(" · ")}
           </div>
 
           {vm.completenessSignals.hasCompletenessIssues ? (
@@ -592,7 +724,7 @@ function severityTone(s: string): "bad" | "warn" | "muted" {
   return "muted";
 }
 
-function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: () => void }) {
+function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: (q?: string) => void }) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -746,7 +878,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
             {findingsSorted.map((f) => {
               const active = f.id === effectiveSelectedId;
               const tone = severityTone(f.severity);
-              const sevBadge: BadgeModel = { label: String(f.severity), tone };
+              const sevBadge = { label: String(f.severity), tone };
 
               const st = evidenceStatsByFindingId.get(f.id) ?? { observed: 0, artefacts: 0 };
               const evidenceLabel =
@@ -842,7 +974,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                   <button
                     type="button"
                     className="link subtle"
-                    onClick={onGoEvidence}
+                    onClick={() => onGoEvidence(selected.checkId)}
                     style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
                   >
                     View in Evidence tab →
@@ -858,7 +990,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceObserved.length === 0 ? (
                     <div className="subtle">
-                      No observed checks matched this finding’s <code>checkId</code>. This usually means the finding was derived from a different reference or the portal cannot link evidence without additional referencing. Use the Evidence tab to search for the checkId or related collector activity.
+                      No observed checks matched this finding’s <code>checkId</code>. Use Evidence to search for the checkId or related collector activity.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -906,7 +1038,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceArtefacts.length === 0 ? (
                     <div className="subtle">
-                      No related artefacts found for the matched observed checks (job-linked best-effort). See the Evidence tab for full artefact lists.
+                      No related artefacts found for the matched observed checks (job-linked best-effort). See Evidence for full artefact lists.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -953,8 +1085,15 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
   );
 }
 
-function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
-  const [query, setQuery] = useState("");
+function EvidenceTab({
+  vm,
+  query,
+  onQueryChange
+}: {
+  vm: RunDetailViewModel;
+  query: string;
+  onQueryChange: (q: string) => void;
+}) {
   const [groupByCollector, setGroupByCollector] = useState(true);
 
   const filtered = useMemo(() => {
@@ -1003,7 +1142,7 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
           </label>
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search checkId / collectorId / signals / jobId…"
             style={{
               width: 420,
@@ -1019,7 +1158,7 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
             <button
               type="button"
               className="link"
-              onClick={() => setQuery("")}
+              onClick={() => onQueryChange("")}
               style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
             >
               Clear
@@ -1152,7 +1291,7 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
         </div>
       )}
 
-      <h3>Reports</h3>
+      <h3 id="evidence-reports">Reports</h3>
       <p className="subtle">
         Derived outputs (not sources of truth). Known: <code>run-summary.xlsx</code>, <code>run-summary.csv</code>.
       </p>

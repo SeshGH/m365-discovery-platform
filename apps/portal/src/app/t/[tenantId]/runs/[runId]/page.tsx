@@ -10,6 +10,12 @@ import {
   type ArtefactItem
 } from "@/lib/api";
 import { RunDetailShell, type RunDetailViewModel } from "./_components/RunDetailShell";
+import {
+  buildEnvironmentOverview,
+  ocIsIncomplete,
+  ocIsTruncated,
+  ocPermissionDeniedList
+} from "@/lib/run-metrics";
 
 /** -----------------------------
  *  Tiny runtime helpers (server-only)
@@ -33,31 +39,6 @@ function readBool(obj: unknown, key: string): boolean | null {
   if (!isRecord(obj)) return null;
   const v = obj[key];
   return typeof v === "boolean" ? v : null;
-}
-
-function readNumber(obj: unknown, key: string): number | null {
-  if (!isRecord(obj)) return null;
-  const v = obj[key];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function readStringArray(obj: unknown, key: string): string[] {
-  if (!isRecord(obj)) return [];
-  const v = obj[key];
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
-}
-
-function readNumberAtPath(obj: unknown, paths: string[]): number | undefined {
-  for (const p of paths) {
-    const v = getPath(obj, p);
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string") {
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return undefined;
 }
 
 function uniq(xs: string[]) {
@@ -88,20 +69,6 @@ function formatBytes(bytes: number | null | undefined) {
 /** -----------------------------
  *  Completeness signals (derived from Observed Checks)
  *  ----------------------------*/
-
-function ocPermissionDeniedList(data: unknown): string[] {
-  const direct = readStringArray(data, "permissionDenied");
-  const nested = readStringArray(getPath(data, "completeness"), "permissionDenied");
-  return uniq([...direct, ...nested]);
-}
-
-function ocIsTruncated(data: unknown): boolean {
-  return readBool(data, "truncated") === true || readBool(getPath(data, "completeness"), "truncated") === true;
-}
-
-function ocIsIncomplete(data: unknown): boolean {
-  return readBool(data, "isComplete") === false || readBool(getPath(data, "completeness"), "isComplete") === false;
-}
 
 function badgeForObservedChecks(observed: ObservedCheckItem[]): RunDetailViewModel["completenessBadge"] {
   let sawPermissionDenied = false;
@@ -139,6 +106,122 @@ function extractSignals(observed: ObservedCheckItem[]) {
     truncatedChecks: uniq(truncatedChecks),
     incompleteChecks: uniq(incompleteChecks)
   };
+}
+
+function deriveConfidence(signals: { permissionDenied: string[]; truncatedChecks: string[]; incompleteChecks: string[] }) {
+  // LOCKED: derived only from explicit observed signals
+  if (signals.permissionDenied.length > 0) {
+    return {
+      level: "low" as const,
+      tone: "warn" as const,
+      reasons: [
+        `permissionDenied reported (${signals.permissionDenied.length})`
+      ]
+    };
+  }
+
+  if (signals.truncatedChecks.length > 0 || signals.incompleteChecks.length > 0) {
+    const bits: string[] = [];
+    if (signals.truncatedChecks.length > 0) bits.push(`truncated (${signals.truncatedChecks.length})`);
+    if (signals.incompleteChecks.length > 0) bits.push(`incomplete (${signals.incompleteChecks.length})`);
+    return {
+      level: "medium" as const,
+      tone: "warn" as const,
+      reasons: bits
+    };
+  }
+
+  return { level: "high" as const, tone: "ok" as const, reasons: ["no completeness warnings detected"] };
+}
+
+function buildNextActions(args: {
+  tenantId: string;
+  runId: string;
+  run: { dataProfile: string };
+  signals: { permissionDenied: string[]; truncatedChecks: string[]; incompleteChecks: string[] };
+  reportsCount: number;
+}) {
+  const { tenantId, runId, signals, reportsCount } = args;
+
+  const actions: RunDetailViewModel["nextActions"] = [];
+
+  if (signals.permissionDenied.length > 0) {
+    actions.push({
+      id: "fix-permissions",
+      title: "Resolve permission gaps",
+      tone: "warn",
+      detail: `This run reported permissionDenied for: ${signals.permissionDenied.join(", ")}.`,
+      cta: {
+        label: "Show permissionDenied evidence",
+        evidenceQuery: "permissionDenied"
+      }
+    });
+  }
+
+  if (signals.truncatedChecks.length > 0) {
+    actions.push({
+      id: "review-truncation",
+      title: "Review truncated data",
+      tone: "warn",
+      detail: `Some checks reported truncated (${signals.truncatedChecks.length}). Counts may be indicative.`,
+      cta: {
+        label: "Show truncated evidence",
+        evidenceQuery: "truncated"
+      }
+    });
+  }
+
+  if (signals.incompleteChecks.length > 0) {
+    actions.push({
+      id: "review-incomplete",
+      title: "Review incomplete areas",
+      tone: "warn",
+      detail: `Some checks reported incomplete (${signals.incompleteChecks.length}). Validate the underlying evidence.`,
+      cta: {
+        label: "Show incomplete evidence",
+        evidenceQuery: "incomplete"
+      }
+    });
+  }
+
+  if (reportsCount > 0) {
+    actions.push({
+      id: "download-report",
+      title: "Download the run summary report",
+      tone: "ok",
+      detail: "Use the report for an MSP-friendly summary alongside evidence traceability in the portal.",
+      cta: {
+        label: "Jump to Reports",
+        evidenceQuery: "" // shell will just switch tab and scroll; query left blank
+      }
+    });
+  } else {
+    actions.push({
+      id: "no-report",
+      title: "No report artefact found",
+      tone: "muted",
+      detail: "This run has no run-summary artefact yet. Evidence and findings are still available for review.",
+      cta: {
+        label: "Go to Evidence",
+        evidenceQuery: ""
+      }
+    });
+  }
+
+  // Always include a “review findings” nudge if any exist.
+  actions.push({
+    id: "review-findings",
+    title: "Review derived findings",
+    tone: "muted",
+    detail: "Move from inventory to interpretation using Findings, then validate via Evidence.",
+    cta: {
+      label: "Go to Findings",
+      goToTab: "findings"
+    }
+  });
+
+  // Ensure stable ordering: permission → trunc/incomplete → report → findings
+  return actions;
 }
 
 /** -----------------------------
@@ -255,225 +338,6 @@ function buildArtefactLists(all: ArtefactRow[]) {
   return { reports, others };
 }
 
-/** -----------------------------
- *  Environment overview (derived from Observed Checks; best effort)
- *  ----------------------------*/
-
-type EnvMetricTone = "ok" | "warn" | "bad" | "muted";
-
-type EnvMetric = {
-  key: string;
-  label: string;
-  value: string;
-  tone: EnvMetricTone;
-  hint?: string;
-  sources?: string[];
-};
-
-function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
-  const out: EnvMetric[] = [];
-
-  const sourcesFor = (predicate: (o: ObservedCheckItem) => boolean) =>
-    uniq(
-      observed
-        .filter(predicate)
-        .flatMap((o) => [o.checkId, o.collectorId].filter(Boolean) as string[])
-    );
-
-  const findCount = (match: (o: ObservedCheckItem) => boolean, paths: string[]) => {
-    for (const oc of observed) {
-      if (!match(oc)) continue;
-      const d = oc.data;
-      const n = readNumberAtPath(d, paths);
-      if (n !== undefined) return n;
-    }
-    return undefined;
-  };
-
-  const pathsUsers = ["counts.users", "count.users", "summary.users", "summary.counts.users", "stats.users", "totalUsers", "total", "value"];
-  const pathsGroups = ["counts.groups", "summary.groups", "summary.counts.groups", "stats.groups", "totalGroups", "value"];
-  const pathsApps = ["counts.enterpriseApps", "counts.apps", "summary.enterpriseApps", "summary.apps", "summary.counts.apps", "stats.apps", "totalApps", "value"];
-  const pathsCA = [
-    "counts.conditionalAccessPolicies",
-    "counts.caPolicies",
-    "summary.conditionalAccessPolicies",
-    "summary.caPolicies",
-    "summary.counts.conditionalAccessPolicies",
-    "stats.conditionalAccessPolicies",
-    "totalPolicies",
-    "value"
-  ];
-  const pathsMailboxes = ["counts.mailboxes", "summary.mailboxes", "summary.counts.mailboxes", "stats.mailboxes", "totalMailboxes", "value"];
-
-  const mUsers = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("entra") && (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
-
-  const mGroups = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("entra") && (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
-
-  const mApps = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("enterprise") || String(o.collectorId).includes("enterpriseApps") || String(o.collectorId).includes("entra.enterpriseApps");
-
-  const mCA = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("conditional") || String(o.collectorId).includes("conditionalAccess") || String(o.collectorId).includes("entra.conditionalAccess");
-
-  const mMail = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("mailbox") || String(o.collectorId).includes("exchange") || String(o.collectorId).includes("exchange.mailboxes");
-
-  const users = findCount(mUsers, pathsUsers);
-  const groups = findCount(mGroups, pathsGroups);
-  const apps = findCount(mApps, pathsApps);
-  const ca = findCount(mCA, pathsCA);
-
-  const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
-  const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
-
-  out.push({
-    key: "collectors",
-    label: "Collectors seen",
-    value: collectorsSeen.length ? String(collectorsSeen.length) : "—",
-    tone: collectorsSeen.length ? "ok" : "muted",
-    hint: collectorsSeen.length ? collectorsSeen.join(", ") : "No observed checks yet",
-    sources: []
-  });
-
-  out.push({
-    key: "checks",
-    label: "Observed checks",
-    value: checksSeen.length ? String(checksSeen.length) : "—",
-    tone: checksSeen.length ? "ok" : "muted",
-    sources: []
-  });
-
-  out.push({
-    key: "users",
-    label: "Users",
-    value: users === undefined ? "—" : users.toLocaleString(),
-    tone: users === undefined ? "muted" : "ok",
-    hint: users === undefined ? "Not derived from observed data yet" : undefined,
-    sources: sourcesFor(mUsers)
-  });
-
-  out.push({
-    key: "groups",
-    label: "Groups",
-    value: groups === undefined ? "—" : groups.toLocaleString(),
-    tone: groups === undefined ? "muted" : "ok",
-    hint: groups === undefined ? "Not derived from observed data yet" : undefined,
-    sources: sourcesFor(mGroups)
-  });
-
-  out.push({
-    key: "apps",
-    label: "Enterprise apps",
-    value: apps === undefined ? "—" : apps.toLocaleString(),
-    tone: apps === undefined ? "muted" : "ok",
-    hint: apps === undefined ? "Not derived from observed data yet" : undefined,
-    sources: sourcesFor(mApps)
-  });
-
-  out.push({
-    key: "ca",
-    label: "CA policies",
-    value: ca === undefined ? "—" : ca.toLocaleString(),
-    tone: ca === undefined ? "muted" : "ok",
-    hint: ca === undefined ? "Not derived from observed data yet" : undefined,
-    sources: sourcesFor(mCA)
-  });
-
-  const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
-  if (exo) {
-    const d = exo.data;
-
-    const totalMailboxes = readNumber(d, "totalMailboxes");
-
-    const sizeBuckets = getPath(d, "sizeBuckets");
-    const near50 =
-      typeof getPath(sizeBuckets, "40to50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "40to50GB") as number)
-        ? (getPath(sizeBuckets, "40to50GB") as number)
-        : null;
-    const over50 =
-      typeof getPath(sizeBuckets, "over50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "over50GB") as number)
-        ? (getPath(sizeBuckets, "over50GB") as number)
-        : null;
-
-    const isComplete = readBool(d, "isComplete");
-    const permissionDenied = ocPermissionDeniedList(d);
-
-    const notesRaw = getPath(d, "notes");
-    const notes = Array.isArray(notesRaw)
-      ? notesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-      : [];
-
-    const exoTone: EnvMetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
-
-    const exoHint =
-      permissionDenied.length > 0
-        ? `Permission missing: ${permissionDenied.join(", ")}`
-        : isComplete === false
-          ? notes[0] ?? "Exchange reporting is not available yet (Graph reports)."
-          : "Derived from Microsoft Graph mailbox usage reports.";
-
-    const exoSources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
-
-    out.push({
-      key: "exo_mailboxes_total",
-      label: "EXO mailboxes",
-      value: totalMailboxes === null ? "—" : totalMailboxes.toLocaleString(),
-      tone: exoTone,
-      hint: exoHint,
-      sources: exoSources
-    });
-
-    out.push({
-      key: "exo_mailboxes_near50",
-      label: "EXO near 50GB",
-      value: near50 === null ? "—" : near50.toLocaleString(),
-      tone: near50 !== null && near50 > 0 ? "warn" : exoTone,
-      hint: "Mailboxes in the 40–50GB range (licensing threshold watchlist).",
-      sources: exoSources
-    });
-
-    out.push({
-      key: "exo_mailboxes_over50",
-      label: "EXO over 50GB",
-      value: over50 === null ? "—" : over50.toLocaleString(),
-      tone: over50 !== null && over50 > 0 ? "warn" : exoTone,
-      hint: "Mailboxes above 50GB (often require EXO Plan 2 / E3/E5+).",
-      sources: exoSources
-    });
-  } else {
-    const mailboxesHeuristic = findCount(mMail, pathsMailboxes);
-
-    out.push({
-      key: "mailboxes",
-      label: "Mailboxes",
-      value: mailboxesHeuristic === undefined ? "—" : mailboxesHeuristic.toLocaleString(),
-      tone: mailboxesHeuristic === undefined ? "muted" : "ok",
-      hint: mailboxesHeuristic === undefined ? "Not derived from observed data yet" : "Heuristic (non-EXO-specific) count",
-      sources: sourcesFor(mMail)
-    });
-  }
-
-  const anyPermissionDenied = observed.some((o) => ocPermissionDeniedList(o.data).length > 0);
-  const anyTruncated = observed.some((o) => ocIsTruncated(o.data));
-
-  out.push({
-    key: "signals",
-    label: "Completeness signals",
-    value: anyPermissionDenied || anyTruncated ? "attention" : "ok",
-    tone: anyPermissionDenied || anyTruncated ? "warn" : "ok",
-    hint: anyPermissionDenied
-      ? "Some checks reported permissionDenied"
-      : anyTruncated
-        ? "Some checks reported truncated"
-        : "No permissionDenied/truncated detected",
-    sources: []
-  });
-
-  return out;
-}
-
 export default async function RunPage({ params }: { params: Promise<{ tenantId: string; runId: string }> }) {
   const { tenantId, runId } = await params;
 
@@ -494,6 +358,8 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
     signals.truncatedChecks.length > 0 ||
     signals.incompleteChecks.length > 0;
 
+  const confidence = deriveConfidence(signals);
+
   const artefacts: ArtefactRow[] = (artefactsRaw as ArtefactItem[]).map((a) => ({
     id: a.id,
     type: a.type,
@@ -511,7 +377,16 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
 
   const observedSorted = observed.slice().sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
 
+  // Registry-driven overview (schema-to-UI)
   const env = buildEnvironmentOverview(observed);
+
+  const nextActions = buildNextActions({
+    tenantId,
+    runId,
+    run: { dataProfile: run.dataProfile },
+    signals,
+    reportsCount: reports.length
+  });
 
   const vm: RunDetailViewModel = {
     tenantId,
@@ -537,6 +412,12 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
     phaseBadge,
     completenessBadge,
 
+    confidence: {
+      level: confidence.level,
+      tone: confidence.tone,
+      reasons: confidence.reasons
+    },
+
     jobSummary,
 
     completenessSignals: {
@@ -548,6 +429,8 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
       findingsCount: findings.length,
       artefactsCount: artefacts.length
     },
+
+    nextActions,
 
     environmentOverview: env,
 
