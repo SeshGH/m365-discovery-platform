@@ -135,12 +135,6 @@ function TabButton({
   );
 }
 
-function scrollToId(id: string) {
-  requestAnimationFrame(() => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
-}
-
 export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   const [tab, setTab] = useState<TabKey>("summary");
 
@@ -154,17 +148,13 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     []
   );
 
-  const goToTab = (k: TabKey) => setTab(k);
-
   // callback for "view evidence" from inside Findings
   const goToEvidenceObservedChecks = () => {
     setTab("evidence");
-    scrollToId("evidence-observed-checks");
-  };
-
-  const goToSummaryEnvironment = () => {
-    setTab("summary");
-    scrollToId("summary-environment-overview");
+    // wait for tab content to render, then scroll
+    requestAnimationFrame(() => {
+      document.getElementById("evidence-observed-checks")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   return (
@@ -254,15 +244,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         ))}
       </div>
 
-      {tab === "summary" ? (
-        <SummaryTab
-          vm={vm}
-          onGoEvidence={() => goToTab("evidence")}
-          onGoFindings={() => goToTab("findings")}
-          onGoJobs={() => goToTab("jobs")}
-          onGoEnvironment={goToSummaryEnvironment}
-        />
-      ) : null}
+      {tab === "summary" ? <SummaryTab vm={vm} /> : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={goToEvidenceObservedChecks} /> : null}
       {tab === "evidence" ? <EvidenceTab vm={vm} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
@@ -270,72 +252,45 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   );
 }
 
-function metricByKey(vm: RunDetailViewModel, key: string) {
-  return vm.environmentOverview.find((m) => m.key === key) ?? null;
-}
+function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
+  const jumpToHeadlineSizing = () => {
+    requestAnimationFrame(() => {
+      document.getElementById("headline-estate-sizing")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
-function SummaryTab({
-  vm,
-  onGoEvidence,
-  onGoFindings,
-  onGoJobs,
-  onGoEnvironment
-}: {
-  vm: RunDetailViewModel;
-  onGoEvidence: () => void;
-  onGoFindings: () => void;
-  onGoJobs: () => void;
-  onGoEnvironment: () => void;
-}) {
-  const runStatus = String(vm.run.status ?? "").toLowerCase();
-  const runNotTerminal = runStatus !== "succeeded" && runStatus !== "failed";
+  const jumpToEvidence = () => {
+    requestAnimationFrame(() => {
+      document.getElementById("evidence-observed-checks")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
-  const headline = useMemo(() => {
-    const keys = [
-      "users",
-      "groups",
-      "apps",
-      "ca",
-      // Mailboxes can be either heuristic or explicit EXO cards depending on what page.tsx emits
-      "exo_mailboxes_total",
-      "mailboxes",
-      "exo_mailboxes_near50",
-      "exo_mailboxes_over50"
-    ];
-    return keys
-      .map((k) => metricByKey(vm, k))
-      .filter((m): m is NonNullable<typeof m> => Boolean(m));
-  }, [vm]);
+  const jumpToJobs = () => {
+    requestAnimationFrame(() => {
+      document.getElementById("jobs-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   return (
     <>
       {/* Scoping narrative */}
       <div className="card card-pad" style={{ marginTop: 12, marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
           <div>
             <div style={{ fontWeight: 900, fontSize: 16 }}>Scoping summary</div>
             <div className="subtle" style={{ marginTop: 4 }}>
               This run provides an inventory-style view of the tenant using <strong>observed checks</strong> (source of truth)
-              and raw artefacts. Use the headline sizing and the <strong>Environment overview</strong> to understand estate size
-              and scope.
+              and raw artefacts. Use the headline sizing and the <strong>Headline estate sizing</strong> section below to
+              understand estate size and scope.
             </div>
           </div>
           <div className="subtle">Run {vm.run.id}</div>
         </div>
 
-        {runNotTerminal ? (
-          <div className="callout warn" style={{ marginTop: 12 }}>
-            <strong>Run is not in a terminal state</strong>
-            <div className="subtle" style={{ marginTop: 6 }}>
-              Inventory and findings may still be changing while jobs are running. Use the Jobs tab to confirm completion.
-            </div>
-          </div>
-        ) : null}
-
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
-            onClick={onGoEnvironment}
+            onClick={jumpToHeadlineSizing}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -346,26 +301,12 @@ function SummaryTab({
               color: "var(--fg)"
             }}
           >
-            Jump to environment overview
+            Jump to headline sizing
           </button>
+
           <button
             type="button"
-            onClick={onGoFindings}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "transparent",
-              cursor: "pointer",
-              fontWeight: 700,
-              color: "var(--fg)"
-            }}
-          >
-            View findings
-          </button>
-          <button
-            type="button"
-            onClick={onGoEvidence}
+            onClick={jumpToEvidence}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -378,9 +319,10 @@ function SummaryTab({
           >
             View evidence
           </button>
+
           <button
             type="button"
-            onClick={onGoJobs}
+            onClick={jumpToJobs}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -398,8 +340,8 @@ function SummaryTab({
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900 }}>What do we have?</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            Start with the headline counts below, then use Environment overview for supporting context. Use Evidence to inspect
-            the underlying observed checks and artefacts if you need detail.
+            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and
+            artefacts if you need detail.
           </div>
         </div>
 
@@ -420,41 +362,6 @@ function SummaryTab({
               : "No completeness warnings detected in observed checks."}
           </span>
         </div>
-      </div>
-
-      {/* Headline estate sizing */}
-      <div className="card card-pad" style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-          <h3 style={{ marginTop: 0, marginBottom: 6 }}>Headline estate sizing</h3>
-          <span className="subtle">Derived from observed checks (no silent assumptions)</span>
-        </div>
-
-        {headline.length === 0 ? (
-          <div className="subtle">No headline sizing metrics could be derived from observed checks yet.</div>
-        ) : (
-          <div className="env-grid" style={{ marginTop: 8 }}>
-            {headline.map((m) => (
-              <div key={m.key} className={`env-card tone-${m.tone}`}>
-                <div className="env-k">{m.label}</div>
-                <div className="env-v">{m.value}</div>
-                {m.hint ? <div className="env-h">{m.hint}</div> : null}
-                {m.sources && m.sources.length > 0 ? (
-                  <div className="env-s">
-                    <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <details style={{ marginTop: 10 }}>
-          <summary style={{ cursor: "pointer" }}>How to use this for scoping</summary>
-          <div className="subtle" style={{ marginTop: 8 }}>
-            Use these headline counts as your starting point for “how big is this estate?”. If completeness signals are present,
-            treat counts as indicative and use Evidence to confirm which checks reported limitations.
-          </div>
-        </details>
       </div>
 
       <div className="grid-2" style={{ marginBottom: 12, marginTop: 12 }}>
@@ -538,37 +445,59 @@ function SummaryTab({
         </div>
       </div>
 
-      {/* Environment overview */}
-      <div id="summary-environment-overview" className="card card-pad" style={{ marginBottom: 12 }}>
+      {/* Headline estate sizing */}
+      <div id="headline-estate-sizing" className="card card-pad" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-          <h3 style={{ marginTop: 0, marginBottom: 6 }}>Environment overview</h3>
-          <span className="subtle">Derived from observed checks (best effort)</span>
+          <h3 style={{ marginTop: 0, marginBottom: 6 }}>Headline estate sizing</h3>
+          <span className="subtle">Best-known counts (observed checks)</span>
         </div>
 
+        <div className="subtle" style={{ marginTop: 6 }}>
+          These numbers are derived from <strong>observed check</strong> payloads only (no silent assumptions). A value of{" "}
+          <code>—</code> means we haven’t yet emitted a check that includes that count in a known shape.
+        </div>
+
+        {vm.completenessSignals.hasCompletenessIssues ? (
+          <div className="callout warn" style={{ marginTop: 10 }}>
+            <strong>Inventory completeness warnings</strong>
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Some checks reported <code>permissionDenied</code>, <code>truncated</code>, or <code>incomplete</code>. Treat
+              counts as indicative and validate via Evidence where needed.
+            </div>
+          </div>
+        ) : null}
+
         {vm.environmentOverview.length === 0 ? (
-          <div className="subtle">No observed checks recorded yet, so no environment overview is available.</div>
+          <div className="subtle" style={{ marginTop: 10 }}>
+            No observed checks recorded yet, so no headline sizing is available.
+          </div>
         ) : (
           <>
-            <div className="env-grid" style={{ marginTop: 8 }}>
-              {vm.environmentOverview.map((m) => (
-                <div key={m.key} className={`env-card tone-${m.tone}`}>
-                  <div className="env-k">{m.label}</div>
-                  <div className="env-v">{m.value}</div>
-                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
-                  {m.sources && m.sources.length > 0 ? (
-                    <div className="env-s">
-                      <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
+            <div className="env-grid" style={{ marginTop: 10 }}>
+              {vm.environmentOverview.map((m) => {
+                const needsFallbackHint = String(m.value ?? "").trim() === "—" && !m.hint;
+                const hint = needsFallbackHint ? "Not derived from observed data yet." : m.hint;
+
+                return (
+                  <div key={m.key} className={`env-card tone-${m.tone}`}>
+                    <div className="env-k">{m.label}</div>
+                    <div className="env-v">{m.value}</div>
+                    {hint ? <div className="env-h">{hint}</div> : null}
+                    {m.sources && m.sources.length > 0 ? (
+                      <div className="env-s">
+                        <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
 
             <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: "pointer" }}>What is this?</summary>
+              <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
               <div className="subtle" style={{ marginTop: 8 }}>
-                These numbers are only shown when they can be derived from observed check payloads. If a value is “—”, it means
-                we haven’t yet emitted a check that includes that count in a known shape.
+                Use the Evidence tab to view the observed check payload(s) listed under each card’s <em>sources</em>. If a
+                number looks surprising, confirm completeness signals and inspect the raw artefact outputs for that collector.
               </div>
             </details>
           </>
@@ -1190,7 +1119,7 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
 function JobsTab({ vm }: { vm: RunDetailViewModel }) {
   return (
     <>
-      <h3>Jobs</h3>
+      <h3 id="jobs-table">Jobs</h3>
       <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
         <table className="table table-scan">
           <thead>
