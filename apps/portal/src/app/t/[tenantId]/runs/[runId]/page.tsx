@@ -381,7 +381,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: sourcesFor(mCA)
   });
 
-  // Exchange Online (Graph-only) – explicit cards from EXO_MAILBOXES_OBS_001
   const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
   if (exo) {
     const d = exo.data;
@@ -401,7 +400,7 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     const isComplete = readBool(d, "isComplete");
     const permissionDenied = ocPermissionDeniedList(d);
 
-    const notesRaw = isRecord(d) && Array.isArray((d as any).notes) ? (d as any).notes : [];
+    const notesRaw = getPath(d, "notes");
     const notes = Array.isArray(notesRaw)
       ? notesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : [];
@@ -444,7 +443,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
       sources: exoSources
     });
   } else {
-    // Only include heuristic mailbox count if we do NOT have the explicit EXO check
     const mailboxesHeuristic = findCount(mMail, pathsMailboxes);
 
     out.push({
@@ -479,7 +477,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
 export default async function RunPage({ params }: { params: Promise<{ tenantId: string; runId: string }> }) {
   const { tenantId, runId } = await params;
 
-  // All calls tenant-scoped via portal BFF (fail-closed)
   const [run, jobs, artefactsRaw, observed, findings] = await Promise.all([
     getRun(tenantId, runId),
     listRunJobs(tenantId, runId),
@@ -512,7 +509,6 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
   const jobSummary = summarizeJobs(jobs);
   const runStatusBadge = statusBadgeForRunStatus(run.status);
 
-  // Oldest -> newest
   const observedSorted = observed.slice().sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
 
   const env = buildEnvironmentOverview(observed);

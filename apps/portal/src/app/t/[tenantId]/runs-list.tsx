@@ -3,7 +3,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { listTenantRuns, type RunItem } from "@/lib/api.client";
+import { listTenantRuns } from "@/lib/api.client";
+
+type RunListItem = {
+  id: string;
+  status: string;
+  dataProfile: string;
+  triggeredBy: string | null;
+  createdAt: string;
+  counts: { jobs: number; findings: number; artefacts: number };
+};
 
 function StatusBadge({ status }: { status: string }) {
   const s = String(status ?? "").toLowerCase();
@@ -26,18 +35,18 @@ function ProfileBadge({ profile }: { profile: string }) {
   return <span className={cls}>{profile}</span>;
 }
 
-function isActive(run: RunItem) {
+function isActive(run: RunListItem) {
   return run.status === "queued" || run.status === "running";
 }
 
 type Props = {
   tenantId: string;
-  initialRuns: RunItem[];
+  initialRuns: RunListItem[];
   totalRuns: number;
 };
 
 export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
-  const [runs, setRuns] = useState<RunItem[]>(initialRuns);
+  const [runs, setRuns] = useState<RunListItem[]>(initialRuns);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const hasActive = runs.some(isActive);
@@ -48,9 +57,20 @@ export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
     timer.current = setInterval(async () => {
       try {
         const all = await listTenantRuns(tenantId);
-        setRuns(all.slice(0, initialRuns.length));
 
-        if (!all.some(isActive) && timer.current) {
+        // Keep only the fields we render, so server/client shapes both work
+        const mapped: RunListItem[] = all.slice(0, initialRuns.length).map((r) => ({
+          id: r.id,
+          status: r.status,
+          dataProfile: r.dataProfile,
+          triggeredBy: r.triggeredBy ?? null,
+          createdAt: r.createdAt,
+          counts: r.counts
+        }));
+
+        setRuns(mapped);
+
+        if (!all.some((r) => r.status === "queued" || r.status === "running") && timer.current) {
           clearInterval(timer.current);
           timer.current = null;
         }
@@ -68,10 +88,9 @@ export default function RunsList({ tenantId, initialRuns, totalRuns }: Props) {
     <div>
       <h3 style={{ marginBottom: 6 }}>Recent runs</h3>
 
-      <p className="subtle" style={{ maxWidth: 950 }}>
-        Showing {runs.length} of {totalRuns}. The counts reflect what has been recorded so far (jobs, derived findings, and stored artefacts).
-        For authoritative detail and completeness warnings, open a run and review its observed checks (source of truth).
-        {hasActive ? " Updating automatically while a run is active…" : ""}
+      <p className="subtle">
+        Source: portal BFF <code>/api/tenants/[tenantId]/runs</code>. Showing {runs.length} of {totalRuns}.
+        {hasActive ? " Updating automatically…" : ""}
       </p>
 
       <div className="card" style={{ overflow: "hidden" }}>

@@ -1,7 +1,8 @@
+// apps/portal/src/app/t/[tenantId]/runs/[runId]/_components/RunDetailShell.tsx
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 export type BadgeTone = "ok" | "warn" | "bad" | "muted";
 export type BadgeModel = { label: string; tone: BadgeTone };
@@ -135,6 +136,76 @@ function TabButton({
   );
 }
 
+function norm(s: unknown): string {
+  return String(s ?? "").toLowerCase().trim();
+}
+
+function isMissingValue(v: string | null | undefined): boolean {
+  const x = norm(v);
+  return x === "" || x === "—" || x === "-" || x === "n/a" || x === "na" || x === "unknown";
+}
+
+function findMetricValue(metrics: RunDetailViewModel["environmentOverview"], key: string): string | null {
+  const m = metrics.find((x) => x.key === key);
+  if (!m) return null;
+  return m.value ?? null;
+}
+
+function EstateSizingNarrative({
+  metrics,
+  hasCompletenessIssues
+}: {
+  metrics: RunDetailViewModel["environmentOverview"];
+  hasCompletenessIssues: boolean;
+}) {
+  const users = findMetricValue(metrics, "users");
+  const groups = findMetricValue(metrics, "groups");
+  const apps = findMetricValue(metrics, "apps");
+  const ca = findMetricValue(metrics, "ca");
+
+  const exoMail = findMetricValue(metrics, "exo_mailboxes_total");
+  const mailFallback = findMetricValue(metrics, "mailboxes");
+  const mailboxes = !isMissingValue(exoMail) ? exoMail : mailFallback;
+
+  const parts: Array<{ label: string; value: string | null }> = [
+    { label: "Users", value: users },
+    { label: "Groups", value: groups },
+    { label: "Enterprise apps", value: apps },
+    { label: "CA policies", value: ca },
+    { label: "Mailboxes", value: mailboxes }
+  ];
+
+  const known = parts.filter((p) => !isMissingValue(p.value ?? "—"));
+  const missing = parts.length - known.length;
+
+  const tone = hasCompletenessIssues ? "warn" : known.length >= 2 ? "ok" : "warn";
+
+  const line =
+    known.length === 0
+      ? "Best-known counts are not available for this run yet."
+      : `Best-known counts: ${known.map((p) => `${p.label} ${p.value}`).join(" · ")}.`;
+
+  const tail =
+    missing > 0
+      ? ` ${missing} metric${missing === 1 ? "" : "s"} not observed in a known shape (shown as “—” below).`
+      : "";
+
+  const caveat = hasCompletenessIssues
+    ? " Completeness warnings exist — treat these as indicative and validate via Evidence where needed."
+    : "";
+
+  return (
+    <div className={`callout ${tone === "warn" ? "warn" : ""}`} style={{ marginTop: 10 }}>
+      <strong>At a glance</strong>
+      <div className="subtle" style={{ marginTop: 6 }}>
+        {line}
+        {tail}
+        {caveat}
+      </div>
+    </div>
+  );
+}
+
 export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   const [tab, setTab] = useState<TabKey>("summary");
 
@@ -148,16 +219,13 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     []
   );
 
-  // callback for "view evidence" from inside Findings
   const goToEvidenceObservedChecks = () => {
     setTab("evidence");
-    // wait for tab content to render, then scroll
     requestAnimationFrame(() => {
       document.getElementById("evidence-observed-checks")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
 
-  // callback for "jump to headline sizing" from Summary
   const goToHeadlineSizing = () => {
     setTab("summary");
     requestAnimationFrame(() => {
@@ -165,7 +233,6 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     });
   };
 
-  // callback for "jump to jobs" from Summary
   const goToJobs = () => {
     setTab("jobs");
     requestAnimationFrame(() => {
@@ -183,7 +250,6 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
 
       <h2 style={{ marginBottom: 8 }}>Run</h2>
 
-      {/* HERO STRIP */}
       <div className="hero">
         <div className="hero-top">
           <div className="hero-left">
@@ -245,13 +311,11 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         </div>
 
         <div className="hero-foot subtle">
-          Jobs: q {vm.jobSummary.queued} · r {vm.jobSummary.running} · ok {vm.jobSummary.succeeded} · fail{" "}
-          {vm.jobSummary.failed}
+          Jobs: q {vm.jobSummary.queued} · r {vm.jobSummary.running} · ok {vm.jobSummary.succeeded} · fail {vm.jobSummary.failed}
           {vm.jobSummary.other > 0 ? ` · other ${vm.jobSummary.other}` : ""}
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, marginBottom: 12 }}>
         {tabs.map((t) => (
           <TabButton key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
@@ -261,7 +325,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
       </div>
 
       {tab === "summary" ? (
-        <SummaryTab vm={vm} onGoHeadlineSizing={goToHeadlineSizing} onGoEvidence={() => setTab("evidence")} onGoJobs={goToJobs} />
+        <SummaryTab vm={vm} onGoHeadlineSizing={goToHeadlineSizing} onGoEvidence={goToEvidenceObservedChecks} onGoJobs={goToJobs} />
       ) : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={goToEvidenceObservedChecks} /> : null}
       {tab === "evidence" ? <EvidenceTab vm={vm} /> : null}
@@ -281,22 +345,17 @@ function SummaryTab({
   onGoEvidence: () => void;
   onGoJobs: () => void;
 }) {
-  const headlineMetrics = useMemo(
-    () => vm.environmentOverview.filter((m) => m.key !== "signals"),
-    [vm.environmentOverview]
-  );
+  const headlineMetrics = useMemo(() => vm.environmentOverview.filter((m) => m.key !== "signals"), [vm.environmentOverview]);
 
   return (
     <>
-      {/* Scoping narrative */}
       <div className="card card-pad" style={{ marginTop: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
           <div>
             <div style={{ fontWeight: 900, fontSize: 16 }}>Scoping summary</div>
             <div className="subtle" style={{ marginTop: 4 }}>
-              This run provides an inventory-style view of the tenant using <strong>observed checks</strong> (source of truth)
-              and raw artefacts. Use the headline sizing and the <strong>Environment overview</strong> below to understand estate
-              size and scope.
+              This run provides an inventory-style view of the tenant using <strong>observed checks</strong> (source of truth) and raw
+              artefacts. Use the headline sizing and the <strong>Environment overview</strong> below to understand estate size and scope.
             </div>
           </div>
           <div className="subtle">Run {vm.run.id}</div>
@@ -355,16 +414,14 @@ function SummaryTab({
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900 }}>What do we have?</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and artefacts if
-            you need detail.
+            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and artefacts if you need detail.
           </div>
         </div>
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900 }}>What should we review next?</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            When you’re ready to move from inventory to interpretation, check the <strong>Findings</strong> tab for derived signals
-            (risks / notable conditions), and use the <strong>Evidence</strong> tab to inspect the underlying data.
+            When you’re ready to move from inventory to interpretation, check the <strong>Findings</strong> tab for derived signals (risks / notable conditions), and use the <strong>Evidence</strong> tab to inspect the underlying data.
           </div>
         </div>
 
@@ -447,9 +504,7 @@ function SummaryTab({
               {vm.completenessSignals.permissionDenied.length === 0 &&
               vm.completenessSignals.truncatedChecks.length === 0 &&
               vm.completenessSignals.incompleteChecks.length === 0 ? (
-                <div style={{ color: "var(--muted)" }}>
-                  Completeness warning present but no explicit details found in observed data.
-                </div>
+                <div style={{ color: "var(--muted)" }}>Completeness warning present but no explicit details found in observed data.</div>
               ) : null}
             </div>
           ) : (
@@ -460,7 +515,6 @@ function SummaryTab({
         </div>
       </div>
 
-      {/* Headline estate sizing */}
       <div className="card card-pad" style={{ marginBottom: 12 }} id="headline-estate-sizing">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
           <h3 style={{ marginTop: 0, marginBottom: 6 }}>Headline estate sizing</h3>
@@ -468,9 +522,10 @@ function SummaryTab({
         </div>
 
         <div className="subtle" style={{ marginTop: 6 }}>
-          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we
-          haven’t yet emitted a check that includes that count in a known shape.
+          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we haven’t yet emitted a check that includes that count in a known shape.
         </div>
+
+        <EstateSizingNarrative metrics={headlineMetrics} hasCompletenessIssues={vm.completenessSignals.hasCompletenessIssues} />
 
         {vm.completenessSignals.hasCompletenessIssues ? (
           <div className="callout warn" style={{ marginTop: 10 }}>
@@ -537,12 +592,9 @@ function severityTone(s: string): "bad" | "warn" | "muted" {
   return "muted";
 }
 
-function norm(s: unknown): string {
-  return String(s ?? "").toLowerCase().trim();
-}
-
 function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: () => void }) {
   const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const findingsFiltered = useMemo(() => {
     const q = norm(query);
@@ -565,22 +617,18 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
     return xs;
   }, [findingsFiltered]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveSelectedId = useMemo(() => {
+    if (selectedId && findingsSorted.some((f) => f.id === selectedId)) return selectedId;
+    return findingsSorted[0]?.id ?? null;
+  }, [selectedId, findingsSorted]);
 
-  useEffect(() => {
-    if (findingsSorted.length === 0) {
-      setSelectedId(null);
-      return;
-    }
-    if (selectedId && findingsSorted.some((f) => f.id === selectedId)) return;
-    setSelectedId(findingsSorted[0].id);
-  }, [findingsSorted, selectedId]);
-
-  const selected = useMemo(() => findingsSorted.find((f) => f.id === selectedId) ?? null, [findingsSorted, selectedId]);
+  const selected = useMemo(() => {
+    if (!effectiveSelectedId) return null;
+    return findingsSorted.find((f) => f.id === effectiveSelectedId) ?? null;
+  }, [findingsSorted, effectiveSelectedId]);
 
   const evidenceObserved = useMemo(() => {
     if (!selected) return [];
-    // best-effort evidence linkage using checkId equality
     return vm.observedChecks.filter((o) => o.checkId === selected.checkId);
   }, [selected, vm.observedChecks]);
 
@@ -595,12 +643,10 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
     return vm.artefacts.filter((a) => a.jobId && evidenceJobIds.includes(a.jobId));
   }, [vm.artefacts, evidenceJobIds]);
 
-  // Evidence stats per finding (for list display)
   const evidenceStatsByFindingId = useMemo(() => {
     const stats = new Map<string, { observed: number; artefacts: number }>();
 
-    // Pre-index observed checks by checkId
-    const observedByCheckId = new Map<string, typeof vm.observedChecks>();
+    const observedByCheckId = new Map<string, RunDetailViewModel["observedChecks"]>();
     for (const o of vm.observedChecks) {
       const k = String(o.checkId ?? "");
       const cur = observedByCheckId.get(k) ?? [];
@@ -608,7 +654,6 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
       observedByCheckId.set(k, cur);
     }
 
-    // Pre-index artefacts by jobId for quick lookup
     const artefactsByJobId = new Map<string, number>();
     for (const a of vm.artefacts) {
       if (!a.jobId) continue;
@@ -635,8 +680,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
           <p className="subtle" style={{ marginTop: 0 }}>
-            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and
-            related artefacts (raw outputs), best-effort.
+            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and related artefacts (raw outputs), best-effort.
           </p>
         </div>
 
@@ -683,7 +727,6 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           alignItems: "start"
         }}
       >
-        {/* Left: list */}
         <div
           style={{
             border: "1px solid var(--border)",
@@ -701,7 +744,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
           <div style={{ maxHeight: 520, overflow: "auto" }}>
             {findingsSorted.map((f) => {
-              const active = f.id === selectedId;
+              const active = f.id === effectiveSelectedId;
               const tone = severityTone(f.severity);
               const sevBadge: BadgeModel = { label: String(f.severity), tone };
 
@@ -734,7 +777,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                     check: <code>{f.checkId}</code>
                   </div>
 
-                  <div className="subtle" style={{ marginTop: 6, color: active ? "var(--muted)" : "var(--muted)" }}>
+                  <div className="subtle" style={{ marginTop: 6 }}>
                     evidence: {evidenceLabel}
                   </div>
                 </button>
@@ -749,7 +792,6 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           </div>
         </div>
 
-        {/* Right: detail */}
         <div
           style={{
             border: "1px solid var(--border)",
@@ -760,8 +802,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         >
           {!selected ? (
             <div className="subtle">
-              Select a finding on the left to view details. If there are no findings, this run may still have observed checks and
-              artefacts to review under Evidence.
+              Select a finding on the left to view details. If there are no findings, this run may still have observed checks and artefacts to review under Evidence.
             </div>
           ) : (
             <>
@@ -780,8 +821,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                 <div className="callout warn" style={{ marginTop: 12 }}>
                   <strong>Completeness signals present</strong>
                   <div className="subtle" style={{ marginTop: 6 }}>
-                    This run includes warnings (e.g. truncated, permissionDenied, incomplete) that may affect interpretation. Use the
-                    evidence below to confirm details.
+                    This run includes warnings (e.g. truncated, permissionDenied, incomplete) that may affect interpretation. Use the evidence below to confirm details.
                   </div>
                 </div>
               ) : null}
@@ -818,9 +858,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceObserved.length === 0 ? (
                     <div className="subtle">
-                      No observed checks matched this finding’s <code>checkId</code>. This usually means the finding was derived from
-                      a different reference or the portal cannot link evidence without additional referencing. Use the Evidence tab
-                      to search for the checkId or related collector activity.
+                      No observed checks matched this finding’s <code>checkId</code>. This usually means the finding was derived from a different reference or the portal cannot link evidence without additional referencing. Use the Evidence tab to search for the checkId or related collector activity.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -948,7 +986,6 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
       <h3 id="evidence-observed-checks">Observed checks</h3>
       <p className="subtle">Source of truth for posture + completeness signals. Findings are derived from these checks.</p>
 
-      {/* Controls */}
       <div
         className="card card-pad"
         style={{
@@ -1006,7 +1043,6 @@ function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
         </div>
       </div>
 
-      {/* Observed checks display */}
       {filtered.length === 0 ? (
         <div className="card card-pad" style={{ marginBottom: 12 }}>
           <div className="subtle">No observed checks match the current filter.</div>
@@ -1234,11 +1270,7 @@ function JobsTab({ vm }: { vm: RunDetailViewModel }) {
                 <td>{j.status}</td>
                 <td>{j.attempts}</td>
                 <td style={{ fontSize: 12 }}>
-                  {j.lastError ? (
-                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
-                  ) : (
-                    <span style={{ color: "var(--muted)" }}>—</span>
-                  )}
+                  {j.lastError ? <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span> : <span style={{ color: "var(--muted)" }}>—</span>}
                 </td>
               </tr>
             ))}

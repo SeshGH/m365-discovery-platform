@@ -38,23 +38,28 @@ type JsonValue =
   | JsonValue[]
   | { [k: string]: JsonValue };
 
-async function bffFetch<T>(path: string, init?: RequestInit & { body?: JsonValue }): Promise<T> {
+type BffFetchInit = Omit<RequestInit, "body"> & {
+  /** JSON body convenience for client calls */
+  jsonBody?: JsonValue;
+};
+
+async function bffFetch<T>(path: string, init?: BffFetchInit): Promise<T> {
+  const hasJsonBody = init?.jsonBody !== undefined;
+
   const res = await fetch(path, {
     ...init,
     cache: "no-store",
     headers: {
       accept: "application/json",
-      ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
+      ...(hasJsonBody ? { "content-type": "application/json" } : {}),
       ...(init?.headers ?? {})
     },
-    body: init?.body !== undefined ? JSON.stringify(init.body) : (init?.body as any)
+    body: hasJsonBody ? JSON.stringify(init?.jsonBody) : undefined
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `[portal-client] BFF error ${res.status} ${res.statusText} for ${path}${text ? ` :: ${text}` : ""}`
-    );
+    throw new Error(`[portal-client] BFF error ${res.status} ${res.statusText} for ${path}${text ? ` :: ${text}` : ""}`);
   }
 
   return (await res.json()) as T;
