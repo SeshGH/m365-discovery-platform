@@ -271,6 +271,11 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
     });
   };
 
+    const headlineMetrics = useMemo(
+    () => vm.environmentOverview.filter((m) => m.key !== "signals"),
+    [vm.environmentOverview]
+  );
+
   return (
     <>
       {/* Scoping narrative */}
@@ -467,14 +472,14 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
           </div>
         ) : null}
 
-        {vm.environmentOverview.length === 0 ? (
+        {headlineMetrics.length === 0 ? (
           <div className="subtle" style={{ marginTop: 10 }}>
             No observed checks recorded yet, so no headline sizing is available.
           </div>
         ) : (
           <>
             <div className="env-grid" style={{ marginTop: 10 }}>
-              {vm.environmentOverview.map((m) => {
+              {headlineMetrics.map((m) => {
                 const needsFallbackHint = String(m.value ?? "").trim() === "—" && !m.hint;
                 const hint = needsFallbackHint ? "Not derived from observed data yet." : m.hint;
 
