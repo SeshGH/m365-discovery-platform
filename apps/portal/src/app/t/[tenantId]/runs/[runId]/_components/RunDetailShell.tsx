@@ -157,6 +157,22 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     });
   };
 
+  // callback for "jump to headline sizing" from Summary
+  const goToHeadlineSizing = () => {
+    setTab("summary");
+    requestAnimationFrame(() => {
+      document.getElementById("headline-estate-sizing")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  // callback for "jump to jobs" from Summary
+  const goToJobs = () => {
+    setTab("jobs");
+    requestAnimationFrame(() => {
+      document.getElementById("jobs-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     <main>
       <p style={{ margin: "10px 0 0 0" }}>
@@ -244,7 +260,9 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         ))}
       </div>
 
-      {tab === "summary" ? <SummaryTab vm={vm} /> : null}
+      {tab === "summary" ? (
+        <SummaryTab vm={vm} onGoHeadlineSizing={goToHeadlineSizing} onGoEvidence={() => setTab("evidence")} onGoJobs={goToJobs} />
+      ) : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={goToEvidenceObservedChecks} /> : null}
       {tab === "evidence" ? <EvidenceTab vm={vm} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
@@ -252,26 +270,18 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   );
 }
 
-function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
-  const jumpToHeadlineSizing = () => {
-    requestAnimationFrame(() => {
-      document.getElementById("headline-estate-sizing")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-
-  const jumpToEvidence = () => {
-    requestAnimationFrame(() => {
-      document.getElementById("evidence-observed-checks")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-
-  const jumpToJobs = () => {
-    requestAnimationFrame(() => {
-      document.getElementById("jobs-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-
-    const headlineMetrics = useMemo(
+function SummaryTab({
+  vm,
+  onGoHeadlineSizing,
+  onGoEvidence,
+  onGoJobs
+}: {
+  vm: RunDetailViewModel;
+  onGoHeadlineSizing: () => void;
+  onGoEvidence: () => void;
+  onGoJobs: () => void;
+}) {
+  const headlineMetrics = useMemo(
     () => vm.environmentOverview.filter((m) => m.key !== "signals"),
     [vm.environmentOverview]
   );
@@ -285,17 +295,17 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
             <div style={{ fontWeight: 900, fontSize: 16 }}>Scoping summary</div>
             <div className="subtle" style={{ marginTop: 4 }}>
               This run provides an inventory-style view of the tenant using <strong>observed checks</strong> (source of truth)
-              and raw artefacts. Use the headline sizing and the <strong>Headline estate sizing</strong> section below to
-              understand estate size and scope.
+              and raw artefacts. Use the headline sizing and the <strong>Environment overview</strong> below to understand estate
+              size and scope.
             </div>
           </div>
           <div className="subtle">Run {vm.run.id}</div>
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={jumpToHeadlineSizing}
+            onClick={onGoHeadlineSizing}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -311,12 +321,12 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
 
           <button
             type="button"
-            onClick={jumpToEvidence}
+            onClick={onGoEvidence}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid var(--border)",
-              background: "transparent",
+              background: "var(--card)",
               cursor: "pointer",
               fontWeight: 700,
               color: "var(--fg)"
@@ -327,12 +337,12 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
 
           <button
             type="button"
-            onClick={jumpToJobs}
+            onClick={onGoJobs}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
               border: "1px solid var(--border)",
-              background: "transparent",
+              background: "var(--card)",
               cursor: "pointer",
               fontWeight: 700,
               color: "var(--fg)"
@@ -345,16 +355,16 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900 }}>What do we have?</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and
-            artefacts if you need detail.
+            Start with headline sizing for best-known counts. Use Evidence to inspect the underlying observed checks and artefacts if
+            you need detail.
           </div>
         </div>
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 900 }}>What should we review next?</div>
           <div className="subtle" style={{ marginTop: 4 }}>
-            When you’re ready to move from inventory to interpretation, check the <strong>Findings</strong> tab for derived
-            signals (risks / notable conditions), and use the <strong>Evidence</strong> tab to inspect the underlying data.
+            When you’re ready to move from inventory to interpretation, check the <strong>Findings</strong> tab for derived signals
+            (risks / notable conditions), and use the <strong>Evidence</strong> tab to inspect the underlying data.
           </div>
         </div>
 
@@ -407,8 +417,8 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
           </div>
 
           <div className="subtle" style={{ marginTop: 10 }}>
-            Observed checks: {vm.completenessSignals.observedCount} · Findings: {vm.completenessSignals.findingsCount} ·
-            Artefacts: {vm.completenessSignals.artefactsCount}
+            Observed checks: {vm.completenessSignals.observedCount} · Findings: {vm.completenessSignals.findingsCount} · Artefacts:{" "}
+            {vm.completenessSignals.artefactsCount}
           </div>
 
           {vm.completenessSignals.hasCompletenessIssues ? (
@@ -451,58 +461,51 @@ function SummaryTab({ vm }: { vm: RunDetailViewModel }) {
       </div>
 
       {/* Headline estate sizing */}
-      <div id="headline-estate-sizing" className="card card-pad" style={{ marginBottom: 12 }}>
+      <div className="card card-pad" style={{ marginBottom: 12 }} id="headline-estate-sizing">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
           <h3 style={{ marginTop: 0, marginBottom: 6 }}>Headline estate sizing</h3>
           <span className="subtle">Best-known counts (observed checks)</span>
         </div>
 
         <div className="subtle" style={{ marginTop: 6 }}>
-          These numbers are derived from <strong>observed check</strong> payloads only (no silent assumptions). A value of{" "}
-          <code>—</code> means we haven’t yet emitted a check that includes that count in a known shape.
+          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we
+          haven’t yet emitted a check that includes that count in a known shape.
         </div>
 
         {vm.completenessSignals.hasCompletenessIssues ? (
           <div className="callout warn" style={{ marginTop: 10 }}>
             <strong>Inventory completeness warnings</strong>
             <div className="subtle" style={{ marginTop: 6 }}>
-              Some checks reported <code>permissionDenied</code>, <code>truncated</code>, or <code>incomplete</code>. Treat
-              counts as indicative and validate via Evidence where needed.
+              Some checks reported permissionDenied, truncated, or incomplete. Treat counts as indicative and validate via Evidence where needed.
             </div>
           </div>
         ) : null}
 
         {headlineMetrics.length === 0 ? (
           <div className="subtle" style={{ marginTop: 10 }}>
-            No observed checks recorded yet, so no headline sizing is available.
+            No observed checks recorded yet, so no environment overview is available.
           </div>
         ) : (
           <>
             <div className="env-grid" style={{ marginTop: 10 }}>
-              {headlineMetrics.map((m) => {
-                const needsFallbackHint = String(m.value ?? "").trim() === "—" && !m.hint;
-                const hint = needsFallbackHint ? "Not derived from observed data yet." : m.hint;
-
-                return (
-                  <div key={m.key} className={`env-card tone-${m.tone}`}>
-                    <div className="env-k">{m.label}</div>
-                    <div className="env-v">{m.value}</div>
-                    {hint ? <div className="env-h">{hint}</div> : null}
-                    {m.sources && m.sources.length > 0 ? (
-                      <div className="env-s">
-                        <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+              {headlineMetrics.map((m) => (
+                <div key={m.key} className={`env-card tone-${m.tone}`}>
+                  <div className="env-k">{m.label}</div>
+                  <div className="env-v">{m.value}</div>
+                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
+                  {m.sources && m.sources.length > 0 ? (
+                    <div className="env-s">
+                      <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
 
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
               <div className="subtle" style={{ marginTop: 8 }}>
-                Use the Evidence tab to view the observed check payload(s) listed under each card’s <em>sources</em>. If a
-                number looks surprising, confirm completeness signals and inspect the raw artefact outputs for that collector.
+                Use the Evidence tab to locate the observed check(s) listed in “sources”, then inspect the underlying payload and related artefacts.
               </div>
             </details>
           </>
@@ -534,9 +537,25 @@ function severityTone(s: string): "bad" | "warn" | "muted" {
   return "muted";
 }
 
+function norm(s: unknown): string {
+  return String(s ?? "").toLowerCase().trim();
+}
+
 function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: () => void }) {
+  const [query, setQuery] = useState("");
+
+  const findingsFiltered = useMemo(() => {
+    const q = norm(query);
+    if (!q) return vm.findings;
+
+    return vm.findings.filter((f) => {
+      const hay = [f.title, f.checkId, f.severity].map((x) => norm(x)).join(" | ");
+      return hay.includes(q);
+    });
+  }, [vm.findings, query]);
+
   const findingsSorted = useMemo(() => {
-    const xs = vm.findings.slice();
+    const xs = findingsFiltered.slice();
     xs.sort((a, b) => {
       const ra = severityRank(a.severity);
       const rb = severityRank(b.severity);
@@ -544,7 +563,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
       return String(a.title ?? "").localeCompare(String(b.title ?? ""));
     });
     return xs;
-  }, [vm.findings]);
+  }, [findingsFiltered]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -576,18 +595,81 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
     return vm.artefacts.filter((a) => a.jobId && evidenceJobIds.includes(a.jobId));
   }, [vm.artefacts, evidenceJobIds]);
 
+  // Evidence stats per finding (for list display)
+  const evidenceStatsByFindingId = useMemo(() => {
+    const stats = new Map<string, { observed: number; artefacts: number }>();
+
+    // Pre-index observed checks by checkId
+    const observedByCheckId = new Map<string, typeof vm.observedChecks>();
+    for (const o of vm.observedChecks) {
+      const k = String(o.checkId ?? "");
+      const cur = observedByCheckId.get(k) ?? [];
+      cur.push(o);
+      observedByCheckId.set(k, cur);
+    }
+
+    // Pre-index artefacts by jobId for quick lookup
+    const artefactsByJobId = new Map<string, number>();
+    for (const a of vm.artefacts) {
+      if (!a.jobId) continue;
+      artefactsByJobId.set(a.jobId, (artefactsByJobId.get(a.jobId) ?? 0) + 1);
+    }
+
+    for (const f of vm.findings) {
+      const obs = observedByCheckId.get(String(f.checkId ?? "")) ?? [];
+      const jobIds = new Set<string>();
+      for (const o of obs) if (o.jobId) jobIds.add(o.jobId);
+
+      let artefactCount = 0;
+      for (const id of jobIds) artefactCount += artefactsByJobId.get(id) ?? 0;
+
+      stats.set(f.id, { observed: obs.length, artefacts: artefactCount });
+    }
+
+    return stats;
+  }, [vm.findings, vm.observedChecks, vm.artefacts]);
+
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
           <p className="subtle" style={{ marginTop: 0 }}>
-            Findings are derived signals. Evidence is shown from observed checks (source of truth).
+            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and
+            related artefacts (raw outputs), best-effort.
           </p>
         </div>
-        <div className="subtle">
-          {vm.findings.length} finding{vm.findings.length === 1 ? "" : "s"} · {vm.observedChecks.length} observed check
-          {vm.observedChecks.length === 1 ? "" : "s"}
+
+        <div className="subtle" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span>
+            Showing {findingsSorted.length} of {vm.findings.length}
+          </span>
+
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter findings…"
+            style={{
+              width: 260,
+              maxWidth: "80vw",
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+              color: "var(--fg)"
+            }}
+          />
+
+          {query ? (
+            <button
+              type="button"
+              className="link subtle"
+              onClick={() => setQuery("")}
+              style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+            >
+              Clear
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -613,7 +695,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           <div style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
             <div style={{ fontWeight: 800 }}>All findings</div>
             <div className="subtle" style={{ marginTop: 4 }}>
-              Click an item to see details + evidence.
+              Select an item to see details and supporting evidence.
             </div>
           </div>
 
@@ -622,6 +704,10 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
               const active = f.id === selectedId;
               const tone = severityTone(f.severity);
               const sevBadge: BadgeModel = { label: String(f.severity), tone };
+
+              const st = evidenceStatsByFindingId.get(f.id) ?? { observed: 0, artefacts: 0 };
+              const evidenceLabel =
+                st.observed === 0 && st.artefacts === 0 ? "no evidence linked" : `${st.observed} observed · ${st.artefacts} artefacts`;
 
               return (
                 <button
@@ -643,8 +729,13 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                     <Badge badge={sevBadge} />
                     <div style={{ fontWeight: 800 }}>{f.title}</div>
                   </div>
+
                   <div className="subtle" style={{ marginTop: 6 }}>
                     check: <code>{f.checkId}</code>
+                  </div>
+
+                  <div className="subtle" style={{ marginTop: 6, color: active ? "var(--muted)" : "var(--muted)" }}>
+                    evidence: {evidenceLabel}
                   </div>
                 </button>
               );
@@ -652,7 +743,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
             {findingsSorted.length === 0 ? (
               <div style={{ padding: 12 }} className="subtle">
-                No findings were recorded for this run.
+                No findings match the current filter.
               </div>
             ) : null}
           </div>
@@ -669,8 +760,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         >
           {!selected ? (
             <div className="subtle">
-              Select a finding on the left to view details. If there are no findings, this run may still have observed checks
-              and artefacts to review under Evidence.
+              Select a finding on the left to view details. If there are no findings, this run may still have observed checks and
+              artefacts to review under Evidence.
             </div>
           ) : (
             <>
@@ -689,8 +780,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                 <div className="callout warn" style={{ marginTop: 12 }}>
                   <strong>Completeness signals present</strong>
                   <div className="subtle" style={{ marginTop: 6 }}>
-                    Findings are derived from observed checks. This run includes warnings (e.g. truncated, permissionDenied) that
-                    may affect interpretation.
+                    This run includes warnings (e.g. truncated, permissionDenied, incomplete) that may affect interpretation. Use the
+                    evidence below to confirm details.
                   </div>
                 </div>
               ) : null}
@@ -706,7 +797,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
               <div style={{ marginTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                  <div style={{ fontWeight: 800 }}>Evidence</div>
+                  <div style={{ fontWeight: 800 }}>Supporting evidence</div>
 
                   <button
                     type="button"
@@ -714,12 +805,12 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                     onClick={onGoEvidence}
                     style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
                   >
-                    View supporting evidence →
+                    View in Evidence tab →
                   </button>
                 </div>
 
                 <div className="subtle" style={{ marginTop: 6 }}>
-                  Evidence is shown from observed checks (source of truth) and related artefacts (raw outputs), best-effort.
+                  Evidence is best-effort: observed checks are linked by <code>checkId</code> match, and artefacts are linked by jobId where available.
                 </div>
 
                 <div style={{ marginTop: 10 }}>
@@ -727,8 +818,9 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceObserved.length === 0 ? (
                     <div className="subtle">
-                      No observed checks matched this finding’s <code>checkId</code>. This indicates the portal cannot currently
-                      link evidence for this finding without additional referencing.
+                      No observed checks matched this finding’s <code>checkId</code>. This usually means the finding was derived from
+                      a different reference or the portal cannot link evidence without additional referencing. Use the Evidence tab
+                      to search for the checkId or related collector activity.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -776,8 +868,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceArtefacts.length === 0 ? (
                     <div className="subtle">
-                      No related artefacts found for the matched observed checks (job-linked best-effort). See the Evidence tab
-                      for full artefact lists.
+                      No related artefacts found for the matched observed checks (job-linked best-effort). See the Evidence tab for full artefact lists.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -822,10 +913,6 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
       </div>
     </>
   );
-}
-
-function norm(s: unknown): string {
-  return String(s ?? "").toLowerCase().trim();
 }
 
 function EvidenceTab({ vm }: { vm: RunDetailViewModel }) {
