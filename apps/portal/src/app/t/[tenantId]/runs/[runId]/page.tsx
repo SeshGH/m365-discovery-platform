@@ -1,5 +1,4 @@
 // apps/portal/src/app/t/[tenantId]/runs/[runId]/page.tsx
-import Link from "next/link";
 import {
   getRun,
   listRunJobs,
@@ -10,9 +9,10 @@ import {
   type JobListItem,
   type ArtefactItem
 } from "@/lib/api";
+import { RunDetailShell, type RunDetailViewModel } from "./_components/RunDetailShell";
 
 /** -----------------------------
- *  Tiny runtime helpers
+ *  Tiny runtime helpers (server-only)
  *  ----------------------------*/
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -90,29 +90,11 @@ function formatBytes(bytes: number | null | undefined) {
   return `${gb.toFixed(2)} GB`;
 }
 
-type BadgeTone = "ok" | "warn" | "bad" | "muted";
-type BadgeModel = { label: string; tone: BadgeTone };
-
-function Badge({ badge }: { badge: BadgeModel }) {
-  const cls =
-    badge.tone === "ok"
-      ? "badge ok"
-      : badge.tone === "warn"
-        ? "badge warn"
-        : badge.tone === "bad"
-          ? "badge bad"
-          : "badge";
-  return <span className={cls}>{badge.label}</span>;
-}
-
 /** -----------------------------
- *  Completeness signals
+ *  Completeness signals (derived from Observed Checks)
  *  ----------------------------*/
 
 function ocPermissionDeniedList(data: unknown): string[] {
-  // supports either:
-  // - data.permissionDenied: string[]
-  // - data.completeness.permissionDenied: string[]
   const direct = readStringArray(data, "permissionDenied");
   const nested = readStringArray(getPath(data, "completeness"), "permissionDenied");
   return uniq([...direct, ...nested]);
@@ -126,7 +108,7 @@ function ocIsIncomplete(data: unknown): boolean {
   return readBool(data, "isComplete") === false || readBool(getPath(data, "completeness"), "isComplete") === false;
 }
 
-function badgeForObservedChecks(observed: ObservedCheckItem[]): BadgeModel {
+function badgeForObservedChecks(observed: ObservedCheckItem[]): RunDetailViewModel["completenessBadge"] {
   let sawPermissionDenied = false;
   let sawTruncated = false;
   let sawIncomplete = false;
@@ -203,7 +185,7 @@ function summarizeJobs(jobs: JobListItem[]): JobSummary {
 function phaseForRun(
   run: { status: string; startedAt: string | null; endedAt: string | null },
   jobs: JobListItem[]
-): BadgeModel {
+): RunDetailViewModel["phaseBadge"] {
   const status = String(run.status ?? "").toLowerCase();
   const summary = summarizeJobs(jobs);
 
@@ -219,8 +201,17 @@ function phaseForRun(
   return { label: "phase: queued", tone: "muted" };
 }
 
+function statusBadgeForRunStatus(statusRaw: string | null | undefined): RunDetailViewModel["runStatusBadge"] {
+  const s = String(statusRaw ?? "").toLowerCase();
+  if (s === "succeeded") return { label: "succeeded", tone: "ok" };
+  if (s === "failed") return { label: "failed", tone: "bad" };
+  if (s === "running") return { label: "running", tone: "warn" };
+  if (s === "queued") return { label: "queued", tone: "muted" };
+  return { label: s || "unknown", tone: "muted" };
+}
+
 /** -----------------------------
- *  Observed checks: table helpers
+ *  Observed checks view helpers
  *  ----------------------------*/
 
 function observedRowSignals(o: ObservedCheckItem): string[] {
@@ -270,20 +261,7 @@ function buildArtefactLists(all: ArtefactRow[]) {
 }
 
 /** -----------------------------
- *  Visual helpers (A: hierarchy)
- *  ----------------------------*/
-
-function statusBadgeForRunStatus(statusRaw: string | null | undefined): BadgeModel {
-  const s = String(statusRaw ?? "").toLowerCase();
-  if (s === "succeeded") return { label: "succeeded", tone: "ok" };
-  if (s === "failed") return { label: "failed", tone: "bad" };
-  if (s === "running") return { label: "running", tone: "warn" };
-  if (s === "queued") return { label: "queued", tone: "muted" };
-  return { label: s || "unknown", tone: "muted" };
-}
-
-/** -----------------------------
- *  D-1/D-2: Environment overview (derived from Observed Checks)
+ *  Environment overview (derived from Observed Checks; best effort)
  *  ----------------------------*/
 
 type EnvMetricTone = "ok" | "warn" | "bad" | "muted";
@@ -294,7 +272,7 @@ type EnvMetric = {
   value: string;
   tone: EnvMetricTone;
   hint?: string;
-  sources?: string[]; // checkIds/collectorIds that contributed
+  sources?: string[];
 };
 
 function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
@@ -317,34 +295,9 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     return undefined;
   };
 
-  const pathsUsers = [
-    "counts.users",
-    "count.users",
-    "summary.users",
-    "summary.counts.users",
-    "stats.users",
-    "totalUsers",
-    "total",
-    "value"
-  ];
-  const pathsGroups = [
-    "counts.groups",
-    "summary.groups",
-    "summary.counts.groups",
-    "stats.groups",
-    "totalGroups",
-    "value"
-  ];
-  const pathsApps = [
-    "counts.enterpriseApps",
-    "counts.apps",
-    "summary.enterpriseApps",
-    "summary.apps",
-    "summary.counts.apps",
-    "stats.apps",
-    "totalApps",
-    "value"
-  ];
+  const pathsUsers = ["counts.users", "count.users", "summary.users", "summary.counts.users", "stats.users", "totalUsers", "total", "value"];
+  const pathsGroups = ["counts.groups", "summary.groups", "summary.counts.groups", "stats.groups", "totalGroups", "value"];
+  const pathsApps = ["counts.enterpriseApps", "counts.apps", "summary.enterpriseApps", "summary.apps", "summary.counts.apps", "stats.apps", "totalApps", "value"];
   const pathsCA = [
     "counts.conditionalAccessPolicies",
     "counts.caPolicies",
@@ -355,37 +308,22 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     "totalPolicies",
     "value"
   ];
-  const pathsMailboxes = [
-    "counts.mailboxes",
-    "summary.mailboxes",
-    "summary.counts.mailboxes",
-    "stats.mailboxes",
-    "totalMailboxes",
-    "value"
-  ];
+  const pathsMailboxes = ["counts.mailboxes", "summary.mailboxes", "summary.counts.mailboxes", "stats.mailboxes", "totalMailboxes", "value"];
 
   const mUsers = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("entra") &&
-    (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
+    String(o.checkId).includes("entra") && (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
 
   const mGroups = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("entra") &&
-    (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
+    String(o.checkId).includes("entra") && (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
 
   const mApps = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("enterprise") ||
-    String(o.collectorId).includes("enterpriseApps") ||
-    String(o.collectorId).includes("entra.enterpriseApps");
+    String(o.checkId).includes("enterprise") || String(o.collectorId).includes("enterpriseApps") || String(o.collectorId).includes("entra.enterpriseApps");
 
   const mCA = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("conditional") ||
-    String(o.collectorId).includes("conditionalAccess") ||
-    String(o.collectorId).includes("entra.conditionalAccess");
+    String(o.checkId).includes("conditional") || String(o.collectorId).includes("conditionalAccess") || String(o.collectorId).includes("entra.conditionalAccess");
 
   const mMail = (o: ObservedCheckItem) =>
-    String(o.checkId).includes("mailbox") ||
-    String(o.collectorId).includes("exchange") ||
-    String(o.collectorId).includes("exchange.mailboxes");
+    String(o.checkId).includes("mailbox") || String(o.collectorId).includes("exchange") || String(o.collectorId).includes("exchange.mailboxes");
 
   const users = findCount(mUsers, pathsUsers);
   const groups = findCount(mGroups, pathsGroups);
@@ -399,7 +337,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
   const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
 
-  // Always include "inventory meta" cards
   out.push({
     key: "collectors",
     label: "Collectors seen",
@@ -417,7 +354,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: []
   });
 
-  // Common “counts” cards (best-effort)
   out.push({
     key: "users",
     label: "Users",
@@ -463,9 +399,7 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: sourcesFor(mMail)
   });
 
-  // -------------------------
   // Exchange Online (Graph-only) – explicit cards from EXO_MAILBOXES_OBS_001
-  // -------------------------
   const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
   if (exo) {
     const d = exo.data;
@@ -485,7 +419,7 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     const isComplete = readBool(d, "isComplete");
     const permissionDenied = ocPermissionDeniedList(d);
 
-    const notesRaw = isRecord(d) && Array.isArray(d.notes) ? d.notes : [];
+    const notesRaw = isRecord(d) && Array.isArray((d as any).notes) ? (d as any).notes : [];
     const notes = Array.isArray(notesRaw)
       ? notesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : [];
@@ -547,11 +481,7 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   return out;
 }
 
-export default async function RunPage({
-  params
-}: {
-  params: Promise<{ tenantId: string; runId: string }>;
-}) {
+export default async function RunPage({ params }: { params: Promise<{ tenantId: string; runId: string }> }) {
   const { tenantId, runId } = await params;
 
   // All calls tenant-scoped via portal BFF (fail-closed)
@@ -563,8 +493,14 @@ export default async function RunPage({
     listRunFindings(tenantId, runId)
   ]);
 
-  const completeness = badgeForObservedChecks(observed);
+  const completenessBadge = badgeForObservedChecks(observed);
   const signals = extractSignals(observed);
+
+  const hasCompletenessIssues =
+    completenessBadge.tone !== "ok" ||
+    signals.permissionDenied.length > 0 ||
+    signals.truncatedChecks.length > 0 ||
+    signals.incompleteChecks.length > 0;
 
   const artefacts: ArtefactRow[] = (artefactsRaw as ArtefactItem[]).map((a) => ({
     id: a.id,
@@ -577,457 +513,98 @@ export default async function RunPage({
 
   const { reports, others } = buildArtefactLists(artefacts);
 
-  const phase = phaseForRun(
-    { status: run.status, startedAt: run.startedAt ?? null, endedAt: run.endedAt ?? null },
-    jobs
-  );
-
+  const phaseBadge = phaseForRun({ status: run.status, startedAt: run.startedAt ?? null, endedAt: run.endedAt ?? null }, jobs);
   const jobSummary = summarizeJobs(jobs);
-
-  const hasCompletenessIssues =
-    completeness.tone !== "ok" ||
-    signals.permissionDenied.length > 0 ||
-    signals.truncatedChecks.length > 0 ||
-    signals.incompleteChecks.length > 0;
+  const runStatusBadge = statusBadgeForRunStatus(run.status);
 
   // Oldest -> newest
   const observedSorted = observed.slice().sort((a, b) => (a.observedAt ?? "").localeCompare(b.observedAt ?? ""));
 
-  const runStatusBadge = statusBadgeForRunStatus(run.status);
-
   const env = buildEnvironmentOverview(observed);
 
-  return (
-    <main>
-      <p style={{ margin: "10px 0 0 0" }}>
-        <Link className="link" href={`/t/${tenantId}`}>
-          ← Back to tenant
-        </Link>
-      </p>
+  const vm: RunDetailViewModel = {
+    tenantId,
+    runId,
 
-      <h2 style={{ marginBottom: 8 }}>Run</h2>
+    run: {
+      id: run.id,
+      status: run.status,
+      dataProfile: run.dataProfile,
+      triggeredBy: run.triggeredBy ?? null,
+      createdAt: run.createdAt ?? null,
+      startedAt: run.startedAt ?? null,
+      endedAt: run.endedAt ?? null,
+      counts: {
+        jobs: run.counts.jobs,
+        findings: run.counts.findings,
+        artefacts: run.counts.artefacts
+      },
+      modulesEnabledDebug: safeString(run.modulesEnabled)
+    },
 
-      {/* A: HERO STRIP (hierarchy + scannability) */}
-      <div className="hero">
-        <div className="hero-top">
-          <div className="hero-left">
-            <div className="hero-title">
-              <span className="subtle">Run ID</span>{" "}
-              <span className="hero-code">
-                <code>{run.id}</code>
-              </span>
-            </div>
+    runStatusBadge,
+    phaseBadge,
+    completenessBadge,
 
-            <div className="hero-badges">
-              <Badge badge={runStatusBadge} />
-              <Badge badge={phase} />
-              <Badge badge={completeness} />
-              {hasCompletenessIssues ? (
-                <span className="subtle" style={{ marginLeft: 6 }}>
-                  completeness signals present
-                </span>
-              ) : (
-                <span className="subtle" style={{ marginLeft: 6 }}>
-                  no completeness warnings
-                </span>
-              )}
-            </div>
-          </div>
+    jobSummary,
 
-          <div className="hero-right">
-            <div className="metric">
-              <div className="metric-k">Jobs</div>
-              <div className="metric-v">{run.counts.jobs}</div>
-            </div>
-            <div className="metric">
-              <div className="metric-k">Findings</div>
-              <div className="metric-v">{run.counts.findings}</div>
-            </div>
-            <div className="metric">
-              <div className="metric-k">Artefacts</div>
-              <div className="metric-v">{run.counts.artefacts}</div>
-            </div>
-          </div>
-        </div>
+    completenessSignals: {
+      hasCompletenessIssues,
+      permissionDenied: signals.permissionDenied,
+      truncatedChecks: signals.truncatedChecks,
+      incompleteChecks: signals.incompleteChecks,
+      observedCount: observed.length,
+      findingsCount: findings.length,
+      artefactsCount: artefacts.length
+    },
 
-        <div className="hero-sub">
-          <div className="hero-sub-item">
-            <span className="subtle">Profile</span> <strong>{run.dataProfile}</strong>
-          </div>
-          <div className="hero-sub-item">
-            <span className="subtle">Triggered</span> <span>{run.triggeredBy ?? "—"}</span>
-          </div>
-          <div className="hero-sub-item">
-            <span className="subtle">Created</span> <span>{smallTime(run.createdAt)}</span>
-          </div>
-          <div className="hero-sub-item">
-            <span className="subtle">Started</span> <span>{smallTime(run.startedAt)}</span>
-          </div>
-          <div className="hero-sub-item">
-            <span className="subtle">Ended</span> <span>{smallTime(run.endedAt)}</span>
-          </div>
-        </div>
+    environmentOverview: env,
 
-        <div className="hero-foot subtle">
-          Jobs: q {jobSummary.queued} · r {jobSummary.running} · ok {jobSummary.succeeded} · fail {jobSummary.failed}
-          {jobSummary.other > 0 ? ` · other ${jobSummary.other}` : ""}
-        </div>
-      </div>
+    observedChecks: observedSorted.map((o) => ({
+      id: o.id,
+      observedAt: o.observedAt ?? null,
+      checkId: o.checkId,
+      collectorId: o.collectorId,
+      jobId: o.jobId ?? null,
+      signals: observedRowSignals(o),
+      viewHref: `/t/${tenantId}/runs/${runId}/observed/${o.id}`
+    })),
 
-      <div className="grid-2" style={{ marginBottom: 12, marginTop: 12 }}>
-        <div className="card card-pad">
-          <h3 style={{ marginTop: 0 }}>Run details</h3>
-          <div className="kv">
-            <div className="k">Tenant</div>
-            <div className="v">
-              <code>{tenantId}</code>
-            </div>
+    jobs: jobs.map((j) => ({
+      id: j.id,
+      collectorId: j.collectorId,
+      status: j.status,
+      attempts: j.attempts,
+      lastError: j.lastError ?? null
+    })),
 
-            <div className="k">Run</div>
-            <div className="v">
-              <code>{runId}</code>
-            </div>
+    reports: reports.map((a) => ({
+      id: a.id,
+      filename: filenameFromKey(a.key),
+      key: a.key,
+      type: a.type,
+      sizeLabel: formatBytes(a.sizeBytes),
+      downloadHref: `/api/artefacts/${a.id}/download`
+    })),
 
-            <div className="k">Status</div>
-            <div className="v">
-              <strong>{run.status}</strong>{" "}
-              <span style={{ marginLeft: 8 }}>
-                <Badge badge={phase} />
-              </span>
-            </div>
+    artefacts: others.map((a) => ({
+      id: a.id,
+      filename: filenameFromKey(a.key),
+      key: a.key,
+      type: a.type,
+      jobId: a.jobId,
+      sizeLabel: formatBytes(a.sizeBytes),
+      downloadHref: `/api/artefacts/${a.id}/download`
+    })),
 
-            <div className="k">Counts</div>
-            <div className="v">
-              jobs {run.counts.jobs} · findings {run.counts.findings} · artefacts {run.counts.artefacts}
-            </div>
-          </div>
-        </div>
+    findings: findings.map((f) => ({
+      id: f.id,
+      severity: f.severity,
+      checkId: f.checkId,
+      title: f.title,
+      recommendation: f.recommendation ?? null
+    }))
+  };
 
-        <div className="card card-pad">
-          <h3 style={{ marginTop: 0 }}>Completeness</h3>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Badge badge={completeness} />
-            <span className="subtle">Derived from observed checks (no silent assumptions).</span>
-          </div>
-
-          <div className="subtle" style={{ marginTop: 10 }}>
-            Observed checks: {observed.length} · Findings: {findings.length} · Artefacts: {artefacts.length}
-          </div>
-
-          {hasCompletenessIssues ? (
-            <div style={{ marginTop: 10, fontSize: 13 }}>
-              {signals.permissionDenied.length > 0 ? (
-                <div style={{ marginBottom: 6 }}>
-                  <strong>Permission denied:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.permissionDenied.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.truncatedChecks.length > 0 ? (
-                <div style={{ marginBottom: 6 }}>
-                  <strong>Truncated checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.truncatedChecks.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.incompleteChecks.length > 0 ? (
-                <div>
-                  <strong>Incomplete checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{signals.incompleteChecks.join(", ")}</span>
-                </div>
-              ) : null}
-
-              {signals.permissionDenied.length === 0 &&
-              signals.truncatedChecks.length === 0 &&
-              signals.incompleteChecks.length === 0 ? (
-                <div style={{ color: "var(--muted)" }}>
-                  Completeness warning present but no explicit details found in observed data.
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="subtle" style={{ marginTop: 10 }}>
-              No completeness warnings detected in observed checks.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* D-1 / D-2: Environment overview (derived from observed checks) */}
-      <div className="card card-pad" style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-          <h3 style={{ marginTop: 0, marginBottom: 6 }}>Environment overview</h3>
-          <span className="subtle">Derived from observed checks (best effort)</span>
-        </div>
-
-        {env.length === 0 ? (
-          <div className="subtle">No observed checks recorded yet, so no environment overview is available.</div>
-        ) : (
-          <>
-            <div className="env-grid" style={{ marginTop: 8 }}>
-              {env.map((m) => (
-                <div key={m.key} className={`env-card tone-${m.tone}`}>
-                  <div className="env-k">{m.label}</div>
-                  <div className="env-v">{m.value}</div>
-                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
-                  {m.sources && m.sources.length > 0 ? (
-                    <div className="env-s">
-                      <span className="subtle">sources:</span>{" "}
-                      <span className="muted2">{m.sources.join(", ")}</span>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-
-            <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: "pointer" }}>What is this?</summary>
-              <div className="subtle" style={{ marginTop: 8 }}>
-                These numbers are only shown when they can be derived from observed check payloads. If a value is “—”, it
-                means we haven’t yet emitted a check that includes that count in a known shape.
-              </div>
-            </details>
-          </>
-        )}
-      </div>
-
-      <h3>Observed checks</h3>
-      <p className="subtle">Source of truth for posture + completeness signals. Findings are derived from these checks.</p>
-
-      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
-        <table className="table table-scan table-oc">
-          <thead>
-            <tr>
-              <th>Observed</th>
-              <th>Check</th>
-              <th>Collector</th>
-              <th>Signals</th>
-              <th>Data</th>
-            </tr>
-          </thead>
-          <tbody>
-            {observedSorted.map((o) => {
-              const sigs = observedRowSignals(o);
-
-              return (
-                <tr key={o.id}>
-                  <td style={{ width: 170 }}>
-                    <div style={{ color: "var(--muted)" }}>{smallTime(o.observedAt)}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 700 }}>
-                      <code>{o.checkId}</code>
-                    </div>
-                    <div className="meta" style={{ fontSize: 12, color: "var(--muted)" }}>
-                      id: <code>{o.id}</code>
-                      {o.jobId ? (
-                        <>
-                          {" "}
-                          · job: <code>{o.jobId}</code>
-                        </>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td style={{ fontSize: 12 }}>
-                    <code>{o.collectorId}</code>
-                  </td>
-                  <td style={{ fontSize: 12, color: "var(--muted)" }}>{sigs.length > 0 ? sigs.join(", ") : "—"}</td>
-                  <td style={{ fontSize: 12 }}>
-                    <Link className="link link-action" href={`/t/${tenantId}/runs/${runId}/observed/${o.id}`}>
-                      View
-                    </Link>
-                  </td>
-                </tr>
-              );
-            })}
-            {observed.length === 0 ? (
-              <tr>
-                <td colSpan={5} style={{ color: "var(--muted)" }}>
-                  No observed checks recorded for this run.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <h3>Reports</h3>
-      <p className="subtle">
-        Derived outputs (not sources of truth). Known: <code>run-summary.xlsx</code>, <code>run-summary.csv</code>.
-      </p>
-
-      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
-        <table className="table table-scan">
-          <thead>
-            <tr>
-              <th>Report</th>
-              <th>Type</th>
-              <th>Size</th>
-              <th>Download</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map((a) => {
-              const filename = filenameFromKey(a.key);
-              return (
-                <tr key={a.id}>
-                  <td>
-                    <div style={{ fontWeight: 700 }}>{filename}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                      <code>{a.key}</code>
-                    </div>
-                  </td>
-                  <td>{a.type}</td>
-                  <td>{formatBytes(a.sizeBytes)}</td>
-                  <td>
-                    <a className="link link-action" href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
-                      Download
-                    </a>
-                  </td>
-                </tr>
-              );
-            })}
-            {reports.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ color: "var(--muted)" }}>
-                  No report artefacts found for this run.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <h3>Jobs</h3>
-      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
-        <table className="table table-scan">
-          <thead>
-            <tr>
-              <th>Collector</th>
-              <th>Status</th>
-              <th>Attempts</th>
-              <th>Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((j) => (
-              <tr key={j.id}>
-                <td>
-                  <div style={{ fontWeight: 700 }}>{j.collectorId}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    <code>{j.id}</code>
-                  </div>
-                </td>
-                <td>{j.status}</td>
-                <td>{j.attempts}</td>
-                <td style={{ fontSize: 12 }}>
-                  {j.lastError ? (
-                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
-                  ) : (
-                    <span style={{ color: "var(--muted)" }}>—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {jobs.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ color: "var(--muted)" }}>
-                  No jobs found for this run.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <h3>Artefacts</h3>
-      <p className="subtle">Raw artefacts (sources of truth). Reports are shown above.</p>
-
-      <div className="card" style={{ overflow: "hidden", marginBottom: 12 }}>
-        <table className="table table-scan">
-          <thead>
-            <tr>
-              <th>Filename</th>
-              <th>Type</th>
-              <th>Size</th>
-              <th>Download</th>
-            </tr>
-          </thead>
-          <tbody>
-            {others.map((a) => {
-              const filename = filenameFromKey(a.key);
-              return (
-                <tr key={a.id}>
-                  <td>
-                    <div style={{ fontWeight: 700 }}>{filename}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                      job: <code>{a.jobId ?? "—"}</code>
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--muted2)" }}>
-                      <code>{a.key}</code>
-                    </div>
-                  </td>
-                  <td>{a.type}</td>
-                  <td>{formatBytes(a.sizeBytes)}</td>
-                  <td>
-                    <a className="link link-action" href={`/api/artefacts/${a.id}/download`} target="_blank" rel="noreferrer">
-                      Download
-                    </a>
-                  </td>
-                </tr>
-              );
-            })}
-            {others.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ color: "var(--muted)" }}>
-                  No non-report artefacts recorded yet for this run.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <h3>Findings</h3>
-      <p className="subtle">Derived view (not a source of truth). Use observed checks above to understand completeness context.</p>
-
-      <div className="card" style={{ overflow: "hidden" }}>
-        <table className="table table-scan">
-          <thead>
-            <tr>
-              <th>Severity</th>
-              <th>Check</th>
-              <th>Title</th>
-              <th>Recommendation</th>
-            </tr>
-          </thead>
-          <tbody>
-            {findings.map((f) => (
-              <tr key={f.id}>
-                <td>{f.severity}</td>
-                <td>
-                  <code>{f.checkId}</code>
-                </td>
-                <td>{f.title}</td>
-                <td style={{ fontSize: 12, color: "var(--muted)" }}>{f.recommendation ?? "—"}</td>
-              </tr>
-            ))}
-            {findings.length === 0 ? (
-              <tr>
-                <td colSpan={4} style={{ color: "var(--muted)" }}>
-                  No findings recorded for this run.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <details style={{ marginTop: 14 }}>
-        <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Debug: modulesEnabled</summary>
-        <pre className="pre">{safeString(run.modulesEnabled)}</pre>
-      </details>
-    </main>
-  );
+  return <RunDetailShell vm={vm} />;
 }
