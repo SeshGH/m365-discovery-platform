@@ -64,11 +64,6 @@ function uniq(xs: string[]) {
   return Array.from(new Set(xs)).filter(Boolean);
 }
 
-function smallTime(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return iso;
-}
-
 function safeString(v: unknown): string {
   if (typeof v === "string") return v;
   try {
@@ -329,10 +324,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
   const groups = findCount(mGroups, pathsGroups);
   const apps = findCount(mApps, pathsApps);
   const ca = findCount(mCA, pathsCA);
-  const mailboxesHeuristic = findCount(mMail, pathsMailboxes);
-
-  const anyPermissionDenied = observed.some((o) => ocPermissionDeniedList(o.data).length > 0);
-  const anyTruncated = observed.some((o) => ocIsTruncated(o.data));
 
   const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
   const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
@@ -390,15 +381,6 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
     sources: sourcesFor(mCA)
   });
 
-  out.push({
-    key: "mailboxes",
-    label: "Mailboxes",
-    value: mailboxesHeuristic === undefined ? "—" : mailboxesHeuristic.toLocaleString(),
-    tone: mailboxesHeuristic === undefined ? "muted" : "ok",
-    hint: mailboxesHeuristic === undefined ? "Not derived from observed data yet" : undefined,
-    sources: sourcesFor(mMail)
-  });
-
   // Exchange Online (Graph-only) – explicit cards from EXO_MAILBOXES_OBS_001
   const exo = observed.find((x) => x.checkId === "EXO_MAILBOXES_OBS_001");
   if (exo) {
@@ -435,35 +417,48 @@ function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetric[] {
 
     const exoSources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 
-    if (totalMailboxes !== null || near50 !== null || over50 !== null) {
-      out.push({
-        key: "exo_mailboxes_total",
-        label: "EXO mailboxes",
-        value: totalMailboxes === null ? "—" : totalMailboxes.toLocaleString(),
-        tone: exoTone,
-        hint: exoHint,
-        sources: exoSources
-      });
+    out.push({
+      key: "exo_mailboxes_total",
+      label: "EXO mailboxes",
+      value: totalMailboxes === null ? "—" : totalMailboxes.toLocaleString(),
+      tone: exoTone,
+      hint: exoHint,
+      sources: exoSources
+    });
 
-      out.push({
-        key: "exo_mailboxes_near50",
-        label: "EXO near 50GB",
-        value: near50 === null ? "—" : near50.toLocaleString(),
-        tone: near50 !== null && near50 > 0 ? "warn" : exoTone,
-        hint: "Mailboxes in the 40–50GB range (licensing threshold watchlist).",
-        sources: exoSources
-      });
+    out.push({
+      key: "exo_mailboxes_near50",
+      label: "EXO near 50GB",
+      value: near50 === null ? "—" : near50.toLocaleString(),
+      tone: near50 !== null && near50 > 0 ? "warn" : exoTone,
+      hint: "Mailboxes in the 40–50GB range (licensing threshold watchlist).",
+      sources: exoSources
+    });
 
-      out.push({
-        key: "exo_mailboxes_over50",
-        label: "EXO over 50GB",
-        value: over50 === null ? "—" : over50.toLocaleString(),
-        tone: over50 !== null && over50 > 0 ? "warn" : exoTone,
-        hint: "Mailboxes above 50GB (often require EXO Plan 2 / E3/E5+).",
-        sources: exoSources
-      });
-    }
+    out.push({
+      key: "exo_mailboxes_over50",
+      label: "EXO over 50GB",
+      value: over50 === null ? "—" : over50.toLocaleString(),
+      tone: over50 !== null && over50 > 0 ? "warn" : exoTone,
+      hint: "Mailboxes above 50GB (often require EXO Plan 2 / E3/E5+).",
+      sources: exoSources
+    });
+  } else {
+    // Only include heuristic mailbox count if we do NOT have the explicit EXO check
+    const mailboxesHeuristic = findCount(mMail, pathsMailboxes);
+
+    out.push({
+      key: "mailboxes",
+      label: "Mailboxes",
+      value: mailboxesHeuristic === undefined ? "—" : mailboxesHeuristic.toLocaleString(),
+      tone: mailboxesHeuristic === undefined ? "muted" : "ok",
+      hint: mailboxesHeuristic === undefined ? "Not derived from observed data yet" : "Heuristic (non-EXO-specific) count",
+      sources: sourcesFor(mMail)
+    });
   }
+
+  const anyPermissionDenied = observed.some((o) => ocPermissionDeniedList(o.data).length > 0);
+  const anyTruncated = observed.some((o) => ocIsTruncated(o.data));
 
   out.push({
     key: "signals",
