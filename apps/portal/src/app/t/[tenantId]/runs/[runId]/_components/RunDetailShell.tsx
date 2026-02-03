@@ -169,6 +169,11 @@ function findMetricValue(metrics: RunDetailViewModel["environmentOverview"], key
   return m.value ?? null;
 }
 
+function firstSource(sources?: string[]): string {
+  if (!sources || sources.length === 0) return "";
+  return String(sources[0] ?? "").trim();
+}
+
 function EstateSizingNarrative({
   metrics,
   hasCompletenessIssues
@@ -227,7 +232,7 @@ function EstateSizingNarrative({
 export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   const [tab, setTab] = useState<TabKey>("summary");
 
-  // Evidence filter must be shell-owned so Next Actions can drive it.
+  // Evidence filter must be shell-owned so Next Actions (and metric cards) can drive it.
   const [evidenceQuery, setEvidenceQuery] = useState<string>("");
 
   const tabs = useMemo(
@@ -378,12 +383,27 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         />
       ) : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} /> : null}
-      {tab === "evidence" ? (
-        <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} />
-      ) : null}
+      {tab === "evidence" ? <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
   );
+}
+
+function severityRank(s: string): number {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "critical") return 0;
+  if (x === "high") return 1;
+  if (x === "medium") return 2;
+  if (x === "low") return 3;
+  if (x === "info" || x === "informational") return 4;
+  return 9;
+}
+
+function severityTone(s: string): "bad" | "warn" | "muted" {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "critical" || x === "high") return "bad";
+  if (x === "medium") return "warn";
+  return "muted";
 }
 
 function SummaryTab({
@@ -675,24 +695,57 @@ function SummaryTab({
         ) : (
           <>
             <div className="env-grid" style={{ marginTop: 10 }}>
-              {headlineMetrics.map((m) => (
-                <div key={m.key} className={`env-card tone-${m.tone}`}>
-                  <div className="env-k">{m.label}</div>
-                  <div className="env-v">{m.value}</div>
-                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
-                  {m.sources && m.sources.length > 0 ? (
-                    <div className="env-s">
-                      <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+              {headlineMetrics.map((m) => {
+                const src = firstSource(m.sources);
+                const canValidate = !isMissingValue(m.value) && src.length > 0;
+
+                return (
+                  <div key={m.key} className={`env-card tone-${m.tone}`}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                      <div className="env-k">{m.label}</div>
+
+                      {canValidate ? (
+                        <button
+                          type="button"
+                          className="link link-action"
+                          onClick={() => onGoEvidenceQuery(src)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 800
+                          }}
+                          title={`Filter Evidence by: ${src}`}
+                        >
+                          View evidence →
+                        </button>
+                      ) : (
+                        <span className="subtle" style={{ fontSize: 12 }}>
+                          {src ? "no value" : "no sources"}
+                        </span>
+                      )}
                     </div>
-                  ) : null}
-                </div>
-              ))}
+
+                    <div className="env-v">{m.value}</div>
+
+                    {m.hint ? <div className="env-h">{m.hint}</div> : null}
+
+                    {m.sources && m.sources.length > 0 ? (
+                      <div className="env-s">
+                        <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
 
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
               <div className="subtle" style={{ marginTop: 8 }}>
-                Use the Evidence tab to locate the observed check(s) listed in “sources”, then inspect the underlying payload and related artefacts.
+                Use “View evidence” on a metric card to jump to Evidence with a source-based filter applied. You can also manually search Evidence using the “sources” identifiers.
               </div>
             </details>
           </>
@@ -705,23 +758,6 @@ function SummaryTab({
       </details>
     </>
   );
-}
-
-function severityRank(s: string): number {
-  const x = String(s ?? "").toLowerCase();
-  if (x === "critical") return 0;
-  if (x === "high") return 1;
-  if (x === "medium") return 2;
-  if (x === "low") return 3;
-  if (x === "info" || x === "informational") return 4;
-  return 9;
-}
-
-function severityTone(s: string): "bad" | "warn" | "muted" {
-  const x = String(s ?? "").toLowerCase();
-  if (x === "critical" || x === "high") return "bad";
-  if (x === "medium") return "warn";
-  return "muted";
 }
 
 function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: (q?: string) => void }) {
@@ -1409,7 +1445,11 @@ function JobsTab({ vm }: { vm: RunDetailViewModel }) {
                 <td>{j.status}</td>
                 <td>{j.attempts}</td>
                 <td style={{ fontSize: 12 }}>
-                  {j.lastError ? <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span> : <span style={{ color: "var(--muted)" }}>—</span>}
+                  {j.lastError ? (
+                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
+                  ) : (
+                    <span style={{ color: "var(--muted)" }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
