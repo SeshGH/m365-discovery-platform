@@ -21,6 +21,14 @@ export type EnvMetric = {
   tone: MetricTone;
   hint?: string;
   sources?: string[];
+
+  /**
+   * Optional UX affordances:
+   * If present, UI can offer a "View evidence" CTA that pre-filters Evidence.
+   * Must remain collector-agnostic and purely string-based (no code refs in UI).
+   */
+  evidenceQuery?: string;
+  evidenceHint?: string;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -97,7 +105,21 @@ export function ocIsIncomplete(data: unknown): boolean {
 type MetricDefinition = {
   key: string;
   label: string;
-  derive: (observed: ObservedCheckItem[]) => { value?: string; tone?: MetricTone; hint?: string; sources?: string[] } | null;
+
+  // Optional: makes metric self-describing in UI ("View evidence" CTA)
+  evidenceQuery?: string;
+  evidenceHint?: string;
+
+  derive: (
+    observed: ObservedCheckItem[]
+  ) =>
+    | {
+        value?: string;
+        tone?: MetricTone;
+        hint?: string;
+        sources?: string[];
+      }
+    | null;
 };
 
 function sourcesFor(observed: ObservedCheckItem[], predicate: (o: ObservedCheckItem) => boolean): string[] {
@@ -108,11 +130,7 @@ function sourcesFor(observed: ObservedCheckItem[], predicate: (o: ObservedCheckI
   );
 }
 
-function findCount(
-  observed: ObservedCheckItem[],
-  match: (o: ObservedCheckItem) => boolean,
-  paths: string[]
-): number | undefined {
+function findCount(observed: ObservedCheckItem[], match: (o: ObservedCheckItem) => boolean, paths: string[]): number | undefined {
   for (const oc of observed) {
     if (!match(oc)) continue;
     const n = readNumberAtPath(oc.data, paths);
@@ -123,7 +141,16 @@ function findCount(
 
 const pathsUsers = ["counts.users", "count.users", "summary.users", "summary.counts.users", "stats.users", "totalUsers", "total", "value"];
 const pathsGroups = ["counts.groups", "summary.groups", "summary.counts.groups", "stats.groups", "totalGroups", "value"];
-const pathsApps = ["counts.enterpriseApps", "counts.apps", "summary.enterpriseApps", "summary.apps", "summary.counts.apps", "stats.apps", "totalApps", "value"];
+const pathsApps = [
+  "counts.enterpriseApps",
+  "counts.apps",
+  "summary.enterpriseApps",
+  "summary.apps",
+  "summary.counts.apps",
+  "stats.apps",
+  "totalApps",
+  "value"
+];
 const pathsCA = [
   "counts.conditionalAccessPolicies",
   "counts.caPolicies",
@@ -143,10 +170,14 @@ const mGroups = (o: ObservedCheckItem) =>
   String(o.checkId).includes("entra") && (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
 
 const mApps = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("enterprise") || String(o.collectorId).includes("enterpriseApps") || String(o.collectorId).includes("entra.enterpriseApps");
+  String(o.checkId).includes("enterprise") ||
+  String(o.collectorId).includes("enterpriseApps") ||
+  String(o.collectorId).includes("entra.enterpriseApps");
 
 const mCA = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("conditional") || String(o.collectorId).includes("conditionalAccess") || String(o.collectorId).includes("entra.conditionalAccess");
+  String(o.checkId).includes("conditional") ||
+  String(o.collectorId).includes("conditionalAccess") ||
+  String(o.collectorId).includes("entra.conditionalAccess");
 
 const mMail = (o: ObservedCheckItem) =>
   String(o.checkId).includes("mailbox") || String(o.collectorId).includes("exchange") || String(o.collectorId).includes("exchange.mailboxes");
@@ -161,6 +192,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "collectors",
     label: "Collectors seen",
+    evidenceQuery: "collector",
+    evidenceHint: "Shows observed checks grouped by collectorId.",
     derive: (observed) => {
       const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
       return {
@@ -174,6 +207,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "checks",
     label: "Observed checks",
+    evidenceQuery: "", // empty means "show all" (still useful for CTA)
+    evidenceHint: "Shows the observed-check timeline for this run.",
     derive: (observed) => {
       const checksSeen = uniq(observed.map((o) => String(o.checkId || "")).filter(Boolean));
       return {
@@ -186,6 +221,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "users",
     label: "Users",
+    evidenceQuery: "entra users",
+    evidenceHint: "Filter Evidence for Entra user inventory checks.",
     derive: (observed) => {
       const users = findCount(observed, mUsers, pathsUsers);
       return {
@@ -199,6 +236,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "groups",
     label: "Groups",
+    evidenceQuery: "entra groups",
+    evidenceHint: "Filter Evidence for Entra group inventory checks.",
     derive: (observed) => {
       const groups = findCount(observed, mGroups, pathsGroups);
       return {
@@ -212,6 +251,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "apps",
     label: "Enterprise apps",
+    evidenceQuery: "enterprise apps",
+    evidenceHint: "Filter Evidence for enterprise app inventory checks.",
     derive: (observed) => {
       const apps = findCount(observed, mApps, pathsApps);
       return {
@@ -225,6 +266,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "ca",
     label: "CA policies",
+    evidenceQuery: "conditional access",
+    evidenceHint: "Filter Evidence for Conditional Access policy inventory checks.",
     derive: (observed) => {
       const ca = findCount(observed, mCA, pathsCA);
       return {
@@ -240,6 +283,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "exo_mailboxes_total",
     label: "EXO mailboxes",
+    evidenceQuery: EXO_OBS_CHECK_ID,
+    evidenceHint: "Filter Evidence to the EXO mailbox usage observed check.",
     derive: (observed) => {
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (!exo) return null;
@@ -277,6 +322,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "exo_mailboxes_near50",
     label: "EXO near 50GB",
+    evidenceQuery: EXO_OBS_CHECK_ID,
+    evidenceHint: "Filter Evidence to the EXO mailbox usage observed check.",
     derive: (observed) => {
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (!exo) return null;
@@ -306,6 +353,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "exo_mailboxes_over50",
     label: "EXO over 50GB",
+    evidenceQuery: EXO_OBS_CHECK_ID,
+    evidenceHint: "Filter Evidence to the EXO mailbox usage observed check.",
     derive: (observed) => {
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (!exo) return null;
@@ -337,6 +386,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "mailboxes",
     label: "Mailboxes",
+    evidenceQuery: "mailbox exchange",
+    evidenceHint: "Filter Evidence for mailbox-related checks (heuristic).",
     derive: (observed) => {
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (exo) return null; // if EXO metrics exist, we don't show the heuristic card
@@ -356,6 +407,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "signals",
     label: "Completeness signals",
+    evidenceQuery: "permissionDenied truncated incomplete",
+    evidenceHint: "Filter Evidence for common completeness signals.",
     derive: (observed) => {
       const anyPermissionDenied = observed.some((o) => ocPermissionDeniedList(o.data).length > 0);
       const anyTruncated = observed.some((o) => ocIsTruncated(o.data));
@@ -386,13 +439,16 @@ export function buildEnvironmentOverview(observed: ObservedCheckItem[]): EnvMetr
   for (const def of metricRegistry) {
     const r = def.derive(observed);
     if (!r) continue;
+
     out.push({
       key: def.key,
       label: def.label,
       value: r.value ?? "—",
       tone: r.tone ?? "muted",
       hint: r.hint,
-      sources: r.sources
+      sources: r.sources,
+      evidenceQuery: def.evidenceQuery,
+      evidenceHint: def.evidenceHint
     });
   }
   return out;
