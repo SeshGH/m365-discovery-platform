@@ -21,26 +21,6 @@ import {
  *  Tiny runtime helpers (server-only)
  *  ----------------------------*/
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function getPath(obj: unknown, path: string): unknown {
-  const parts = path.split(".");
-  let cur: unknown = obj;
-  for (const p of parts) {
-    if (!isRecord(cur)) return undefined;
-    cur = cur[p];
-  }
-  return cur;
-}
-
-function readBool(obj: unknown, key: string): boolean | null {
-  if (!isRecord(obj)) return null;
-  const v = obj[key];
-  return typeof v === "boolean" ? v : null;
-}
-
 function uniq(xs: string[]) {
   return Array.from(new Set(xs)).filter(Boolean);
 }
@@ -114,9 +94,7 @@ function deriveConfidence(signals: { permissionDenied: string[]; truncatedChecks
     return {
       level: "low" as const,
       tone: "warn" as const,
-      reasons: [
-        `permissionDenied reported (${signals.permissionDenied.length})`
-      ]
+      reasons: [`permissionDenied reported (${signals.permissionDenied.length})`]
     };
   }
 
@@ -141,7 +119,7 @@ function buildNextActions(args: {
   signals: { permissionDenied: string[]; truncatedChecks: string[]; incompleteChecks: string[] };
   reportsCount: number;
 }) {
-  const { tenantId, runId, signals, reportsCount } = args;
+  const { signals, reportsCount } = args;
 
   const actions: RunDetailViewModel["nextActions"] = [];
 
