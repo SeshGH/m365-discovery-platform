@@ -1,5 +1,5 @@
 import type { Collector } from "./types";
-import { graphGetJsonWithClientCredentials, GraphHttpError } from "../lib/graph";
+import { graphGetJsonWithClientCredentials, GraphHttpError } from "./graph";
 
 function asNonEmptyString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length > 0 ? x.trim() : null;

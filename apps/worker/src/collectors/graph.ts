@@ -1,3 +1,4 @@
+// apps/worker/src/collectors/graph.ts
 import crypto from "node:crypto";
 
 type TokenResponse = {
@@ -13,8 +14,6 @@ function requireEnv(name: string): string {
 }
 
 function makeClientRequestId(): string {
-  // Helps correlate Graph-side logs/errors with our calls.
-  // Graph often echoes request ids in headers, but client-request-id is still useful.
   return crypto.randomUUID();
 }
 
@@ -25,7 +24,6 @@ function truncateForLogs(input: string, max = 2000): string {
 }
 
 function pickHeader(headers: Headers, name: string): string | undefined {
-  // Headers are case-insensitive, but fetch normalises access via .get().
   const v = headers.get(name);
   return v ?? undefined;
 }
@@ -33,21 +31,19 @@ function pickHeader(headers: Headers, name: string): string | undefined {
 function extractRequestIds(headers: Headers) {
   return {
     requestId: pickHeader(headers, "request-id") ?? pickHeader(headers, "x-ms-request-id"),
-    clientRequestId:
-      pickHeader(headers, "client-request-id") ?? pickHeader(headers, "x-ms-client-request-id"),
+    clientRequestId: pickHeader(headers, "client-request-id") ?? pickHeader(headers, "x-ms-client-request-id"),
     date: pickHeader(headers, "date")
   };
 }
 
 async function readErrorBody(res: Response): Promise<string> {
-  // Prefer text: Graph errors are often JSON but sometimes include HTML/plain text.
   const text = await res.text().catch(() => "");
   return truncateForLogs(text);
 }
 
 /**
- * Typed error that preserves the existing human-readable message
- * but also provides machine-readable fields for collectors to interpret.
+ * Typed error with machine-readable fields for collectors to interpret
+ * without fragile string matching.
  */
 export class GraphHttpError extends Error {
   public readonly status: number;
@@ -74,6 +70,15 @@ export class GraphHttpError extends Error {
   }
 }
 
+function buildUrl(pathOrUrl: string, base: string) {
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) return pathOrUrl;
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${base}${path}`;
+}
+
+/**
+ * Legacy collector helper (kept): token from env GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
+ */
 export async function getGraphAccessToken(params: { tenantId: string }): Promise<string> {
   const clientId = requireEnv("GRAPH_CLIENT_ID");
   const clientSecret = requireEnv("GRAPH_CLIENT_SECRET");
@@ -86,29 +91,27 @@ export async function getGraphAccessToken(params: { tenantId: string }): Promise
   body.set("grant_type", "client_credentials");
   body.set("scope", "https://graph.microsoft.com/.default");
 
-  const res = await fetch(
-    `https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/token`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "client-request-id": clientRequestId
-      },
-      body
-    }
-  );
+  const tokenUrl = `https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/token`;
+
+  const res = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "client-request-id": clientRequestId
+    },
+    body
+  });
 
   if (!res.ok) {
     const ids = extractRequestIds(res.headers);
     const text = await readErrorBody(res);
 
-    // Keep message format stable (matches previous behaviour)
     const msg = `[collectors] Failed to get Graph token (${res.status}) tenant=${params.tenantId} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
 
     throw new GraphHttpError({
       message: msg,
       status: res.status,
-      url: `https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/token`,
+      url: tokenUrl,
       requestId: ids.requestId,
       clientRequestId,
       bodyText: text
@@ -136,7 +139,6 @@ export async function graphGet<T>(token: string, url: string): Promise<T> {
     const ids = extractRequestIds(res.headers);
     const text = await readErrorBody(res);
 
-    // Keep message format stable (matches previous behaviour)
     const msg = `[collectors] Graph GET failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
 
     throw new GraphHttpError({
@@ -165,4 +167,111 @@ export async function graphGetAllPages<TItem>(token: string, url: string): Promi
   }
 
   return items;
+}
+
+/**
+ * Client-credentials helpers used by auth test and any future "raw graph" collectors.
+ * These mirror what was in apps/worker/src/lib/graph.ts (now being removed).
+ */
+export async function getClientCredentialsToken(params: {
+  tenantGuid: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<string> {
+  const clientRequestId = makeClientRequestId();
+
+  const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(params.tenantGuid)}/oauth2/v2.0/token`;
+
+  const body = new URLSearchParams();
+  body.set("client_id", params.clientId);
+  body.set("client_secret", params.clientSecret);
+  body.set("grant_type", "client_credentials");
+  body.set("scope", "https://graph.microsoft.com/.default");
+
+  const res = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "client-request-id": clientRequestId
+    },
+    body
+  });
+
+  const text = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    const ids = extractRequestIds(res.headers);
+    const msg = `[collectors] Token request failed (${res.status}) tenantGuid=${params.tenantGuid} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${truncateForLogs(text, 800)}`;
+
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url: tokenUrl,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: truncateForLogs(text, 800)
+    });
+  }
+
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`[collectors] Token response was not JSON: ${truncateForLogs(text, 800)}`);
+  }
+
+  const token = typeof json?.access_token === "string" ? (json.access_token as string) : null;
+  if (!token) {
+    throw new Error(`[collectors] Token response missing access_token: ${truncateForLogs(text, 800)}`);
+  }
+
+  return token;
+}
+
+export async function graphGetJsonWithClientCredentials<T>(params: {
+  tenantGuid: string;
+  clientId: string;
+  clientSecret: string;
+  path: string; // "/v1.0/organization?$select=id,displayName" OR absolute URL
+}): Promise<T> {
+  const token = await getClientCredentialsToken({
+    tenantGuid: params.tenantGuid,
+    clientId: params.clientId,
+    clientSecret: params.clientSecret
+  });
+
+  const url = buildUrl(params.path, "https://graph.microsoft.com");
+
+  const clientRequestId = makeClientRequestId();
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+      "client-request-id": clientRequestId
+    }
+  });
+
+  const text = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    const ids = extractRequestIds(res.headers);
+    const msg = `[collectors] Graph GET failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${truncateForLogs(text, 1200)}`;
+
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: truncateForLogs(text, 1200)
+    });
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`[collectors] Graph response was not JSON: ${truncateForLogs(text, 1200)}`);
+  }
 }
