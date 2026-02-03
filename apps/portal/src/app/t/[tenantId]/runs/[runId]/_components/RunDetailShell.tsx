@@ -64,6 +64,10 @@ export type RunDetailViewModel = {
     tone: "ok" | "warn" | "bad" | "muted";
     hint?: string;
     sources?: string[];
+
+    // Option A: registry-provided CTA metadata (string-only; UI just consumes)
+    evidenceQuery?: string; // NOTE: empty string is meaningful ("show all")
+    evidenceHint?: string;
   }>;
 
   observedChecks: Array<{
@@ -169,11 +173,6 @@ function findMetricValue(metrics: RunDetailViewModel["environmentOverview"], key
   return m.value ?? null;
 }
 
-function firstSource(sources?: string[]): string {
-  if (!sources || sources.length === 0) return "";
-  return String(sources[0] ?? "").trim();
-}
-
 function EstateSizingNarrative({
   metrics,
   hasCompletenessIssues
@@ -232,7 +231,7 @@ function EstateSizingNarrative({
 export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   const [tab, setTab] = useState<TabKey>("summary");
 
-  // Evidence filter must be shell-owned so Next Actions (and metric cards) can drive it.
+  // Evidence filter must be shell-owned so Next Actions can drive it.
   const [evidenceQuery, setEvidenceQuery] = useState<string>("");
 
   const tabs = useMemo(
@@ -383,27 +382,12 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         />
       ) : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} /> : null}
-      {tab === "evidence" ? <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} /> : null}
+      {tab === "evidence" ? (
+        <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} />
+      ) : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
   );
-}
-
-function severityRank(s: string): number {
-  const x = String(s ?? "").toLowerCase();
-  if (x === "critical") return 0;
-  if (x === "high") return 1;
-  if (x === "medium") return 2;
-  if (x === "low") return 3;
-  if (x === "info" || x === "informational") return 4;
-  return 9;
-}
-
-function severityTone(s: string): "bad" | "warn" | "muted" {
-  const x = String(s ?? "").toLowerCase();
-  if (x === "critical" || x === "high") return "bad";
-  if (x === "medium") return "warn";
-  return "muted";
 }
 
 function SummaryTab({
@@ -426,6 +410,8 @@ function SummaryTab({
   onAction: (a: RunDetailViewModel["nextActions"][number]) => void;
 }) {
   const headlineMetrics = useMemo(() => vm.environmentOverview.filter((m) => m.key !== "signals"), [vm.environmentOverview]);
+
+  const canCtaEvidence = (m: RunDetailViewModel["environmentOverview"][number]) => m.evidenceQuery !== undefined;
 
   return (
     <>
@@ -674,7 +660,8 @@ function SummaryTab({
         </div>
 
         <div className="subtle" style={{ marginTop: 6 }}>
-          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we haven’t yet emitted a check that includes that count in a known shape.
+          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we haven’t yet
+          emitted a check that includes that count in a known shape.
         </div>
 
         <EstateSizingNarrative metrics={headlineMetrics} hasCompletenessIssues={vm.completenessSignals.hasCompletenessIssues} />
@@ -683,7 +670,8 @@ function SummaryTab({
           <div className="callout warn" style={{ marginTop: 10 }}>
             <strong>Inventory completeness warnings</strong>
             <div className="subtle" style={{ marginTop: 6 }}>
-              Some checks reported permissionDenied, truncated, or incomplete. Treat counts as indicative and validate via Evidence where needed.
+              Some checks reported permissionDenied, truncated, or incomplete. Treat counts as indicative and validate via Evidence
+              where needed.
             </div>
           </div>
         ) : null}
@@ -695,57 +683,47 @@ function SummaryTab({
         ) : (
           <>
             <div className="env-grid" style={{ marginTop: 10 }}>
-              {headlineMetrics.map((m) => {
-                const src = firstSource(m.sources);
-                const canValidate = !isMissingValue(m.value) && src.length > 0;
+              {headlineMetrics.map((m) => (
+                <div key={m.key} className={`env-card tone-${m.tone}`}>
+                  <div className="env-k">{m.label}</div>
+                  <div className="env-v">{m.value}</div>
+                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
 
-                return (
-                  <div key={m.key} className={`env-card tone-${m.tone}`}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                      <div className="env-k">{m.label}</div>
-
-                      {canValidate ? (
-                        <button
-                          type="button"
-                          className="link link-action"
-                          onClick={() => onGoEvidenceQuery(src)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            padding: 0,
-                            cursor: "pointer",
-                            fontSize: 12,
-                            fontWeight: 800
-                          }}
-                          title={`Filter Evidence by: ${src}`}
-                        >
-                          View evidence →
-                        </button>
-                      ) : (
-                        <span className="subtle" style={{ fontSize: 12 }}>
-                          {src ? "no value" : "no sources"}
-                        </span>
-                      )}
+                  {m.sources && m.sources.length > 0 ? (
+                    <div className="env-s">
+                      <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
                     </div>
+                  ) : null}
 
-                    <div className="env-v">{m.value}</div>
-
-                    {m.hint ? <div className="env-h">{m.hint}</div> : null}
-
-                    {m.sources && m.sources.length > 0 ? (
-                      <div className="env-s">
-                        <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+                  {canCtaEvidence(m) ? (
+                    <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="link link-action"
+                        onClick={() => onGoEvidenceQuery(m.evidenceQuery ?? "")}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          fontWeight: 800
+                        }}
+                        title={m.evidenceHint ?? "View supporting observed checks in Evidence"}
+                      >
+                        View evidence →
+                      </button>
+                      {m.evidenceHint ? <span className="subtle">{m.evidenceHint}</span> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
 
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
               <div className="subtle" style={{ marginTop: 8 }}>
-                Use “View evidence” on a metric card to jump to Evidence with a source-based filter applied. You can also manually search Evidence using the “sources” identifiers.
+                Use the Evidence tab to locate the observed check(s) listed in “sources”, then inspect the underlying payload and
+                related artefacts.
               </div>
             </details>
           </>
@@ -758,6 +736,23 @@ function SummaryTab({
       </details>
     </>
   );
+}
+
+function severityRank(s: string): number {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "critical") return 0;
+  if (x === "high") return 1;
+  if (x === "medium") return 2;
+  if (x === "low") return 3;
+  if (x === "info" || x === "informational") return 4;
+  return 9;
+}
+
+function severityTone(s: string): "bad" | "warn" | "muted" {
+  const x = String(s ?? "").toLowerCase();
+  if (x === "critical" || x === "high") return "bad";
+  if (x === "medium") return "warn";
+  return "muted";
 }
 
 function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: (q?: string) => void }) {
@@ -848,7 +843,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
           <p className="subtle" style={{ marginTop: 0 }}>
-            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and related artefacts (raw outputs), best-effort.
+            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and related
+            artefacts (raw outputs), best-effort.
           </p>
         </div>
 
@@ -970,7 +966,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         >
           {!selected ? (
             <div className="subtle">
-              Select a finding on the left to view details. If there are no findings, this run may still have observed checks and artefacts to review under Evidence.
+              Select a finding on the left to view details. If there are no findings, this run may still have observed checks and
+              artefacts to review under Evidence.
             </div>
           ) : (
             <>
@@ -989,7 +986,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                 <div className="callout warn" style={{ marginTop: 12 }}>
                   <strong>Completeness signals present</strong>
                   <div className="subtle" style={{ marginTop: 6 }}>
-                    This run includes warnings (e.g. truncated, permissionDenied, incomplete) that may affect interpretation. Use the evidence below to confirm details.
+                    This run includes warnings (e.g. truncated, permissionDenied, incomplete) that may affect interpretation. Use the
+                    evidence below to confirm details.
                   </div>
                 </div>
               ) : null}
@@ -1018,7 +1016,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                 </div>
 
                 <div className="subtle" style={{ marginTop: 6 }}>
-                  Evidence is best-effort: observed checks are linked by <code>checkId</code> match, and artefacts are linked by jobId where available.
+                  Evidence is best-effort: observed checks are linked by <code>checkId</code> match, and artefacts are linked by jobId
+                  where available.
                 </div>
 
                 <div style={{ marginTop: 10 }}>
@@ -1026,7 +1025,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceObserved.length === 0 ? (
                     <div className="subtle">
-                      No observed checks matched this finding’s <code>checkId</code>. Use Evidence to search for the checkId or related collector activity.
+                      No observed checks matched this finding’s <code>checkId</code>. Use Evidence to search for the checkId or related
+                      collector activity.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -1074,7 +1074,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceArtefacts.length === 0 ? (
                     <div className="subtle">
-                      No related artefacts found for the matched observed checks (job-linked best-effort). See Evidence for full artefact lists.
+                      No related artefacts found for the matched observed checks (job-linked best-effort). See Evidence for full
+                      artefact lists.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
