@@ -10,6 +10,7 @@ import {
   type ArtefactItem
 } from "@/lib/api";
 import { ocIsIncomplete, ocIsTruncated, ocPermissionDeniedList } from "@/lib/run-metrics";
+import { ReadonlyCopyField } from "./_components/ReadonlyCopyField";
 
 type BadgeTone = "ok" | "warn" | "bad" | "muted";
 type BadgeModel = { label: string; tone: BadgeTone };
@@ -163,49 +164,6 @@ function pickTopKpis(data: unknown): Array<{ label: string; value: string }> {
     .filter(([, v]) => typeof v === "number")
     .slice(0, 6)
     .map(([k, v]) => ({ label: k, value: String(v) }));
-}
-
-function ReadonlyCopyField({
-  label,
-  value,
-  hint
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  // Server-safe "copy affordance": click-to-select + user copy.
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div className="subtle" style={{ fontSize: 12, fontWeight: 700 }}>
-        {label}
-      </div>
-      <input
-        readOnly
-        value={value}
-        onFocus={(e) => e.currentTarget.select()}
-        style={{
-          width: "100%",
-          padding: "8px 10px",
-          borderRadius: 10,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          color: "var(--fg)",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-          fontSize: 12
-        }}
-      />
-      {hint ? (
-        <div className="subtle" style={{ fontSize: 12 }}>
-          {hint}
-        </div>
-      ) : (
-        <div className="subtle" style={{ fontSize: 12 }}>
-          Tip: click the field, then Ctrl+C.
-        </div>
-      )}
-    </div>
-  );
 }
 
 export default async function ObservedCheckPage({

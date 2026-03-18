@@ -80,6 +80,15 @@ function uniq(xs: string[]) {
   return Array.from(new Set(xs)).filter(Boolean);
 }
 
+function formatInt(n: number) {
+  return n.toLocaleString();
+}
+
+function formatGb(n: number) {
+  const rounded = Math.round(n * 100) / 100;
+  return rounded.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
 /** -----------------------------
  *  Completeness signals (shared)
  *  ----------------------------*/
@@ -91,11 +100,15 @@ export function ocPermissionDeniedList(data: unknown): string[] {
 }
 
 export function ocIsTruncated(data: unknown): boolean {
-  return readBool(data, "truncated") === true || readBool(getPath(data, "completeness"), "truncated") === true;
+  return (
+    readBool(data, "truncated") === true || readBool(getPath(data, "completeness"), "truncated") === true
+  );
 }
 
 export function ocIsIncomplete(data: unknown): boolean {
-  return readBool(data, "isComplete") === false || readBool(getPath(data, "completeness"), "isComplete") === false;
+  return (
+    readBool(data, "isComplete") === false || readBool(getPath(data, "completeness"), "isComplete") === false
+  );
 }
 
 /** -----------------------------
@@ -130,7 +143,11 @@ function sourcesFor(observed: ObservedCheckItem[], predicate: (o: ObservedCheckI
   );
 }
 
-function findCount(observed: ObservedCheckItem[], match: (o: ObservedCheckItem) => boolean, paths: string[]): number | undefined {
+function findCount(
+  observed: ObservedCheckItem[],
+  match: (o: ObservedCheckItem) => boolean,
+  paths: string[]
+): number | undefined {
   for (const oc of observed) {
     if (!match(oc)) continue;
     const n = readNumberAtPath(oc.data, paths);
@@ -163,11 +180,17 @@ const pathsCA = [
 ];
 const pathsMailboxes = ["counts.mailboxes", "summary.mailboxes", "summary.counts.mailboxes", "stats.mailboxes", "totalMailboxes", "value"];
 
+// SharePoint (SPO) — storage report emits nested fields under data.storage.*
+const pathsSPO_SitesInReport = ["storage.sitesInReport"];
+const pathsSPO_StorageUsedGbTotal = ["storage.storageUsedGbTotal"];
+
 const mUsers = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("entra") && (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
+  String(o.checkId).includes("entra") &&
+  (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
 
 const mGroups = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("entra") && (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
+  String(o.checkId).includes("entra") &&
+  (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
 
 const mApps = (o: ObservedCheckItem) =>
   String(o.checkId).includes("enterprise") ||
@@ -180,13 +203,32 @@ const mCA = (o: ObservedCheckItem) =>
   String(o.collectorId).includes("entra.conditionalAccess");
 
 const mMail = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("mailbox") || String(o.collectorId).includes("exchange") || String(o.collectorId).includes("exchange.mailboxes");
+  String(o.checkId).includes("mailbox") ||
+  String(o.collectorId).includes("exchange") ||
+  String(o.collectorId).includes("exchange.mailboxes");
 
 /**
- * NOTE: We keep EXO special-casing *inside the registry*, not in UI shells.
+ * NOTE: We keep EXO / SPO special-casing *inside the registry*, not in UI shells.
  * This makes it explicit + isolated, and prevents scattered "if checkId === ..." logic.
  */
 const EXO_OBS_CHECK_ID = "EXO_MAILBOXES_OBS_001";
+const SPO_STORAGE_OBS_CHECK_ID = "SPO_SITES_OBS_010";
+
+function toneFromSignals(data: unknown): MetricTone {
+  const denied = ocPermissionDeniedList(data);
+  if (denied.length > 0) return "warn";
+  if (ocIsTruncated(data)) return "warn";
+  if (ocIsIncomplete(data)) return "warn";
+  return "ok";
+}
+
+function hintFromSignals(params: { base: string; data: unknown }): string {
+  const denied = ocPermissionDeniedList(params.data);
+  if (denied.length > 0) return `Permission missing: ${denied.join(", ")}`;
+  if (ocIsTruncated(params.data)) return `${params.base} (truncated — treat as indicative).`;
+  if (ocIsIncomplete(params.data)) return `${params.base} (incomplete — treat as indicative).`;
+  return params.base;
+}
 
 const metricRegistry: MetricDefinition[] = [
   {
@@ -226,7 +268,7 @@ const metricRegistry: MetricDefinition[] = [
     derive: (observed) => {
       const users = findCount(observed, mUsers, pathsUsers);
       return {
-        value: users === undefined ? "—" : users.toLocaleString(),
+        value: users === undefined ? "—" : formatInt(users),
         tone: users === undefined ? "muted" : "ok",
         hint: users === undefined ? "Not derived from observed data yet" : undefined,
         sources: sourcesFor(observed, mUsers)
@@ -241,7 +283,7 @@ const metricRegistry: MetricDefinition[] = [
     derive: (observed) => {
       const groups = findCount(observed, mGroups, pathsGroups);
       return {
-        value: groups === undefined ? "—" : groups.toLocaleString(),
+        value: groups === undefined ? "—" : formatInt(groups),
         tone: groups === undefined ? "muted" : "ok",
         hint: groups === undefined ? "Not derived from observed data yet" : undefined,
         sources: sourcesFor(observed, mGroups)
@@ -256,7 +298,7 @@ const metricRegistry: MetricDefinition[] = [
     derive: (observed) => {
       const apps = findCount(observed, mApps, pathsApps);
       return {
-        value: apps === undefined ? "—" : apps.toLocaleString(),
+        value: apps === undefined ? "—" : formatInt(apps),
         tone: apps === undefined ? "muted" : "ok",
         hint: apps === undefined ? "Not derived from observed data yet" : undefined,
         sources: sourcesFor(observed, mApps)
@@ -271,7 +313,7 @@ const metricRegistry: MetricDefinition[] = [
     derive: (observed) => {
       const ca = findCount(observed, mCA, pathsCA);
       return {
-        value: ca === undefined ? "—" : ca.toLocaleString(),
+        value: ca === undefined ? "—" : formatInt(ca),
         tone: ca === undefined ? "muted" : "ok",
         hint: ca === undefined ? "Not derived from observed data yet" : undefined,
         sources: sourcesFor(observed, mCA)
@@ -279,7 +321,69 @@ const metricRegistry: MetricDefinition[] = [
     }
   },
 
-  // EXO mailbox metrics (Graph reports) — contained here, not in UI shells.
+  // -------------------------
+  // SharePoint Online (SPO) metrics (Graph reports)
+  // -------------------------
+  {
+    key: "spo_sites_in_report",
+    label: "SharePoint sites",
+    evidenceQuery: SPO_STORAGE_OBS_CHECK_ID,
+    evidenceHint: "Filter Evidence to the SharePoint storage usage observed check.",
+    derive: (observed) => {
+      const spo = observed.find((x) => x.checkId === SPO_STORAGE_OBS_CHECK_ID);
+      if (!spo) return null;
+
+      const sites = readNumberAtPath(spo.data, pathsSPO_SitesInReport);
+      const tone = toneFromSignals(spo.data);
+      const sources = uniq([spo.checkId, spo.collectorId].filter(Boolean) as string[]);
+
+      if (sites === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+
+      return {
+        value: formatInt(sites),
+        tone,
+        hint: hintFromSignals({
+          base: "Sites included in the SharePoint usage report.",
+          data: spo.data
+        }),
+        sources
+      };
+    }
+  },
+  {
+    key: "spo_storage_used_gb",
+    label: "SPO storage used",
+    evidenceQuery: SPO_STORAGE_OBS_CHECK_ID,
+    evidenceHint: "Filter Evidence to the SharePoint storage usage observed check.",
+    derive: (observed) => {
+      const spo = observed.find((x) => x.checkId === SPO_STORAGE_OBS_CHECK_ID);
+      if (!spo) return null;
+
+      const gbRaw = readNumberAtPath(spo.data, pathsSPO_StorageUsedGbTotal);
+      const tone = toneFromSignals(spo.data);
+      const sources = uniq([spo.checkId, spo.collectorId].filter(Boolean) as string[]);
+
+      if (gbRaw === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+
+      return {
+        value: `${formatGb(gbRaw)} GB`,
+        tone,
+        hint: hintFromSignals({
+          base: "Total storage used derived from SharePoint usage reports.",
+          data: spo.data
+        }),
+        sources
+      };
+    }
+  },
+
+  // -------------------------
+  // EXO mailbox metrics (Graph reports)
+  // -------------------------
   {
     key: "exo_mailboxes_total",
     label: "EXO mailboxes",
@@ -300,7 +404,8 @@ const metricRegistry: MetricDefinition[] = [
         ? notesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
         : [];
 
-      const tone: MetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+      const tone: MetricTone =
+        permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
 
       const hint =
         permissionDenied.length > 0
@@ -332,13 +437,15 @@ const metricRegistry: MetricDefinition[] = [
       const sizeBuckets = getPath(d, "sizeBuckets");
 
       const near50 =
-        typeof getPath(sizeBuckets, "40to50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "40to50GB") as number)
+        typeof getPath(sizeBuckets, "40to50GB") === "number" &&
+        Number.isFinite(getPath(sizeBuckets, "40to50GB") as number)
           ? (getPath(sizeBuckets, "40to50GB") as number)
           : null;
 
       const permissionDenied = ocPermissionDeniedList(d);
       const isComplete = readBool(d, "isComplete");
-      const baseTone: MetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+      const baseTone: MetricTone =
+        permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
 
       const sources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 
@@ -363,13 +470,15 @@ const metricRegistry: MetricDefinition[] = [
       const sizeBuckets = getPath(d, "sizeBuckets");
 
       const over50 =
-        typeof getPath(sizeBuckets, "over50GB") === "number" && Number.isFinite(getPath(sizeBuckets, "over50GB") as number)
+        typeof getPath(sizeBuckets, "over50GB") === "number" &&
+        Number.isFinite(getPath(sizeBuckets, "over50GB") as number)
           ? (getPath(sizeBuckets, "over50GB") as number)
           : null;
 
       const permissionDenied = ocPermissionDeniedList(d);
       const isComplete = readBool(d, "isComplete");
-      const baseTone: MetricTone = permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
+      const baseTone: MetricTone =
+        permissionDenied.length > 0 ? "warn" : isComplete === false ? "warn" : "ok";
 
       const sources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 

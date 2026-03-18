@@ -5,6 +5,7 @@ import { entraConditionalAccessPoliciesCollector } from "./entraConditionalAcces
 import { entraDirectoryRolesAssignmentsCollector } from "./entraDirectoryRolesAssignmentsCollector";
 import { entraAuthTestCollector } from "./entraAuthTestCollector";
 import { exchangeMailboxesInventoryCollector } from "./exchangeMailboxesInventoryCollector";
+import { sharepointSitesInventoryCollector } from "./sharepointSitesInventoryCollector";
 
 // DEPRECATED (legacy exports): retained only so historical runs with queued jobs still work.
 // These are no longer scheduled by default; portal-derived report snapshots replace them.
@@ -18,6 +19,7 @@ const collectors: Collector[] = [
   entraDirectoryRolesAssignmentsCollector,
   entraAuthTestCollector,
   exchangeMailboxesInventoryCollector,
+  sharepointSitesInventoryCollector,
 
   // DEPRECATED legacy report collectors (do not schedule by default)
   runSummaryCsvReportCollector,

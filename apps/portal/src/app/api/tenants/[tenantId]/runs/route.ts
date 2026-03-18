@@ -2,26 +2,22 @@
 import { NextResponse } from "next/server";
 import { backendFetchJson } from "@/lib/backend";
 
-/**
- * BFF: tenant-scoped runs
- *
- * GET:
- * - backend currently exposes GET /runs (global latest 50).
- * - BFF filters to tenantId for tenant-first UX.
- *
- * POST:
- * - create a run for this tenant (portal-triggered)
- * - backend create-run requires: tenantGuid, primaryDomain, triggeredBy
- * - modulesEnabled MUST be an object (not an array) per backend validation
- */
+// Prevent Next from attempting static generation / caching for this route
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const DEFAULT_MODULE_KEYS = [
   "entra.users",
   "entra.conditionalAccess.policies",
   "entra.directoryRoles.assignments",
   "entra.enterpriseApps.permissions",
-  "exchange.mailboxes.inventory"
+  "exchange.mailboxes.inventory",
+
+  // SharePoint Online discovery
+  "sharepoint.sites.inventory"
 ] as const;
+
+type RouteCtx = { params: Promise<{ tenantId: string }> };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -49,7 +45,7 @@ function readArray(obj: unknown, key: string): unknown[] | null {
   return Array.isArray(v) ? v : null;
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ tenantId: string }> }) {
+export async function GET(_req: Request, ctx: RouteCtx) {
   const { tenantId } = await ctx.params;
 
   const rawRuns: unknown = await backendFetchJson<unknown>(`/runs`);
@@ -57,10 +53,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ tenantId: stri
 
   const filtered = runs.filter((r) => readStringPath(r, ["tenant", "id"]) === tenantId);
 
-  return NextResponse.json(filtered);
+  return NextResponse.json(filtered, { status: 200 });
 }
 
-export async function POST(req: Request, ctx: { params: Promise<{ tenantId: string }> }) {
+export async function POST(req: Request, ctx: RouteCtx) {
   const { tenantId } = await ctx.params;
 
   // Accept { dataProfile: "safe" | "full" }
@@ -120,5 +116,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ tenantId: stri
 
   const finalJobIds = jobIds.length > 0 ? jobIds : jobIdsFromJobs;
 
-  return NextResponse.json({ runId, jobIds: finalJobIds, tenantId, dataProfile, modulesEnabled }, { status: 201 });
+  return NextResponse.json(
+    { runId, jobIds: finalJobIds, tenantId, dataProfile, modulesEnabled },
+    { status: 201 }
+  );
 }

@@ -5,6 +5,7 @@
    ================================ */
 
 :root{
+  /* Primary theme tokens (original) */
   --bg: #0b1220;
 
   --panel: rgba(255,255,255,0.06);
@@ -29,6 +30,23 @@
 
   --muted-bg: rgba(255,255,255,0.12);
   --muted-fg: rgba(255,255,255,0.78);
+
+  /* --------------------------------
+     Alias tokens (for TSX consistency)
+     --------------------------------
+     Many components use: --fg, --card, etc.
+     Define them here so the UI never “goes white” again.
+  */
+  --background: var(--bg);
+  --card: var(--panel);
+  --card-2: var(--panel-2);
+
+  --fg: var(--text);
+  --fg-muted: var(--muted);
+  --fg-muted2: var(--muted2);
+
+  /* Handy for subtle hover fills, if needed */
+  --hover: rgba(255,255,255,0.08);
 }
 
 @media (prefers-color-scheme: light) {
@@ -56,6 +74,17 @@
 
     --muted-bg: rgba(0,0,0,0.06);
     --muted-fg: rgba(17, 24, 39, 0.78);
+
+    /* Keep alias tokens correct in light mode too */
+    --background: var(--bg);
+    --card: var(--panel);
+    --card-2: var(--panel-2);
+
+    --fg: var(--text);
+    --fg-muted: var(--muted);
+    --fg-muted2: var(--muted2);
+
+    --hover: rgba(0,0,0,0.06);
   }
 }
 
@@ -67,6 +96,10 @@
 html, body{ height:100%; }
 
 html{ color-scheme: dark; }
+
+@media (prefers-color-scheme: light) {
+  html{ color-scheme: light; }
+}
 
 body{
   margin:0;
@@ -115,6 +148,40 @@ code{
 
 .subtle{ color: var(--muted); font-size: 13px; }
 .muted2{ color: var(--muted2); }
+
+/* ================================
+   Links (anchors + button-as-link)
+   ================================ */
+
+.link{
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover{
+  opacity: 0.9;
+}
+
+.link-action{
+  color: var(--fg);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.link-action:hover{
+  text-decoration: underline;
+}
+
+/* Make <button class="link ..."> behave like a link */
+button.link,
+button.link-action{
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
 
 /* ================================
    Inputs / Selects

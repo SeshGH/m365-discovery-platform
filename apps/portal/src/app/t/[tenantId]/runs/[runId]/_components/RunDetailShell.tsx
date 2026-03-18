@@ -382,9 +382,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         />
       ) : null}
       {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} /> : null}
-      {tab === "evidence" ? (
-        <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} />
-      ) : null}
+      {tab === "evidence" ? <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
   );
@@ -706,7 +704,8 @@ function SummaryTab({
                           border: "none",
                           padding: 0,
                           cursor: "pointer",
-                          fontWeight: 800
+                          fontWeight: 800,
+                          color: "var(--fg)"
                         }}
                         title={m.evidenceHint ?? "View supporting observed checks in Evidence"}
                       >
@@ -839,6 +838,11 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
   return (
     <>
+      {/* unchanged */}
+      {/* (snip: rest of FindingsTab stays identical to your version) */}
+      {/* Keeping full file replacement, so do not remove. */}
+      {/* --- */}
+      {/* START unchanged content */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
@@ -1118,8 +1122,17 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           )}
         </div>
       </div>
+      {/* END unchanged content */}
     </>
   );
+}
+
+// Detects typical Prisma/ULID-ish ids you use for observed/job/etc (e.g. cml6nzeyv002suz2h677ffc91)
+function looksLikeRunEntityId(q: string): boolean {
+  const x = norm(q);
+  if (!x) return false;
+  // conservative: starts with "c" and length >= 18
+  return x.startsWith("c") && x.length >= 18 && /^[a-z0-9]+$/.test(x);
 }
 
 function EvidenceTab({
@@ -1137,8 +1150,27 @@ function EvidenceTab({
     const q = norm(query);
     if (!q) return vm.observedChecks;
 
+    // 1) Exact match on checkId (case-insensitive)
+    const exactByCheckId = vm.observedChecks.filter((o) => norm(o.checkId) === q);
+    if (exactByCheckId.length > 0) return exactByCheckId;
+
+    // 2) Exact match on collectorId
+    const exactByCollectorId = vm.observedChecks.filter((o) => norm(o.collectorId) === q);
+    if (exactByCollectorId.length > 0) return exactByCollectorId;
+
+    // 3) Exact match on jobId (helps when copying from UI / logs)
+    const exactByJobId = vm.observedChecks.filter((o) => o.jobId && norm(o.jobId) === q);
+    if (exactByJobId.length > 0) return exactByJobId;
+
+    // 4) Exact match on observed check entity id (handy for deep-linking / copy-paste)
+    if (looksLikeRunEntityId(q)) {
+      const exactById = vm.observedChecks.filter((o) => norm(o.id) === q);
+      if (exactById.length > 0) return exactById;
+    }
+
+    // 5) Fuzzy fallback (current behaviour)
     return vm.observedChecks.filter((o) => {
-      const hay = [o.checkId, o.collectorId, o.jobId ?? "", (o.signals ?? []).join(" "), o.observedAt ?? ""]
+      const hay = [o.checkId, o.collectorId, o.id, o.jobId ?? "", (o.signals ?? []).join(" "), o.observedAt ?? ""]
         .map((x) => norm(x))
         .join(" | ");
       return hay.includes(q);
@@ -1161,6 +1193,23 @@ function EvidenceTab({
     <>
       <h3 id="evidence-observed-checks">Observed checks</h3>
       <p className="subtle">Source of truth for posture + completeness signals. Findings are derived from these checks.</p>
+
+      {query ? (
+        <div className="callout" style={{ marginBottom: 12 }}>
+          <strong>Evidence filter active</strong>
+          <div className="subtle" style={{ marginTop: 4 }}>
+            Showing observed checks matching: <code>{query}</code>
+          </div>
+          <button
+            type="button"
+            className="link link-action"
+            onClick={() => onQueryChange("")}
+            style={{ marginTop: 6, background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : null}
 
       <div
         className="card card-pad"
@@ -1191,16 +1240,6 @@ function EvidenceTab({
               color: "var(--fg)"
             }}
           />
-          {query ? (
-            <button
-              type="button"
-              className="link"
-              onClick={() => onQueryChange("")}
-              style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
-            >
-              Clear
-            </button>
-          ) : null}
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1446,11 +1485,7 @@ function JobsTab({ vm }: { vm: RunDetailViewModel }) {
                 <td>{j.status}</td>
                 <td>{j.attempts}</td>
                 <td style={{ fontSize: 12 }}>
-                  {j.lastError ? (
-                    <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span>
-                  ) : (
-                    <span style={{ color: "var(--muted)" }}>—</span>
-                  )}
+                  {j.lastError ? <span style={{ color: "var(--bad-fg)" }}>{j.lastError}</span> : <span style={{ color: "var(--muted)" }}>—</span>}
                 </td>
               </tr>
             ))}

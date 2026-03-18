@@ -242,12 +242,18 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   // New legacy key for demo UI (Exchange)
   exchangeMailboxesInventory: "exchange.mailboxes.inventory",
 
+  // Optional legacy key (SharePoint) — harmless if unused, prevents drift later
+  sharepointSitesInventory: "sharepoint.sites.inventory",
+
   // Canonical keys (preferred stable contract)
   "entra.users": "entra.users",
   "entra.enterpriseApps.permissions": "entra.enterpriseApps.permissions",
   "entra.conditionalAccess.policies": "entra.conditionalAccess.policies",
   "entra.directoryRoles.assignments": "entra.directoryRoles.assignments",
-  "exchange.mailboxes.inventory": "exchange.mailboxes.inventory"
+  "exchange.mailboxes.inventory": "exchange.mailboxes.inventory",
+
+  // Canonical SharePoint key (new)
+  "sharepoint.sites.inventory": "sharepoint.sites.inventory"
 };
 
 // Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.
@@ -1067,6 +1073,3 @@ app.listen({ port, host: "0.0.0.0" }).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });
-
-
-
