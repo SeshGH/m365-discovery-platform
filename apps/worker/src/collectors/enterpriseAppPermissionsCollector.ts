@@ -226,57 +226,9 @@ export const enterpriseAppPermissionsCollector: Collector = {
       ]
     });
 
-    // Findings (bounded)
-    if (riskyApps > 0) {
-      await ctx.prisma.finding.create({
-        data: {
-          runId: ctx.run.id,
-          jobId: ctx.job.id,
-          checkId: "ENTRA_EAP_001",
-          category: "application_permissions",
-          severity: "high",
-          confidence: "medium",
-          status: "open",
-          score: 0,
-          title: "High-privilege Graph permissions detected",
-          description:
-            "One or more enterprise applications have high-privilege Microsoft Graph permissions. These permissions can represent significant tenant-wide impact depending on how the application is secured and used.",
-          recommendation:
-            "Review high-privilege application permissions: validate business justification, ensure application ownership is known, confirm credential hygiene (certificates/secrets), and remove unused permissions.",
-          evidence: {
-            riskyApps,
-            scannedApps: scanned.length,
-            totalEnterpriseApps: allSps.length,
-            truncated
-          }
-        }
-      });
-    }
-
-    if (truncated) {
-      await ctx.prisma.finding.create({
-        data: {
-          runId: ctx.run.id,
-          jobId: ctx.job.id,
-          checkId: "ENTRA_EAP_002",
-          category: "other",
-          severity: "info",
-          confidence: "high",
-          status: "open",
-          score: 0,
-          title: "Enterprise app scan truncated",
-          description:
-            "The enterprise application permissions scan was truncated due to configured guardrails. Results may be incomplete and should be interpreted as a subset.",
-          recommendation:
-            "If you need a complete view, increase the scan cap in a controlled environment and re-run discovery.",
-          evidence: {
-            scannedApps: scanned.length,
-            totalEnterpriseApps: allSps.length,
-            maxApps: cap
-          }
-        }
-      });
-    }
+    // Findings are derived from ENTRA_EAP_OBS_001 via FindingDerivation (eapHighPrivFinding).
+    // Do not emit inline findings here — mixing collector-emitted and derivation-emitted
+    // findings for the same signal causes duplicates.
 
     const safeArtefact = JSON.stringify(
       {

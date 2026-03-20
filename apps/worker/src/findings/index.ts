@@ -3,12 +3,14 @@ import type { FindingDerivation, ObservedCheckLike } from "./types";
 import { exoMailboxLicensingFinding } from "./exoMailboxLicensingFinding";
 import { spoSharingFinding } from "./spoSharingFinding";
 import { mdmComplianceFinding } from "./mdmComplianceFinding";
+import { eapHighPrivFinding } from "./eapHighPrivFinding";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
   exoMailboxLicensingFinding,
   spoSharingFinding,
-  mdmComplianceFinding
+  mdmComplianceFinding,
+  eapHighPrivFinding
 ];
 
 function uniq(xs: string[]) {
