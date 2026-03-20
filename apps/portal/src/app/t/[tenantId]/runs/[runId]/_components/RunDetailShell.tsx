@@ -620,20 +620,53 @@ function SummaryTab({
                 <div style={{ marginBottom: 6 }}>
                   <strong>Permission denied:</strong>{" "}
                   <span style={{ color: "var(--muted)" }}>{vm.completenessSignals.permissionDenied.join(", ")}</span>
+                  {" "}
+                  <button
+                    type="button"
+                    className="link subtle"
+                    onClick={() => onGoEvidenceQuery("permissionDenied")}
+                    style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                  >
+                    View permission-denied evidence →
+                  </button>
                 </div>
               ) : null}
 
               {vm.completenessSignals.truncatedChecks.length > 0 ? (
                 <div style={{ marginBottom: 6 }}>
                   <strong>Truncated checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{vm.completenessSignals.truncatedChecks.join(", ")}</span>
+                  {vm.completenessSignals.truncatedChecks.map((checkId, i) => (
+                    <span key={checkId}>
+                      {i > 0 && ", "}
+                      <button
+                        type="button"
+                        className="link subtle"
+                        onClick={() => onGoEvidenceQuery(checkId)}
+                        style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                      >
+                        {checkId}
+                      </button>
+                    </span>
+                  ))}
                 </div>
               ) : null}
 
               {vm.completenessSignals.incompleteChecks.length > 0 ? (
                 <div>
                   <strong>Incomplete checks:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{vm.completenessSignals.incompleteChecks.join(", ")}</span>
+                  {vm.completenessSignals.incompleteChecks.map((checkId, i) => (
+                    <span key={checkId}>
+                      {i > 0 && ", "}
+                      <button
+                        type="button"
+                        className="link subtle"
+                        onClick={() => onGoEvidenceQuery(checkId)}
+                        style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+                      >
+                        {checkId}
+                      </button>
+                    </span>
+                  ))}
                 </div>
               ) : null}
 
