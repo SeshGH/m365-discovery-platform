@@ -279,8 +279,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "groups",
     label: "Groups",
-    evidenceQuery: "entra groups",
-    evidenceHint: "Filter Evidence for Entra group inventory checks.",
+    evidenceQuery: "ENTRA_GROUPS_OBS_001",
+    evidenceHint: "Filter Evidence to the Entra groups inventory observed check.",
     derive: (observed) => {
       const groups = findCount(observed, mGroups, pathsGroups);
       return {
