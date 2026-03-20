@@ -435,7 +435,15 @@ const metricRegistry: MetricDefinition[] = [
                 ? "Sharing is restricted to existing external users only."
                 : capability;
 
-      return { value: capability, tone, hint, sources };
+      const capabilityLabels: Record<string, string> = {
+        externalUserAndGuestSharing: "Anyone links enabled",
+        externalUserSharingOnly: "External users only",
+        existingExternalUserSharingOnly: "Existing guests only",
+        disabled: "Disabled"
+      };
+      const label = capabilityLabels[capability] ?? capability;
+
+      return { value: label, tone, hint, sources };
     }
   },
 
