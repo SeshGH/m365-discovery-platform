@@ -436,7 +436,7 @@ const metricRegistry: MetricDefinition[] = [
                 : capability;
 
       const capabilityLabels: Record<string, string> = {
-        externalUserAndGuestSharing: "Anyone links enabled",
+        externalUserAndGuestSharing: "Anyone links allowed",
         externalUserSharingOnly: "External users only",
         existingExternalUserSharingOnly: "Existing guests only",
         disabled: "Disabled"
