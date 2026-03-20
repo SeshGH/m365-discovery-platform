@@ -185,8 +185,9 @@ const pathsSPO_SitesInReport = ["storage.sitesInReport"];
 const pathsSPO_StorageUsedGbTotal = ["storage.storageUsedGbTotal"];
 
 const mUsers = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("entra") &&
-  (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
+  String(o.collectorId).includes("entra.users") ||
+  (String(o.checkId).toLowerCase().includes("entra") &&
+    String(o.checkId).toLowerCase().includes("users"));
 
 const mGroups = (o: ObservedCheckItem) =>
   String(o.collectorId).includes("entra.groups") ||
@@ -264,8 +265,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "users",
     label: "Users",
-    evidenceQuery: "entra users",
-    evidenceHint: "Filter Evidence for Entra user inventory checks.",
+    evidenceQuery: "ENTRA_USERS_OBS_001",
+    evidenceHint: "Filter Evidence to the Entra user inventory observed check.",
     derive: (observed) => {
       const users = findCount(observed, mUsers, pathsUsers);
       return {
@@ -294,8 +295,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "apps",
     label: "Enterprise apps",
-    evidenceQuery: "enterprise apps",
-    evidenceHint: "Filter Evidence for enterprise app inventory checks.",
+    evidenceQuery: "ENTRA_EAP_OBS_001",
+    evidenceHint: "Filter Evidence to the Entra enterprise app permissions observed check.",
     derive: (observed) => {
       const apps = findCount(observed, mApps, pathsApps);
       return {
@@ -309,8 +310,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "ca",
     label: "CA policies",
-    evidenceQuery: "conditional access",
-    evidenceHint: "Filter Evidence for Conditional Access policy inventory checks.",
+    evidenceQuery: "ENTRA_CA_OBS_001",
+    evidenceHint: "Filter Evidence to the Entra Conditional Access policies observed check.",
     derive: (observed) => {
       const ca = findCount(observed, mCA, pathsCA);
       return {
