@@ -1189,6 +1189,16 @@ function EvidenceTab({
     return keys.map((k) => ({ collectorId: k, items: map.get(k) ?? [] }));
   }, [filtered]);
 
+  // Resolve a human-readable label from environmentOverview when the active query
+  // matches a registry-provided evidenceQuery. Falls back to null (raw query shown).
+  const resolvedQueryLabel = useMemo(() => {
+    if (!query) return null;
+    const match = vm.environmentOverview.find(
+      (m) => typeof m.evidenceQuery === "string" && m.evidenceQuery === query
+    );
+    return match ? match.label : null;
+  }, [vm.environmentOverview, query]);
+
   return (
     <>
       <h3 id="evidence-observed-checks">Observed checks</h3>
@@ -1196,9 +1206,17 @@ function EvidenceTab({
 
       {query ? (
         <div className="callout" style={{ marginBottom: 12 }}>
-          <strong>Evidence filter active</strong>
+          <strong>{resolvedQueryLabel ? `Filtered by: ${resolvedQueryLabel}` : "Evidence filter active"}</strong>
           <div className="subtle" style={{ marginTop: 4 }}>
-            Showing observed checks matching: <code>{query}</code>
+            {resolvedQueryLabel ? (
+              <>
+                Showing observed checks for <strong>{resolvedQueryLabel}</strong> · filter: <code>{query}</code>
+              </>
+            ) : (
+              <>
+                Showing observed checks matching: <code>{query}</code>
+              </>
+            )}
           </div>
           <button
             type="button"
