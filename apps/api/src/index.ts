@@ -254,7 +254,10 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
 
   // Canonical SharePoint keys
   "sharepoint.sites.inventory": "sharepoint.sites.inventory",
-  "sharepoint.admin.settings": "sharepoint.admin.settings"
+  "sharepoint.admin.settings": "sharepoint.admin.settings",
+
+  // Intune / endpoint management
+  "intune.devices.overview": "intune.devices.overview"
 };
 
 // Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.

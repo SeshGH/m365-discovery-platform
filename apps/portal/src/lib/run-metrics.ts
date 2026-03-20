@@ -448,6 +448,96 @@ const metricRegistry: MetricDefinition[] = [
   },
 
   // -------------------------
+  // Intune / MDM metrics (MDM_DEVICES_OBS_001)
+  // -------------------------
+  {
+    key: "mdm_devices_total",
+    label: "MDM devices",
+    evidenceQuery: "MDM_DEVICES_OBS_001",
+    evidenceHint: "Filter Evidence to the Intune managed device observed check.",
+    derive: (observed) => {
+      const obs = observed.find((x) => x.checkId === "MDM_DEVICES_OBS_001");
+      if (!obs) return null;
+
+      const d = obs.data;
+      const permDenied = ocPermissionDeniedList(d);
+      const isComplete = readBool(d, "isComplete");
+      const truncated = readBool(d, "truncated");
+      const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
+
+      if (permDenied.length > 0 || isComplete === false) {
+        return {
+          value: "—",
+          tone: "muted" as MetricTone,
+          hint:
+            permDenied.length > 0
+              ? "Permission missing: DeviceManagementManagedDevices.Read.All not granted."
+              : "Intune device data not collected.",
+          sources
+        };
+      }
+
+      const total = readNumber(getPath(d, "counts") as any, "total");
+
+      if (total === null) {
+        return { value: "—", tone: "muted", hint: "Device count not available.", sources };
+      }
+
+      return {
+        value: truncated ? `${total.toLocaleString()} (capped)` : total.toLocaleString(),
+        tone: "ok" as MetricTone,
+        hint: truncated
+          ? `${total.toLocaleString()} devices enumerated (collection capped — actual total may be higher).`
+          : `${total.toLocaleString()} device${total === 1 ? "" : "s"} enrolled in Intune MDM.`,
+        sources
+      };
+    }
+  },
+  {
+    key: "mdm_noncompliant_devices",
+    label: "Non-compliant",
+    evidenceQuery: "MDM_DEVICES_OBS_001",
+    evidenceHint: "Filter Evidence to the Intune managed device observed check.",
+    derive: (observed) => {
+      const obs = observed.find((x) => x.checkId === "MDM_DEVICES_OBS_001");
+      if (!obs) return null;
+
+      const d = obs.data;
+      const permDenied = ocPermissionDeniedList(d);
+      const isComplete = readBool(d, "isComplete");
+      const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
+
+      if (permDenied.length > 0 || isComplete === false) {
+        return {
+          value: "—",
+          tone: "muted" as MetricTone,
+          hint:
+            permDenied.length > 0
+              ? "Permission missing: DeviceManagementManagedDevices.Read.All not granted."
+              : "Intune device data not collected.",
+          sources
+        };
+      }
+
+      const noncompliant = readNumber(getPath(d, "counts") as any, "noncompliant");
+
+      if (noncompliant === null) {
+        return { value: "—", tone: "muted", hint: "Non-compliant count not available.", sources };
+      }
+
+      return {
+        value: noncompliant.toLocaleString(),
+        tone: noncompliant > 0 ? "warn" : "ok",
+        hint:
+          noncompliant > 0
+            ? `${noncompliant} device${noncompliant === 1 ? "" : "s"} in non-compliant state. Review compliance policies and device status in Intune.`
+            : "No devices in non-compliant state.",
+        sources
+      };
+    }
+  },
+
+  // -------------------------
   // EXO mailbox metrics (Graph reports)
   // -------------------------
   {

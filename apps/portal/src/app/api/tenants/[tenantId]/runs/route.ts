@@ -15,7 +15,10 @@ const DEFAULT_MODULE_KEYS = [
 
   // SharePoint Online discovery
   "sharepoint.sites.inventory",
-  "sharepoint.admin.settings"
+  "sharepoint.admin.settings",
+
+  // Intune / endpoint management
+  "intune.devices.overview"
 ] as const;
 
 type RouteCtx = { params: Promise<{ tenantId: string }> };
