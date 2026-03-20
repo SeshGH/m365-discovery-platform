@@ -193,3 +193,4 @@ users-inventory.json
 # Local dev-only downloads
 downloaded-artefact
 
+.claude/
