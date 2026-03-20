@@ -257,7 +257,10 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   "sharepoint.admin.settings": "sharepoint.admin.settings",
 
   // Intune / endpoint management
-  "intune.devices.overview": "intune.devices.overview"
+  "intune.devices.overview": "intune.devices.overview",
+
+  // Entra groups
+  "entra.groups.inventory": "entra.groups.inventory"
 };
 
 // Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.

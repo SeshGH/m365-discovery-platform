@@ -189,8 +189,9 @@ const mUsers = (o: ObservedCheckItem) =>
   (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
 
 const mGroups = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("entra") &&
-  (String(o.checkId).includes("groups") || String(o.collectorId).includes("entra.groups"));
+  String(o.collectorId).includes("entra.groups") ||
+  (String(o.checkId).toLowerCase().includes("entra") &&
+    String(o.checkId).toLowerCase().includes("groups"));
 
 const mApps = (o: ObservedCheckItem) =>
   String(o.checkId).includes("enterprise") ||

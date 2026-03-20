@@ -18,7 +18,10 @@ const DEFAULT_MODULE_KEYS = [
   "sharepoint.admin.settings",
 
   // Intune / endpoint management
-  "intune.devices.overview"
+  "intune.devices.overview",
+
+  // Entra groups
+  "entra.groups.inventory"
 ] as const;
 
 type RouteCtx = { params: Promise<{ tenantId: string }> };
