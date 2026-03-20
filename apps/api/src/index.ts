@@ -252,8 +252,9 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   "entra.directoryRoles.assignments": "entra.directoryRoles.assignments",
   "exchange.mailboxes.inventory": "exchange.mailboxes.inventory",
 
-  // Canonical SharePoint key (new)
-  "sharepoint.sites.inventory": "sharepoint.sites.inventory"
+  // Canonical SharePoint keys
+  "sharepoint.sites.inventory": "sharepoint.sites.inventory",
+  "sharepoint.admin.settings": "sharepoint.admin.settings"
 };
 
 // Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.

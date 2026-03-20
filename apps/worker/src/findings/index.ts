@@ -1,10 +1,12 @@
 // apps/worker/src/findings/index.ts
 import type { FindingDerivation, ObservedCheckLike } from "./types";
 import { exoMailboxLicensingFinding } from "./exoMailboxLicensingFinding";
+import { spoSharingFinding } from "./spoSharingFinding";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
-  exoMailboxLicensingFinding
+  exoMailboxLicensingFinding,
+  spoSharingFinding
 ];
 
 function uniq(xs: string[]) {

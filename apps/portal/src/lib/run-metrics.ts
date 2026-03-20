@@ -382,6 +382,64 @@ const metricRegistry: MetricDefinition[] = [
   },
 
   // -------------------------
+  // SharePoint Online – admin settings (SPO_ADMIN_OBS_001)
+  // -------------------------
+  {
+    key: "spo_sharing_capability",
+    label: "SPO sharing",
+    evidenceQuery: "SPO_ADMIN_OBS_001",
+    evidenceHint: "Filter Evidence to the SharePoint admin settings observed check.",
+    derive: (observed) => {
+      const obs = observed.find((x) => x.checkId === "SPO_ADMIN_OBS_001");
+      if (!obs) return null;
+
+      const d = obs.data;
+      const permDenied = ocPermissionDeniedList(d);
+      const isComplete = readBool(d, "isComplete");
+      const capability =
+        typeof (d as any)?.sharingCapability === "string"
+          ? ((d as any).sharingCapability as string)
+          : null;
+
+      const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
+
+      if (!isComplete || permDenied.length > 0) {
+        return {
+          value: "—",
+          tone: "muted",
+          hint:
+            permDenied.length > 0
+              ? "Permission missing: SharePointTenantSettings.Read.All not granted."
+              : "SharePoint admin settings not collected.",
+          sources
+        };
+      }
+
+      if (!capability) {
+        return { value: "—", tone: "muted", hint: "Sharing capability not returned by Graph.", sources };
+      }
+
+      const tone: MetricTone =
+        capability === "externalUserAndGuestSharing"
+          ? "warn"
+          : "ok";
+
+      const hint =
+        capability === "externalUserAndGuestSharing"
+          ? "Anonymous (Anyone) links are enabled at the tenant level."
+          : capability === "externalUserSharingOnly"
+            ? "External user invitations are enabled; anonymous links are disabled."
+            : capability === "disabled"
+              ? "External sharing is disabled."
+              : capability === "existingExternalUserSharingOnly"
+                ? "Sharing is restricted to existing external users only."
+                : capability;
+
+      return { value: capability, tone, hint, sources };
+    }
+  },
+
+  // -------------------------
   // EXO mailbox metrics (Graph reports)
   // -------------------------
   {

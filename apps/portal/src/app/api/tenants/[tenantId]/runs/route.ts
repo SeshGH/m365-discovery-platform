@@ -14,7 +14,8 @@ const DEFAULT_MODULE_KEYS = [
   "exchange.mailboxes.inventory",
 
   // SharePoint Online discovery
-  "sharepoint.sites.inventory"
+  "sharepoint.sites.inventory",
+  "sharepoint.admin.settings"
 ] as const;
 
 type RouteCtx = { params: Promise<{ tenantId: string }> };
