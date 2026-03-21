@@ -1,7 +1,15 @@
 # docker-compose.yml — dev/demo stack for m365-discovery-platform
-# Usage:  docker compose up
+#
+# Usage:
+#   cp docker.env.example .env.docker        # fill in GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
+#   docker compose --env-file .env.docker up --build
+#
 # Portal: http://localhost:3000
 # MinIO console: http://localhost:9001  (minioadmin / minioadmin)
+#
+# NOTE: this file intentionally does NOT read the repo-root .env so that
+# local dev credentials are never accidentally used inside containers.
+# All secrets are supplied via --env-file .env.docker on the CLI.
 
 services:
 
@@ -24,6 +32,9 @@ services:
       retries: 10
 
   # ── MinIO (S3-compatible artefact storage) ───────────────────────────────────
+  # No healthcheck: the minio/minio image does not ship curl/wget.
+  # minio-init uses restart: on-failure to retry until MinIO is accepting connections.
+  # api/worker only touch MinIO when processing jobs, not at startup.
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -36,18 +47,12 @@ services:
       - "9001:9001"
     volumes:
       - miniodata:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
   # ── MinIO bucket initialisation (runs once then exits) ───────────────────────
   minio-init:
     image: minio/mc:latest
     depends_on:
-      minio:
-        condition: service_healthy
+      - minio
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
@@ -58,6 +63,8 @@ services:
 
   # ── Fastify API ──────────────────────────────────────────────────────────────
   # Runs prisma migrate deploy before starting so the schema is always current.
+  # Portal → API auth uses PORTAL_INTERNAL_JWT_SECRET + PORTAL_DEV_ORG_ID.
+  # There is no PORTAL_BACKEND_BEARER_TOKEN in this codebase.
   api:
     build:
       context: .
@@ -71,8 +78,8 @@ services:
       "
     environment:
       DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
-      PORTAL_INTERNAL_JWT_SECRET: dev-secret-change-me-in-production
-      PORTAL_DEV_ORG_ID: dev-org
+      PORTAL_INTERNAL_JWT_SECRET: ${PORTAL_INTERNAL_JWT_SECRET}
+      PORTAL_DEV_ORG_ID: ${PORTAL_DEV_ORG_ID}
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
@@ -85,7 +92,7 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - .:/app
       - /app/node_modules
@@ -105,8 +112,6 @@ services:
       S3_BUCKET: artefacts
       S3_FORCE_PATH_STYLE: "true"
       S3_REGION: us-east-1
-      # Azure app registration credentials — copy from your local .env or set
-      # these in a .env file at the repo root (never commit real secrets).
       GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
       GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET}
       POLL_MS: 2000
@@ -114,28 +119,30 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - .:/app
       - /app/node_modules
 
   # ── Next.js Portal ───────────────────────────────────────────────────────────
+  # -H 0.0.0.0 in the command explicitly binds next dev to all interfaces so
+  # the container port is reachable from the host. HOSTNAME is set as a belt-
+  # and-suspenders fallback in case Next.js reads the env var before the flag.
   portal:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: pnpm --filter @acme/portal dev
+    command: sh -c "node_modules/.bin/next dev apps/portal -p 3000 -H 0.0.0.0"
     environment:
-      # Server-side: Next.js route handlers call the Fastify API via this URL.
-      # This is container-to-container, so the docker service name works here.
+      # Server-side: Next.js route handlers proxy to the Fastify API.
+      # Container-to-container; the docker service name resolves correctly.
       PORTAL_API_BASE_URL: http://api:8080
-      PORTAL_INTERNAL_JWT_SECRET: dev-secret-change-me-in-production
-      PORTAL_DEV_ORG_ID: dev-org
-      # Public env var used by the browser (OnboardTenantModal consent URL).
-      # Must match the Azure app registration client_id used by the worker.
+      PORTAL_INTERNAL_JWT_SECRET: ${PORTAL_INTERNAL_JWT_SECRET}
+      PORTAL_DEV_ORG_ID: ${PORTAL_DEV_ORG_ID}
+      # Public: used by the browser to construct the admin consent URL.
       NEXT_PUBLIC_GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
-      # Bind to all interfaces so the container port is reachable from the host.
+      # Belt-and-suspenders bind — the CLI flag -H 0.0.0.0 above is primary.
       HOSTNAME: 0.0.0.0
     ports:
       - "3000:3000"
