@@ -518,6 +518,68 @@ app.get("/tenants", async (req) => {
 });
 
 // --------------------
+// POST /tenants  [Slice 2: org scoped]
+// Creates a new Tenant + TenantAuth (status: not_connected) atomically.
+// --------------------
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.post("/tenants", async (req, reply) => {
+  const auth = requirePortalAuth(req);
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const tenantGuid = typeof body.tenantGuid === "string" ? body.tenantGuid.trim() : "";
+  const primaryDomain = typeof body.primaryDomain === "string" ? body.primaryDomain.trim() : "";
+  const displayName =
+    typeof body.displayName === "string" && body.displayName.trim()
+      ? body.displayName.trim()
+      : null;
+
+  if (!tenantGuid || !GUID_RE.test(tenantGuid)) {
+    return reply.code(400).send({
+      error: "tenantGuid must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)."
+    });
+  }
+
+  if (!primaryDomain) {
+    return reply.code(400).send({ error: "primaryDomain is required." });
+  }
+
+  try {
+    const tenant = await prisma.$transaction(async (tx) => {
+      const t = await tx.tenant.create({
+        data: {
+          tenantGuid,
+          primaryDomain,
+          displayName,
+          orgId: auth.orgId
+        }
+      });
+
+      await (tx.tenantAuth as any).create({
+        data: { tenantId: t.id, status: "not_connected" }
+      });
+
+      return t;
+    });
+
+    return reply.code(201).send({
+      id: tenant.id,
+      tenantGuid: tenant.tenantGuid,
+      primaryDomain: tenant.primaryDomain,
+      displayName: tenant.displayName
+    });
+  } catch (err: any) {
+    // Prisma unique constraint violation on tenantGuid
+    if (err?.code === "P2002") {
+      return reply
+        .code(409)
+        .send({ error: "A tenant with this GUID is already registered in your organisation." });
+    }
+    throw err;
+  }
+});
+
+// --------------------
 // TenantAuth  [Slice 2: org scoped]
 // --------------------
 

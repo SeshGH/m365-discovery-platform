@@ -1,6 +1,6 @@
 // apps/portal/src/app/api/tenants/route.ts
 import { NextResponse } from "next/server";
-import { backendFetchJson } from "@/lib/backend";
+import { backendFetch, backendFetchJson } from "@/lib/backend";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -31,4 +31,18 @@ export async function GET(req: Request) {
   const data = Array.isArray(raw) ? raw.filter((t) => isRecord(t)) : [];
 
   return NextResponse.json(data);
+}
+
+export async function POST(req: Request) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Forward to Fastify; preserve status codes (201, 400, 409).
+  const res = await backendFetch("/tenants", { method: "POST", body });
+  const data: unknown = await res.json().catch(() => null);
+  return NextResponse.json(data ?? {}, { status: res.status });
 }
