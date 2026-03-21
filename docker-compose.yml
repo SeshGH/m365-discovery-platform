@@ -125,15 +125,16 @@ services:
       - /app/node_modules
 
   # ── Next.js Portal ───────────────────────────────────────────────────────────
-  # -H 0.0.0.0 in the command explicitly binds next dev to all interfaces so
-  # the container port is reachable from the host. HOSTNAME is set as a belt-
-  # and-suspenders fallback in case Next.js reads the env var before the flag.
+  # cd into the app directory so Next.js resolves next.config, tsconfig, etc.
+  # from the correct root. pnpm dev runs the portal's own dev script; the extra
+  # -- --hostname 0.0.0.0 arg is forwarded to `next dev` so the dev server
+  # binds to all interfaces and is reachable from outside the container.
   portal:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: sh -c "node_modules/.bin/next dev apps/portal -p 3000 -H 0.0.0.0"
+    command: sh -c "cd apps/portal && pnpm dev -- --hostname 0.0.0.0"
     environment:
       # Server-side: Next.js route handlers proxy to the Fastify API.
       # Container-to-container; the docker service name resolves correctly.
@@ -142,8 +143,6 @@ services:
       PORTAL_DEV_ORG_ID: ${PORTAL_DEV_ORG_ID}
       # Public: used by the browser to construct the admin consent URL.
       NEXT_PUBLIC_GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
-      # Belt-and-suspenders bind — the CLI flag -H 0.0.0.0 above is primary.
-      HOSTNAME: 0.0.0.0
     ports:
       - "3000:3000"
     depends_on:
