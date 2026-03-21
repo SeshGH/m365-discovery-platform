@@ -5,9 +5,8 @@
 FROM node:22-slim
 
 # ── pnpm ──────────────────────────────────────────────────────────────────────
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+# npm install -g is more reliable than corepack in Docker on Windows hosts.
+RUN npm install -g pnpm@9.0.0
 
 # ── System dependencies (Prisma needs openssl) ────────────────────────────────
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
