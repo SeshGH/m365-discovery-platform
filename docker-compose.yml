@@ -1,6 +1,14 @@
+# docker-compose.yml — dev/demo stack for m365-discovery-platform
+# Usage:  docker compose up
+# Portal: http://localhost:3000
+# MinIO console: http://localhost:9001  (minioadmin / minioadmin)
+
 services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
@@ -9,9 +17,16 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d m365discovery"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
+  # ── MinIO (S3-compatible artefact storage) ───────────────────────────────────
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -22,22 +37,116 @@ services:
     volumes:
       - miniodata:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
-      timeout: 3s
-      retries: 20
+      timeout: 5s
+      retries: 10
 
+  # ── MinIO bucket initialisation (runs once then exits) ───────────────────────
   minio-init:
     image: minio/mc:latest
     depends_on:
       minio:
         condition: service_healthy
-    restart: "on-failure"
+    restart: on-failure
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb -p local/artefacts || true
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/artefacts &&
+        echo 'Bucket ready.'
       "
+
+  # ── Fastify API ──────────────────────────────────────────────────────────────
+  # Runs prisma migrate deploy before starting so the schema is always current.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: >
+      sh -c "
+        node_modules/.bin/prisma migrate deploy
+          --schema packages/db/prisma/schema.prisma &&
+        pnpm --filter @acme/api dev
+      "
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
+      PORTAL_INTERNAL_JWT_SECRET: dev-secret-change-me-in-production
+      PORTAL_DEV_ORG_ID: dev-org
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: artefacts
+      S3_FORCE_PATH_STYLE: "true"
+      S3_REGION: us-east-1
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  # ── Worker ───────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: pnpm --filter @acme/worker dev
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: artefacts
+      S3_FORCE_PATH_STYLE: "true"
+      S3_REGION: us-east-1
+      # Azure app registration credentials — copy from your local .env or set
+      # these in a .env file at the repo root (never commit real secrets).
+      GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
+      GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET}
+      POLL_MS: 2000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  # ── Next.js Portal ───────────────────────────────────────────────────────────
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: pnpm --filter @acme/portal dev
+    environment:
+      # Server-side: Next.js route handlers call the Fastify API via this URL.
+      # This is container-to-container, so the docker service name works here.
+      PORTAL_API_BASE_URL: http://api:8080
+      PORTAL_INTERNAL_JWT_SECRET: dev-secret-change-me-in-production
+      PORTAL_DEV_ORG_ID: dev-org
+      # Public env var used by the browser (OnboardTenantModal consent URL).
+      # Must match the Azure app registration client_id used by the worker.
+      NEXT_PUBLIC_GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
+      # Bind to all interfaces so the container port is reachable from the host.
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    volumes:
+      - .:/app
+      - /app/node_modules
+      # Isolate Next.js incremental build cache inside the container so it
+      # does not conflict with any local .next directory on the host.
+      - /app/apps/portal/.next
 
 volumes:
   pgdata:

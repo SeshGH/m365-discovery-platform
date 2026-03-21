@@ -1,0 +1,36 @@
+# .dockerignore — keep the build context lean
+node_modules
+**/node_modules
+.pnpm-store
+
+# Next.js build output
+**/.next
+**/out
+
+# TypeScript incremental build info
+**/*.tsbuildinfo
+
+# Local env files (injected via docker-compose environment: blocks instead)
+.env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Git / editor noise
+.git
+.gitignore
+.claude
+*.md
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local dev artefacts
+docker-data/
+docker-volumes/
+tmp/
+*.csv
+*.ndjson
+*.jsonl
+*.zip
