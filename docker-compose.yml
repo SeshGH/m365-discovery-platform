@@ -1,19 +1,22 @@
 # docker-compose.yml — dev/demo stack for m365-discovery-platform
 #
 # Usage:
-#   cp docker.env.example .env.docker        # fill in GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
+#   cp .env.docker.example .env.docker       # fill in secrets
 #   docker compose --env-file .env.docker up --build
 #
 # Portal: http://localhost:3000
 # MinIO console: http://localhost:9001  (minioadmin / minioadmin)
 #
-# NOTE: this file intentionally does NOT read the repo-root .env so that
-# local dev credentials are never accidentally used inside containers.
+# NOTE: this file does NOT read the repo-root .env.
 # All secrets are supplied via --env-file .env.docker on the CLI.
+#
+# Source code is baked into the image via COPY . . during --build.
+# No bind mounts are used: this avoids Windows symlink issues with
+# pnpm's node_modules layout overwriting container-installed deps.
+# Re-run with --build to pick up source changes.
 
 services:
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -31,10 +34,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── MinIO (S3-compatible artefact storage) ───────────────────────────────────
-  # No healthcheck: the minio/minio image does not ship curl/wget.
-  # minio-init uses restart: on-failure to retry until MinIO is accepting connections.
-  # api/worker only touch MinIO when processing jobs, not at startup.
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -48,7 +47,6 @@ services:
     volumes:
       - miniodata:/data
 
-  # ── MinIO bucket initialisation (runs once then exits) ───────────────────────
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -61,21 +59,12 @@ services:
         echo 'Bucket ready.'
       "
 
-  # ── Fastify API ──────────────────────────────────────────────────────────────
-  # Runs prisma migrate deploy before starting so the schema is always current.
-  # Portal → API auth uses PORTAL_INTERNAL_JWT_SECRET + PORTAL_DEV_ORG_ID.
-  # There is no PORTAL_BACKEND_BEARER_TOKEN in this codebase.
   api:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: >
-      sh -c "
-        node_modules/.bin/prisma migrate deploy
-          --schema packages/db/prisma/schema.prisma &&
-        pnpm --filter @acme/api dev
-      "
+    command: sh -c "node_modules/.bin/prisma migrate deploy --schema packages/db/prisma/schema.prisma && pnpm --filter @acme/api dev"
     environment:
       DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
       PORTAL_INTERNAL_JWT_SECRET: ${PORTAL_INTERNAL_JWT_SECRET}
@@ -93,11 +82,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-    volumes:
-      - .:/app
-      - /app/node_modules
 
-  # ── Worker ───────────────────────────────────────────────────────────────────
   worker:
     build:
       context: .
@@ -120,39 +105,22 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-    volumes:
-      - .:/app
-      - /app/node_modules
 
-  # ── Next.js Portal ───────────────────────────────────────────────────────────
-  # cd into the app directory so Next.js resolves next.config, tsconfig, etc.
-  # from the correct root. pnpm dev runs the portal's own dev script; the extra
-  # -- --hostname 0.0.0.0 arg is forwarded to `next dev` so the dev server
-  # binds to all interfaces and is reachable from outside the container.
   portal:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: sh -c "cd apps/portal && pnpm dev -- --hostname 0.0.0.0"
+    command: sh -c "cd apps/portal && node_modules/.bin/next dev -p 3000 -H 0.0.0.0"
     environment:
-      # Server-side: Next.js route handlers proxy to the Fastify API.
-      # Container-to-container; the docker service name resolves correctly.
       PORTAL_API_BASE_URL: http://api:8080
       PORTAL_INTERNAL_JWT_SECRET: ${PORTAL_INTERNAL_JWT_SECRET}
       PORTAL_DEV_ORG_ID: ${PORTAL_DEV_ORG_ID}
-      # Public: used by the browser to construct the admin consent URL.
       NEXT_PUBLIC_GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
     ports:
       - "3000:3000"
     depends_on:
       - api
-    volumes:
-      - .:/app
-      - /app/node_modules
-      # Isolate Next.js incremental build cache inside the container so it
-      # does not conflict with any local .next directory on the host.
-      - /app/apps/portal/.next
 
 volumes:
   pgdata:
