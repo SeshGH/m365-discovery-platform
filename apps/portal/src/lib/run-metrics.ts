@@ -186,8 +186,10 @@ const pathsSPO_SitesInReport = ["storage.sitesInReport"];
 const pathsSPO_StorageUsedGbTotal = ["storage.storageUsedGbTotal"];
 
 const mUsers = (o: ObservedCheckItem) =>
-  String(o.checkId).includes("entra") &&
-  (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
+  o.checkId === "ENTRA_USERS_OBS_001" ||
+  String(o.collectorId).includes("entra.users") ||
+  (String(o.checkId).toLowerCase().includes("entra") &&
+    String(o.checkId).toLowerCase().includes("users"));
 
 const mGroups = (o: ObservedCheckItem) =>
   String(o.collectorId).includes("entra.groups") ||
@@ -323,6 +325,36 @@ const metricRegistry: MetricDefinition[] = [
     };
   }
 },
+
+  // -------------------------
+  // Entra Conditional Access (ENTRA_CA_OBS_001)
+  // -------------------------
+  {
+    key: "ca",
+    label: "CA policies",
+    evidenceQuery: "ENTRA_CA_OBS_001",
+    evidenceHint: "Filter Evidence to the Conditional Access policies observed check.",
+    derive: (observed) => {
+      const obs = observed.find((o) => o.checkId === "ENTRA_CA_OBS_001");
+      if (!obs) return null;
+
+      const total = readNumberAtPath(obs.data, pathsCA);
+      const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
+
+      if (total === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+
+      const permDenied = readBool(obs.data, "permissionDenied");
+      const tone: MetricTone = permDenied === true ? "warn" : "ok";
+      const hint =
+        permDenied === true
+          ? "Permission missing: Policy.Read.All not granted."
+          : `${formatInt(total)} Conditional Access polic${total === 1 ? "y" : "ies"} found.`;
+
+      return { value: formatInt(total), tone, hint, sources };
+    }
+  },
 
   // -------------------------
   // SharePoint Online (SPO) metrics (Graph reports)
