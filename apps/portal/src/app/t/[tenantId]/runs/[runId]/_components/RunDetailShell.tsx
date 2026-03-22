@@ -411,6 +411,26 @@ function SummaryTab({
 
   const canCtaEvidence = (m: RunDetailViewModel["environmentOverview"][number]) => m.evidenceQuery !== undefined;
 
+  // Build grouped sections from METRIC_GROUPS. Metrics not assigned to any group
+  // are collected into `rest` and shown below the named groups.
+  const groupedMetrics = useMemo(() => {
+    const byKey = new Map(headlineMetrics.map((m) => [m.key, m]));
+    const used = new Set<string>();
+
+    const groups = METRIC_GROUPS
+      .map(({ label, keys }) => {
+        const metrics = keys
+          .map((k) => byKey.get(k))
+          .filter((m): m is RunDetailViewModel["environmentOverview"][number] => m !== undefined);
+        metrics.forEach((m) => used.add(m.key));
+        return { label, metrics };
+      })
+      .filter((g) => g.metrics.length > 0);
+
+    const rest = headlineMetrics.filter((m) => !used.has(m.key));
+    return { groups, rest };
+  }, [headlineMetrics]);
+
   return (
     <>
       <div className="card card-pad" style={{ marginTop: 12, marginBottom: 12 }}>
@@ -708,52 +728,60 @@ function SummaryTab({
         ) : null}
 
         {headlineMetrics.length === 0 ? (
-          <div className="subtle" style={{ marginTop: 10 }}>
+          <div className=”subtle” style={{ marginTop: 10 }}>
             No observed checks recorded yet, so no environment overview is available.
           </div>
         ) : (
           <>
-            <div className="env-grid" style={{ marginTop: 10 }}>
-              {headlineMetrics.map((m) => (
-                <div key={m.key} className={`env-card tone-${m.tone}`}>
-                  <div className="env-k">{m.label}</div>
-                  <div className="env-v">{m.value}</div>
-                  {m.hint ? <div className="env-h">{m.hint}</div> : null}
-
-                  {m.sources && m.sources.length > 0 ? (
-                    <div className="env-s">
-                      <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
-                    </div>
-                  ) : null}
-
-                  {canCtaEvidence(m) ? (
-                    <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        className="link link-action"
-                        onClick={() => onGoEvidenceQuery(m.evidenceQuery ?? "")}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          padding: 0,
-                          cursor: "pointer",
-                          fontWeight: 800,
-                          color: "var(--fg)"
-                        }}
-                        title={m.evidenceHint ?? "View supporting observed checks in Evidence"}
-                      >
-                        View evidence →
-                      </button>
-                      {m.evidenceHint ? <span className="subtle">{m.evidenceHint}</span> : null}
-                    </div>
-                  ) : null}
+            {groupedMetrics.groups.map((g) => (
+              <div key={g.label}>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 11,
+                    color: “var(--muted)”,
+                    textTransform: “uppercase”,
+                    letterSpacing: “0.07em”,
+                    marginTop: 20,
+                    marginBottom: 8
+                  }}
+                >
+                  {g.label}
                 </div>
-              ))}
-            </div>
+                <div className=”env-grid”>
+                  {g.metrics.map((m) => (
+                    <HeadlineMetricCard key={m.key} m={m} onGoEvidenceQuery={onGoEvidenceQuery} canCtaEvidence={canCtaEvidence} />
+                  ))}
+                </div>
+              </div>
+            ))}
 
-            <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
-              <div className="subtle" style={{ marginTop: 8 }}>
+            {groupedMetrics.rest.length > 0 ? (
+              <div>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 11,
+                    color: “var(--muted)”,
+                    textTransform: “uppercase”,
+                    letterSpacing: “0.07em”,
+                    marginTop: 20,
+                    marginBottom: 8
+                  }}
+                >
+                  Other
+                </div>
+                <div className=”env-grid”>
+                  {groupedMetrics.rest.map((m) => (
+                    <HeadlineMetricCard key={m.key} m={m} onGoEvidenceQuery={onGoEvidenceQuery} canCtaEvidence={canCtaEvidence} />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <details style={{ marginTop: 14 }}>
+              <summary style={{ cursor: “pointer” }}>How to validate a number</summary>
+              <div className=”subtle” style={{ marginTop: 8 }}>
                 Use the Evidence tab to locate the observed check(s) listed in “sources”, then inspect the underlying payload and
                 related artefacts.
               </div>
@@ -769,6 +797,69 @@ function SummaryTab({
     </>
   );
 }
+
+// ── HeadlineMetricCard ────────────────────────────────────────────────────────
+// Extracted from the flat env-grid loop so it can be reused across group sections.
+
+function HeadlineMetricCard({
+  m,
+  onGoEvidenceQuery,
+  canCtaEvidence
+}: {
+  m: RunDetailViewModel["environmentOverview"][number];
+  onGoEvidenceQuery: (q: string) => void;
+  canCtaEvidence: (m: RunDetailViewModel["environmentOverview"][number]) => boolean;
+}) {
+  return (
+    <div className={`env-card tone-${m.tone}`}>
+      <div className="env-k">{m.label}</div>
+      <div className="env-v">{m.value}</div>
+      {m.hint ? <div className="env-h">{m.hint}</div> : null}
+
+      {m.sources && m.sources.length > 0 ? (
+        <div className="env-s">
+          <span className="subtle">sources:</span> <span className="muted2">{m.sources.join(", ")}</span>
+        </div>
+      ) : null}
+
+      {canCtaEvidence(m) ? (
+        <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="link link-action"
+            onClick={() => onGoEvidenceQuery(m.evidenceQuery ?? "")}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontWeight: 800,
+              color: "var(--fg)"
+            }}
+            title={m.evidenceHint ?? "View supporting observed checks in Evidence"}
+          >
+            View evidence →
+          </button>
+          {m.evidenceHint ? <span className="subtle">{m.evidenceHint}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── METRIC_GROUPS ─────────────────────────────────────────────────────────────
+// Presentation-only grouping: maps domain section labels to ordered EnvMetric keys.
+// Keys must match EnvMetric.key values produced by run-metrics.ts.
+// Metrics not listed here appear in an unlabelled "Other" section below the groups.
+// To add a new collector's metrics: add its key(s) to the relevant group, or create
+// a new { label, keys } entry.
+
+const METRIC_GROUPS: ReadonlyArray<{ label: string; keys: ReadonlyArray<string> }> = [
+  { label: "Entra ID",   keys: ["users", "groups", "apps", "ca"] },
+  { label: "Exchange",   keys: ["exo_mailboxes_total", "exo_mailboxes_near50", "exo_mailboxes_over50", "mailboxes"] },
+  { label: "SharePoint", keys: ["spo_sites_in_report", "spo_sharing_capability", "spo_storage_used_gb"] },
+  { label: "Intune",     keys: ["mdm_devices_total", "mdm_noncompliant_devices"] },
+];
 
 function severityRank(s: string): number {
   const x = String(s ?? "").toLowerCase();
