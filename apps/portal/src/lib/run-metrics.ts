@@ -292,36 +292,37 @@ const metricRegistry: MetricDefinition[] = [
       };
     }
   },
-  {
-    key: "apps",
-    label: "Enterprise apps",
-    evidenceQuery: "ENTRA_EAP_OBS_001",
-    evidenceHint: "Filter Evidence to the Entra enterprise app permissions observed check.",
-    derive: (observed) => {
-      const apps = findCount(observed, mApps, pathsApps);
+{
+  key: "apps",
+  label: "Enterprise apps",
+  evidenceQuery: "ENTRA_EAP_OBS_001",
+  evidenceHint: "Filter Evidence to the Entra enterprise app permissions observed check.",
+  derive: (observed) => {
+    const obs = observed.find(mApps);
+    const apps = obs ? readNumberAtPath(obs.data, pathsApps) : undefined;
+    const sources = sourcesFor(observed, mApps);
+
+    if (apps === undefined) {
       return {
-        value: apps === undefined ? "—" : formatInt(apps),
-        tone: apps === undefined ? "muted" : "ok",
-        hint: apps === undefined ? "Not derived from observed data yet" : undefined,
-        sources: sourcesFor(observed, mApps)
+        value: "—",
+        tone: "muted" as MetricTone,
+        hint: "Not derived from observed data yet",
+        sources
       };
     }
-  },
-  {
-    key: "ca",
-    label: "CA policies",
-    evidenceQuery: "ENTRA_CA_OBS_001",
-    evidenceHint: "Filter Evidence to the Entra Conditional Access policies observed check.",
-    derive: (observed) => {
-      const ca = findCount(observed, mCA, pathsCA);
-      return {
-        value: ca === undefined ? "—" : formatInt(ca),
-        tone: ca === undefined ? "muted" : "ok",
-        hint: ca === undefined ? "Not derived from observed data yet" : undefined,
-        sources: sourcesFor(observed, mCA)
-      };
-    }
-  },
+
+    const truncated = obs ? ocIsTruncated(obs.data) : false;
+
+    return {
+      value: truncated ? `${formatInt(apps)} (capped)` : formatInt(apps),
+      tone: truncated ? ("warn" as MetricTone) : ("ok" as MetricTone),
+      hint: truncated
+        ? `${formatInt(apps)} total enterprise apps found. Collection was capped — treat as indicative.`
+        : `${formatInt(apps)} enterprise apps found.`,
+      sources
+    };
+  }
+},
 
   // -------------------------
   // SharePoint Online (SPO) metrics (Graph reports)
