@@ -166,6 +166,7 @@ const pathsApps = [
   "summary.counts.apps",
   "stats.apps",
   "totalApps",
+  "totalEnterpriseApps",
   "value"
 ];
 const pathsCA = [
@@ -185,9 +186,8 @@ const pathsSPO_SitesInReport = ["storage.sitesInReport"];
 const pathsSPO_StorageUsedGbTotal = ["storage.storageUsedGbTotal"];
 
 const mUsers = (o: ObservedCheckItem) =>
-  String(o.collectorId).includes("entra.users") ||
-  (String(o.checkId).toLowerCase().includes("entra") &&
-    String(o.checkId).toLowerCase().includes("users"));
+  String(o.checkId).includes("entra") &&
+  (String(o.checkId).includes("users") || String(o.collectorId).includes("entra.users"));
 
 const mGroups = (o: ObservedCheckItem) =>
   String(o.collectorId).includes("entra.groups") ||
@@ -236,8 +236,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "collectors",
     label: "Collectors seen",
-    evidenceQuery: "",
-    evidenceHint: "Shows all observed checks for this run.",
+    evidenceQuery: "collector",
+    evidenceHint: "Shows observed checks grouped by collectorId.",
     derive: (observed) => {
       const collectorsSeen = uniq(observed.map((o) => String(o.collectorId || "")).filter(Boolean));
       return {
@@ -265,8 +265,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "users",
     label: "Users",
-    evidenceQuery: "ENTRA_USERS_OBS_001",
-    evidenceHint: "Filter Evidence to the Entra user inventory observed check.",
+    evidenceQuery: "entra users",
+    evidenceHint: "Filter Evidence for Entra user inventory checks.",
     derive: (observed) => {
       const users = findCount(observed, mUsers, pathsUsers);
       return {
@@ -292,7 +292,7 @@ const metricRegistry: MetricDefinition[] = [
       };
     }
   },
-{
+  {
   key: "apps",
   label: "Enterprise apps",
   evidenceQuery: "ENTRA_EAP_OBS_001",
@@ -487,11 +487,11 @@ const metricRegistry: MetricDefinition[] = [
       }
 
       return {
-        value: truncated ? `${formatInt(total)} (capped)` : formatInt(total),
+        value: truncated ? `${total.toLocaleString()} (capped)` : total.toLocaleString(),
         tone: "ok" as MetricTone,
         hint: truncated
-          ? `${formatInt(total)} devices enumerated (collection capped — actual total may be higher).`
-          : `${formatInt(total)} device${total === 1 ? "" : "s"} enrolled in Intune MDM.`,
+          ? `${total.toLocaleString()} devices enumerated (collection capped — actual total may be higher).`
+          : `${total.toLocaleString()} device${total === 1 ? "" : "s"} enrolled in Intune MDM.`,
         sources
       };
     }
@@ -529,11 +529,11 @@ const metricRegistry: MetricDefinition[] = [
       }
 
       return {
-        value: formatInt(noncompliant),
+        value: noncompliant.toLocaleString(),
         tone: noncompliant > 0 ? "warn" : "ok",
         hint:
           noncompliant > 0
-            ? `${formatInt(noncompliant)} device${noncompliant === 1 ? "" : "s"} in non-compliant state. Review compliance policies and device status in Intune.`
+            ? `${noncompliant} device${noncompliant === 1 ? "" : "s"} in non-compliant state. Review compliance policies and device status in Intune.`
             : "No devices in non-compliant state.",
         sources
       };
@@ -576,7 +576,7 @@ const metricRegistry: MetricDefinition[] = [
       const sources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 
       return {
-        value: totalMailboxes === null ? "—" : formatInt(totalMailboxes),
+        value: totalMailboxes === null ? "—" : totalMailboxes.toLocaleString(),
         tone,
         hint,
         sources
@@ -609,7 +609,7 @@ const metricRegistry: MetricDefinition[] = [
       const sources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 
       return {
-        value: near50 === null ? "—" : formatInt(near50),
+        value: near50 === null ? "—" : near50.toLocaleString(),
         tone: near50 !== null && near50 > 0 ? "warn" : baseTone,
         hint: "Mailboxes in the 40–50GB range (licensing threshold watchlist).",
         sources
@@ -642,7 +642,7 @@ const metricRegistry: MetricDefinition[] = [
       const sources = uniq([exo.checkId, exo.collectorId].filter(Boolean) as string[]);
 
       return {
-        value: over50 === null ? "—" : formatInt(over50),
+        value: over50 === null ? "—" : over50.toLocaleString(),
         tone: over50 !== null && over50 > 0 ? "warn" : baseTone,
         hint: "Mailboxes above 50GB (often require EXO Plan 2 / E3/E5+).",
         sources
@@ -654,8 +654,8 @@ const metricRegistry: MetricDefinition[] = [
   {
     key: "mailboxes",
     label: "Mailboxes",
-    evidenceQuery: "",
-    evidenceHint: "Shows all observed checks (no specific mailbox check ID available in fallback mode).",
+    evidenceQuery: "mailbox exchange",
+    evidenceHint: "Filter Evidence for mailbox-related checks (heuristic).",
     derive: (observed) => {
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (exo) return null; // if EXO metrics exist, we don't show the heuristic card
@@ -663,7 +663,7 @@ const metricRegistry: MetricDefinition[] = [
       const mailboxes = findCount(observed, mMail, pathsMailboxes);
 
       return {
-        value: mailboxes === undefined ? "—" : formatInt(mailboxes),
+        value: mailboxes === undefined ? "—" : mailboxes.toLocaleString(),
         tone: mailboxes === undefined ? "muted" : "ok",
         hint: mailboxes === undefined ? "Not derived from observed data yet" : "Heuristic (non-EXO-specific) count",
         sources: sourcesFor(observed, mMail)
