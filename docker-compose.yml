@@ -70,6 +70,10 @@ services:
       PORTAL_INTERNAL_JWT_SECRET: ${PORTAL_INTERNAL_JWT_SECRET}
       PORTAL_DEV_ORG_ID: ${PORTAL_DEV_ORG_ID}
       S3_ENDPOINT: http://minio:9000
+      # S3_PUBLIC_ENDPOINT is the browser-reachable MinIO URL.
+      # Presigned download URLs use this host so the browser can resolve them.
+      # In Docker dev, MinIO port 9000 is mapped to the host, so localhost:9000 works.
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: artefacts

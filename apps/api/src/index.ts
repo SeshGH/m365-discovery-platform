@@ -316,6 +316,14 @@ const S3_BUCKET = process.env.S3_BUCKET ?? "artefacts";
 const S3_FORCE_PATH_STYLE =
   String(process.env.S3_FORCE_PATH_STYLE ?? "true").toLowerCase() === "true";
 
+// Optional: public-facing MinIO endpoint for presigned URL generation.
+// When the API runs inside Docker, S3_ENDPOINT is an internal hostname (e.g. minio:9000).
+// Presigned URLs containing that hostname are unreachable from the host browser.
+// Set S3_PUBLIC_ENDPOINT to the host-accessible URL (e.g. http://localhost:9000) so that
+// generated presigned URLs resolve correctly in the browser.
+// If not set, presigning falls back to S3_ENDPOINT (correct for non-Docker deployments).
+const S3_PUBLIC_ENDPOINT = process.env.S3_PUBLIC_ENDPOINT?.trim() || undefined;
+
 if (!S3_ENDPOINT || !S3_ACCESS_KEY || !S3_SECRET_KEY) {
   throw new Error(
     `[api] Missing S3 config env vars. Required: S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY`
@@ -331,6 +339,21 @@ const S3 = new S3Client({
   },
   forcePathStyle: S3_FORCE_PATH_STYLE
 });
+
+// Separate client used only for presigning download URLs.
+// Uses S3_PUBLIC_ENDPOINT when set so presigned URLs are browser-safe.
+const S3Presign =
+  S3_PUBLIC_ENDPOINT && S3_PUBLIC_ENDPOINT !== S3_ENDPOINT
+    ? new S3Client({
+        region: S3_REGION,
+        endpoint: S3_PUBLIC_ENDPOINT,
+        credentials: {
+          accessKeyId: S3_ACCESS_KEY,
+          secretAccessKey: S3_SECRET_KEY
+        },
+        forcePathStyle: S3_FORCE_PATH_STYLE
+      })
+    : S3;
 
 app.get("/health", async () => ({ ok: true }));
 
@@ -361,7 +384,7 @@ async function presignArtefactDownload(params: { bucket: string; key: string }) 
   const filename = safeAttachmentFilename(params.key.split("/").pop() ?? "artefact");
 
   const url = await getSignedUrl(
-    S3,
+    S3Presign,
     new GetObjectCommand({
       Bucket: params.bucket,
       Key: params.key,
