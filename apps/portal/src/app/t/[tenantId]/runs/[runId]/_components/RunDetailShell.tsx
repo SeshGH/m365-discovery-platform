@@ -209,7 +209,7 @@ function EstateSizingNarrative({
 
   const tail =
     missing > 0
-      ? ` ${missing} metric${missing === 1 ? "" : "s"} not observed in a known shape (shown as “—” below).`
+      ? ` ${missing} metric${missing === 1 ? "" : "s"} not observed in a known shape (shown as "—" below).`
       : "";
 
   const caveat = hasCompletenessIssues
@@ -711,7 +711,7 @@ function SummaryTab({
         </div>
 
         <div className="subtle" style={{ marginTop: 6 }}>
-          These numbers are derived from observed check payloads only (no silent assumptions). A value of “—” means we haven’t yet
+          These numbers are derived from observed check payloads only (no silent assumptions). A value of "—" means we haven’t yet
           emitted a check that includes that count in a known shape.
         </div>
 
@@ -728,27 +728,33 @@ function SummaryTab({
         ) : null}
 
         {headlineMetrics.length === 0 ? (
-          <div className=”subtle” style={{ marginTop: 10 }}>
+          <div className="subtle" style={{ marginTop: 10 }}>
             No observed checks recorded yet, so no environment overview is available.
           </div>
         ) : (
           <>
-            {groupedMetrics.groups.map((g) => (
-              <div key={g.label}>
+            {groupedMetrics.groups.map((g, i) => (
+              <div
+                key={g.label}
+                style={{
+                  marginTop: i === 0 ? 0 : 20,
+                  padding: 16,
+                  border: "1px solid var(--border)",
+                  background: "var(--panel)",
+                  borderRadius: "var(--radius)"
+                }}
+              >
                 <div
                   style={{
                     fontWeight: 600,
-                    fontSize: 11,
-                    color: “var(--muted)”,
-                    textTransform: “uppercase”,
-                    letterSpacing: “0.07em”,
-                    marginTop: 20,
-                    marginBottom: 8
+                    fontSize: 15,
+                    color: "var(--fg)",
+                    marginBottom: 12
                   }}
                 >
                   {g.label}
                 </div>
-                <div className=”env-grid”>
+                <div className="env-grid">
                   {g.metrics.map((m) => (
                     <HeadlineMetricCard key={m.key} m={m} onGoEvidenceQuery={onGoEvidenceQuery} canCtaEvidence={canCtaEvidence} />
                   ))}
@@ -757,21 +763,26 @@ function SummaryTab({
             ))}
 
             {groupedMetrics.rest.length > 0 ? (
-              <div>
+              <div
+                style={{
+                  marginTop: 20,
+                  padding: 16,
+                  border: "1px solid var(--border)",
+                  background: "var(--panel)",
+                  borderRadius: "var(--radius)"
+                }}
+              >
                 <div
                   style={{
                     fontWeight: 600,
-                    fontSize: 11,
-                    color: “var(--muted)”,
-                    textTransform: “uppercase”,
-                    letterSpacing: “0.07em”,
-                    marginTop: 20,
-                    marginBottom: 8
+                    fontSize: 15,
+                    color: "var(--fg)",
+                    marginBottom: 12
                   }}
                 >
                   Other
                 </div>
-                <div className=”env-grid”>
+                <div className="env-grid">
                   {groupedMetrics.rest.map((m) => (
                     <HeadlineMetricCard key={m.key} m={m} onGoEvidenceQuery={onGoEvidenceQuery} canCtaEvidence={canCtaEvidence} />
                   ))}
@@ -780,9 +791,9 @@ function SummaryTab({
             ) : null}
 
             <details style={{ marginTop: 14 }}>
-              <summary style={{ cursor: “pointer” }}>How to validate a number</summary>
-              <div className=”subtle” style={{ marginTop: 8 }}>
-                Use the Evidence tab to locate the observed check(s) listed in “sources”, then inspect the underlying payload and
+              <summary style={{ cursor: "pointer" }}>How to validate a number</summary>
+              <div className="subtle" style={{ marginTop: 8 }}>
+                Use the Evidence tab to locate the observed check(s) listed in "sources", then inspect the underlying payload and
                 related artefacts.
               </div>
             </details>
@@ -971,7 +982,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
           <p className="subtle" style={{ marginTop: 0 }}>
-            Findings are a derived “what matters” view. Supporting evidence is shown from observed checks (source of truth) and related
+            Findings are a derived "what matters" view. Supporting evidence is shown from observed checks (source of truth) and related
             artefacts (raw outputs), best-effort.
           </p>
         </div>
