@@ -737,9 +737,10 @@ function SummaryTab({
               <div
                 key={g.label}
                 style={{
-                  marginTop: i === 0 ? 0 : 20,
+                  marginTop: i === 0 ? 0 : 28,
                   padding: 16,
                   border: "1px solid var(--border)",
+                  borderLeft: "3px solid var(--border)",
                   background: "var(--panel)",
                   borderRadius: "var(--radius)"
                 }}
@@ -750,7 +751,7 @@ function SummaryTab({
                     alignItems: "center",
                     gap: 8,
                     fontWeight: 600,
-                    fontSize: 18,
+                    fontSize: 19,
                     color: "var(--fg)",
                     marginBottom: 12,
                     paddingBottom: 10,
@@ -771,9 +772,10 @@ function SummaryTab({
             {groupedMetrics.rest.length > 0 ? (
               <div
                 style={{
-                  marginTop: 20,
+                  marginTop: 28,
                   padding: 16,
                   border: "1px solid var(--border)",
+                  borderLeft: "3px solid var(--border)",
                   background: "var(--panel)",
                   borderRadius: "var(--radius)"
                 }}
@@ -784,7 +786,7 @@ function SummaryTab({
                     alignItems: "center",
                     gap: 8,
                     fontWeight: 600,
-                    fontSize: 18,
+                    fontSize: 19,
                     color: "var(--fg)",
                     marginBottom: 12,
                     paddingBottom: 10,
@@ -890,7 +892,7 @@ const METRIC_GROUPS: ReadonlyArray<{ label: string; keys: ReadonlyArray<string> 
 
 function SectionIcon({ name }: { name: string }) {
   const p = {
-    width: 16, height: 16, viewBox: "0 0 24 24",
+    width: 18, height: 18, viewBox: "0 0 24 24",
     fill: "none", stroke: "currentColor", strokeWidth: 2,
     strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
     style: { flexShrink: 0 }, "aria-hidden": true,
