@@ -878,7 +878,7 @@ function interpretMetric(m: EnvMetricItem): string | null {
       if (!hasNum) return null;
       if (num === 0) return "No CA policies — open access risk";
       if (num >= 10) return "Mature conditional access posture";
-      return "CA policies present";
+      return "Basic conditional access posture";
 
     case "users":
       if (!hasNum) return null;
