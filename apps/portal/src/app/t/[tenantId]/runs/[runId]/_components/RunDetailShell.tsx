@@ -887,6 +887,13 @@ function interpretMetric(m: EnvMetricItem): string | null {
       if (num >= 100) return "Mid-size user base";
       return "Small user base";
 
+    case "global_admins":
+      if (!hasNum) return null;
+      if (num === 0) return "No active Global Administrators observed";
+      if (num <= 2) return "Tightly controlled privileged access";
+      if (num <= 5) return "Broad privileged access surface";
+      return "High number of Global Administrators";
+
     default:
       return null;
   }
@@ -954,7 +961,7 @@ function HeadlineMetricCard({
 // a new { label, keys } entry.
 
 const METRIC_GROUPS: ReadonlyArray<{ label: string; keys: ReadonlyArray<string> }> = [
-  { label: "Entra ID",   keys: ["users", "groups", "apps", "ca"] },
+  { label: "Entra ID",   keys: ["users", "groups", "apps", "ca", "global_admins"] },
   { label: "Exchange",   keys: ["exo_mailboxes_total", "exo_mailboxes_near50", "exo_mailboxes_over50", "mailboxes"] },
   { label: "SharePoint", keys: ["spo_sites_in_report", "spo_sharing_capability", "spo_storage_used_gb"] },
   { label: "Intune",     keys: ["mdm_devices_total", "mdm_noncompliant_devices"] },

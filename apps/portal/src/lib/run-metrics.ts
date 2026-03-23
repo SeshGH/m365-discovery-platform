@@ -377,6 +377,58 @@ const metricRegistry: MetricDefinition[] = [
   },
 
   // -------------------------
+  // Entra Directory Roles – Global Administrator count (ENTRA_DIRROLES_OBS_001)
+  // -------------------------
+  {
+    key: "global_admins",
+    label: "Global admins",
+    evidenceQuery: "ENTRA_DIRROLES_OBS_001",
+    evidenceHint: "Filter Evidence to the directory roles inventory observed check.",
+    derive: (observed) => {
+      const obs = observed.find((o) => o.checkId === "ENTRA_DIRROLES_OBS_001");
+      if (!obs) return null;
+
+      const count = readNumber(obs.data, "globalAdminCount");
+      const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
+
+      if (count === null) {
+        return { value: "—", tone: "muted", hint: "Global Administrator count not available.", sources };
+      }
+
+      // Signal-first: permissionDenied or truncated degrade the value regardless of count
+      const permDenied = ocPermissionDeniedList(obs.data);
+      if (permDenied.length > 0) {
+        return {
+          value: "—",
+          tone: "warn",
+          hint: "Permission missing: could not enumerate directory role members.",
+          sources
+        };
+      }
+      if (ocIsTruncated(obs.data) || ocIsIncomplete(obs.data)) {
+        return {
+          value: count.toLocaleString(),
+          tone: "warn",
+          hint: hintFromSignals({
+            base: `${count} Global Administrator assignment${count === 1 ? "" : "s"} observed.`,
+            data: obs.data
+          }),
+          sources
+        };
+      }
+
+      // Count-based tone: 0–2 = ok, 3+ = warn
+      const tone: MetricTone = count >= 3 ? "warn" : "ok";
+      const hint =
+        count === 0
+          ? "No active Global Administrator assignments observed."
+          : `${count} active Global Administrator assignment${count === 1 ? "" : "s"}.`;
+
+      return { value: count.toLocaleString(), tone, hint, sources };
+    }
+  },
+
+  // -------------------------
   // SharePoint Online (SPO) metrics (Graph reports)
   // -------------------------
   {
