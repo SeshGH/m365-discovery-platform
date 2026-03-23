@@ -270,12 +270,19 @@ const metricRegistry: MetricDefinition[] = [
     evidenceQuery: "entra users",
     evidenceHint: "Filter Evidence for Entra user inventory checks.",
     derive: (observed) => {
-      const users = findCount(observed, mUsers, pathsUsers);
+      // Use find() to retain the OC ref so toneFromSignals can inspect its signals
+      const obs = observed.find(mUsers);
+      const users = obs ? readNumberAtPath(obs.data, pathsUsers) : undefined;
+      const sources = sourcesFor(observed, mUsers);
+      if (users === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+      const tone = toneFromSignals(obs!.data);
       return {
-        value: users === undefined ? "—" : formatInt(users),
-        tone: users === undefined ? "muted" : "ok",
-        hint: users === undefined ? "Not derived from observed data yet" : undefined,
-        sources: sourcesFor(observed, mUsers)
+        value: formatInt(users),
+        tone,
+        hint: tone !== "ok" ? hintFromSignals({ base: `${formatInt(users)} users found.`, data: obs!.data }) : undefined,
+        sources
       };
     }
   },
@@ -285,12 +292,19 @@ const metricRegistry: MetricDefinition[] = [
     evidenceQuery: "ENTRA_GROUPS_OBS_001",
     evidenceHint: "Filter Evidence to the Entra groups inventory observed check.",
     derive: (observed) => {
-      const groups = findCount(observed, mGroups, pathsGroups);
+      // Use find() to retain the OC ref so toneFromSignals can inspect its signals
+      const obs = observed.find(mGroups);
+      const groups = obs ? readNumberAtPath(obs.data, pathsGroups) : undefined;
+      const sources = sourcesFor(observed, mGroups);
+      if (groups === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+      const tone = toneFromSignals(obs!.data);
       return {
-        value: groups === undefined ? "—" : formatInt(groups),
-        tone: groups === undefined ? "muted" : "ok",
-        hint: groups === undefined ? "Not derived from observed data yet" : undefined,
-        sources: sourcesFor(observed, mGroups)
+        value: formatInt(groups),
+        tone,
+        hint: tone !== "ok" ? hintFromSignals({ base: `${formatInt(groups)} groups found.`, data: obs!.data }) : undefined,
+        sources
       };
     }
   },
@@ -314,13 +328,19 @@ const metricRegistry: MetricDefinition[] = [
     }
 
     const truncated = obs ? ocIsTruncated(obs.data) : false;
+    const permDenied = obs ? ocPermissionDeniedList(obs.data) : [];
+    // toneFromSignals covers permDenied + truncated + isComplete in one pass
+    const tone: MetricTone = obs ? toneFromSignals(obs.data) : "ok";
+    const hint = permDenied.length > 0
+      ? `Permission missing: ${permDenied.join(", ")}`
+      : truncated
+        ? `${formatInt(apps)} total enterprise apps found. Collection was capped — treat as indicative.`
+        : `${formatInt(apps)} enterprise apps found.`;
 
     return {
       value: truncated ? `${formatInt(apps)} (capped)` : formatInt(apps),
-      tone: truncated ? ("warn" as MetricTone) : ("ok" as MetricTone),
-      hint: truncated
-        ? `${formatInt(apps)} total enterprise apps found. Collection was capped — treat as indicative.`
-        : `${formatInt(apps)} enterprise apps found.`,
+      tone,
+      hint,
       sources
     };
   }
@@ -345,12 +365,12 @@ const metricRegistry: MetricDefinition[] = [
         return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
       }
 
-      const permDenied = readBool(obs.data, "permissionDenied");
-      const tone: MetricTone = permDenied === true ? "warn" : "ok";
-      const hint =
-        permDenied === true
-          ? "Permission missing: Policy.Read.All not granted."
-          : `${formatInt(total)} Conditional Access polic${total === 1 ? "y" : "ies"} found.`;
+      // Use ocPermissionDeniedList (consistent with all other metrics) and toneFromSignals
+      const permDenied = ocPermissionDeniedList(obs.data);
+      const tone: MetricTone = toneFromSignals(obs.data);
+      const hint = permDenied.length > 0
+        ? "Permission missing: Policy.Read.All not granted."
+        : hintFromSignals({ base: `${formatInt(total)} Conditional Access polic${total === 1 ? "y" : "ies"} found.`, data: obs.data });
 
       return { value: formatInt(total), tone, hint, sources };
     }
@@ -438,16 +458,17 @@ const metricRegistry: MetricDefinition[] = [
 
       const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
 
-      if (!isComplete || permDenied.length > 0) {
-        return {
-          value: "—",
-          tone: "muted",
-          hint:
-            permDenied.length > 0
-              ? "Permission missing: SharePointTenantSettings.Read.All not granted."
-              : "SharePoint admin settings not collected.",
-          sources
-        };
+      // permissionDenied → warn (data was attempted, access was blocked)
+      if (permDenied.length > 0) {
+        return { value: "—", tone: "warn", hint: "Permission missing: SharePointTenantSettings.Read.All not granted.", sources };
+      }
+      // isComplete === false → warn (collector ran but explicitly flagged incomplete)
+      if (isComplete === false) {
+        return { value: "—", tone: "warn", hint: "SharePoint admin settings collection incomplete.", sources };
+      }
+      // isComplete === null (field absent) → muted (collector has not run yet)
+      if (isComplete !== true) {
+        return { value: "—", tone: "muted", hint: "SharePoint admin settings not collected.", sources };
       }
 
       if (!capability) {
@@ -500,16 +521,12 @@ const metricRegistry: MetricDefinition[] = [
       const truncated = readBool(d, "truncated");
       const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
 
-      if (permDenied.length > 0 || isComplete === false) {
-        return {
-          value: "—",
-          tone: "muted" as MetricTone,
-          hint:
-            permDenied.length > 0
-              ? "Permission missing: DeviceManagementManagedDevices.Read.All not granted."
-              : "Intune device data not collected.",
-          sources
-        };
+      // permissionDenied → warn; isComplete === false → warn (both are collection-attempted states)
+      if (permDenied.length > 0) {
+        return { value: "—", tone: "warn", hint: "Permission missing: DeviceManagementManagedDevices.Read.All not granted.", sources };
+      }
+      if (isComplete === false) {
+        return { value: "—", tone: "warn", hint: "Intune device data not collected.", sources };
       }
 
       const total = readNumber(getPath(d, "counts") as any, "total");
@@ -520,7 +537,8 @@ const metricRegistry: MetricDefinition[] = [
 
       return {
         value: truncated ? `${total.toLocaleString()} (capped)` : total.toLocaleString(),
-        tone: "ok" as MetricTone,
+        // truncated → warn, consistent with apps/EAP capped behaviour
+        tone: truncated ? "warn" : "ok",
         hint: truncated
           ? `${total.toLocaleString()} devices enumerated (collection capped — actual total may be higher).`
           : `${total.toLocaleString()} device${total === 1 ? "" : "s"} enrolled in Intune MDM.`,
@@ -542,16 +560,12 @@ const metricRegistry: MetricDefinition[] = [
       const isComplete = readBool(d, "isComplete");
       const sources = uniq([obs.checkId, obs.collectorId].filter(Boolean) as string[]);
 
-      if (permDenied.length > 0 || isComplete === false) {
-        return {
-          value: "—",
-          tone: "muted" as MetricTone,
-          hint:
-            permDenied.length > 0
-              ? "Permission missing: DeviceManagementManagedDevices.Read.All not granted."
-              : "Intune device data not collected.",
-          sources
-        };
+      // permissionDenied → warn; isComplete === false → warn
+      if (permDenied.length > 0) {
+        return { value: "—", tone: "warn", hint: "Permission missing: DeviceManagementManagedDevices.Read.All not granted.", sources };
+      }
+      if (isComplete === false) {
+        return { value: "—", tone: "warn", hint: "Intune device data not collected.", sources };
       }
 
       const noncompliant = readNumber(getPath(d, "counts") as any, "noncompliant");
@@ -692,13 +706,23 @@ const metricRegistry: MetricDefinition[] = [
       const exo = observed.find((x) => x.checkId === EXO_OBS_CHECK_ID);
       if (exo) return null; // if EXO metrics exist, we don't show the heuristic card
 
+      // Retain OC ref alongside findCount so toneFromSignals can inspect signals
+      const obs = observed.find(mMail);
       const mailboxes = findCount(observed, mMail, pathsMailboxes);
+      const sources = sourcesFor(observed, mMail);
 
+      if (mailboxes === undefined) {
+        return { value: "—", tone: "muted", hint: "Not derived from observed data yet", sources };
+      }
+
+      const tone = obs ? toneFromSignals(obs.data) : "ok";
       return {
-        value: mailboxes === undefined ? "—" : mailboxes.toLocaleString(),
-        tone: mailboxes === undefined ? "muted" : "ok",
-        hint: mailboxes === undefined ? "Not derived from observed data yet" : "Heuristic (non-EXO-specific) count",
-        sources: sourcesFor(observed, mMail)
+        value: mailboxes.toLocaleString(),
+        tone,
+        hint: tone !== "ok" && obs
+          ? hintFromSignals({ base: "Heuristic (non-EXO-specific) count.", data: obs.data })
+          : "Heuristic (non-EXO-specific) count",
+        sources
       };
     }
   },
