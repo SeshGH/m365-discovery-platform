@@ -750,11 +750,13 @@ function SummaryTab({
                     alignItems: "center",
                     gap: 8,
                     fontWeight: 600,
-                    fontSize: 16,
+                    fontSize: 17,
                     color: "var(--fg)",
                     marginBottom: 12,
-                    paddingBottom: 10,
-                    borderBottom: "1px solid var(--border)"
+                    padding: "10px 12px",
+                    background: "var(--panel-2)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8
                   }}
                 >
                   <SectionIcon name={g.label} />
@@ -784,11 +786,13 @@ function SummaryTab({
                     alignItems: "center",
                     gap: 8,
                     fontWeight: 600,
-                    fontSize: 16,
+                    fontSize: 17,
                     color: "var(--fg)",
                     marginBottom: 12,
-                    paddingBottom: 10,
-                    borderBottom: "1px solid var(--border)"
+                    padding: "10px 12px",
+                    background: "var(--panel-2)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8
                   }}
                 >
                   <SectionIcon name="Other" />
