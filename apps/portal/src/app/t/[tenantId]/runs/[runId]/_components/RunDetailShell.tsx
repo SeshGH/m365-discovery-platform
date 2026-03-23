@@ -940,7 +940,6 @@ function HeadlineMetricCard({
           >
             View evidence →
           </button>
-          {m.evidenceHint ? <span className="subtle">{m.evidenceHint}</span> : null}
         </div>
       ) : null}
     </div>
