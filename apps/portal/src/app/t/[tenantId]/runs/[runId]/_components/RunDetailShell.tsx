@@ -823,6 +823,75 @@ function SummaryTab({
   );
 }
 
+// ── interpretMetric ───────────────────────────────────────────────────────────
+// Presentation-only interpretation layer. Reads m.key + m.value (existing contract
+// fields) and returns a short human-readable insight string, or null.
+// Lives entirely in the UI layer — no backend/contract changes required.
+
+type EnvMetricItem = RunDetailViewModel["environmentOverview"][number];
+
+function interpretMetric(m: EnvMetricItem): string | null {
+  if (m.value === "—") return null;
+
+  // Parse numeric portion from formatted value strings ("1,234", "222 (capped)", etc.)
+  const num = parseFloat(m.value.replace(/,/g, ""));
+  const hasNum = Number.isFinite(num);
+  const capped = m.value.includes("(capped)");
+
+  switch (m.key) {
+    case "apps":
+      if (!hasNum) return null;
+      if (capped) return "Scan capped — footprint indicative only";
+      if (num >= 100) return "High app footprint";
+      if (num >= 20) return "Moderate app footprint";
+      return "Low app footprint";
+
+    case "spo_sharing_capability":
+      if (m.value === "Anyone links allowed") return "External sharing risk";
+      if (m.value === "External users only") return "External sharing enabled";
+      if (m.value === "Existing guests only") return "Limited external sharing";
+      if (m.value === "Disabled") return "Sharing fully restricted";
+      return null;
+
+    case "mdm_devices_total":
+      if (!hasNum) return null;
+      if (num === 0) return "No managed devices observed";
+      if (capped) return "Large estate — device scan capped";
+      if (num >= 500) return "Large managed device estate";
+      if (num >= 50) return "Active MDM deployment";
+      return "Small MDM footprint";
+
+    case "mdm_noncompliant_devices":
+      if (!hasNum) return null;
+      if (num === 0) return "Healthy compliance posture";
+      if (num >= 10) return "Compliance remediation needed";
+      return "Minor compliance gaps present";
+
+    case "exo_mailboxes_total":
+      if (!hasNum) return null;
+      if (num === 0) return "No Exchange mailboxes observed";
+      if (num >= 500) return "Large mailbox estate";
+      if (num >= 50) return "Mailbox estate present";
+      return "Small mailbox deployment";
+
+    case "ca":
+      if (!hasNum) return null;
+      if (num === 0) return "No CA policies — open access risk";
+      if (num >= 10) return "Mature conditional access posture";
+      return "CA policies present";
+
+    case "users":
+      if (!hasNum) return null;
+      if (num >= 10000) return "Large enterprise directory";
+      if (num >= 1000) return "Large user directory";
+      if (num >= 100) return "Mid-size user base";
+      return "Small user base";
+
+    default:
+      return null;
+  }
+}
+
 // ── HeadlineMetricCard ────────────────────────────────────────────────────────
 // Extracted from the flat env-grid loop so it can be reused across group sections.
 
@@ -835,10 +904,16 @@ function HeadlineMetricCard({
   onGoEvidenceQuery: (q: string) => void;
   canCtaEvidence: (m: RunDetailViewModel["environmentOverview"][number]) => boolean;
 }) {
+  const interpretation = interpretMetric(m);
   return (
     <div className={`env-card tone-${m.tone}`}>
       <div className="env-k">{m.label}</div>
       <div className="env-v">{m.value}</div>
+      {interpretation ? (
+        <div style={{ fontSize: 11, fontStyle: "italic", color: "var(--muted)", marginTop: 2 }}>
+          {interpretation}
+        </div>
+      ) : null}
       {m.hint ? <div className="env-h">{m.hint}</div> : null}
 
       {m.sources && m.sources.length > 0 ? (
