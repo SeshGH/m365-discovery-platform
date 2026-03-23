@@ -746,12 +746,18 @@ function SummaryTab({
               >
                 <div
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                     fontWeight: 600,
-                    fontSize: 15,
+                    fontSize: 16,
                     color: "var(--fg)",
-                    marginBottom: 12
+                    marginBottom: 12,
+                    paddingBottom: 10,
+                    borderBottom: "1px solid var(--border)"
                   }}
                 >
+                  <SectionIcon name={g.label} />
                   {g.label}
                 </div>
                 <div className="env-grid">
@@ -774,12 +780,18 @@ function SummaryTab({
               >
                 <div
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
                     fontWeight: 600,
-                    fontSize: 15,
+                    fontSize: 16,
                     color: "var(--fg)",
-                    marginBottom: 12
+                    marginBottom: 12,
+                    paddingBottom: 10,
+                    borderBottom: "1px solid var(--border)"
                   }}
                 >
+                  <SectionIcon name="Other" />
                   Other
                 </div>
                 <div className="env-grid">
@@ -871,6 +883,49 @@ const METRIC_GROUPS: ReadonlyArray<{ label: string; keys: ReadonlyArray<string> 
   { label: "SharePoint", keys: ["spo_sites_in_report", "spo_sharing_capability", "spo_storage_used_gb"] },
   { label: "Intune",     keys: ["mdm_devices_total", "mdm_noncompliant_devices"] },
 ];
+
+// ── SectionIcon ───────────────────────────────────────────────────────────────
+// Inline SVG icons for each domain group header — no external icon dependency.
+// Paths match the lucide-react icon set (24×24 viewBox, stroke-based).
+
+function SectionIcon({ name }: { name: string }) {
+  const p = {
+    width: 16, height: 16, viewBox: "0 0 24 24",
+    fill: "none", stroke: "currentColor", strokeWidth: 2,
+    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
+    style: { flexShrink: 0 }, "aria-hidden": true,
+  };
+  // Entra ID → Shield
+  if (name === "Entra ID") return (
+    <svg {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+  );
+  // Exchange → Mail
+  if (name === "Exchange") return (
+    <svg {...p}>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </svg>
+  );
+  // SharePoint → Folder
+  if (name === "SharePoint") return (
+    <svg {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
+  );
+  // Intune → Smartphone
+  if (name === "Intune") return (
+    <svg {...p}>
+      <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+      <path d="M12 18h.01" />
+    </svg>
+  );
+  // Other / fallback → Layers
+  return (
+    <svg {...p}>
+      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+      <polyline points="2 17 12 22 22 17" />
+      <polyline points="2 12 12 17 22 12" />
+    </svg>
+  );
+}
 
 function severityRank(s: string): number {
   const x = String(s ?? "").toLowerCase();
