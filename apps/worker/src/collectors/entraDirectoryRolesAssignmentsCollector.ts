@@ -375,6 +375,16 @@ if (ENABLE_PIM_SLICE) {
     const groupAssignmentsCount = distribution.group;
     const groupBasedPresent = groupAssignmentsCount > 0;
 
+    // Global Administrator count — well-known roleTemplateId is stable across all tenants.
+    // Fall back to display-name match in case the role was activated without a templateId.
+    const GLOBAL_ADMIN_TEMPLATE_ID = "62e90394-69f5-4237-9190-012177145e10";
+    const globalAdminEntry = roleMemberResults.find(
+      (r) =>
+        r.roleTemplateId === GLOBAL_ADMIN_TEMPLATE_ID ||
+        r.roleDisplayName === "Global Administrator"
+    );
+    const globalAdminCount = globalAdminEntry?.counts.total ?? 0;
+
     // "Core completeness" is about role definitions + active assignments only.
     const coreComplete =
       completeness.slicesCompleted.includes("roleDefinitions") &&
@@ -397,6 +407,7 @@ if (ENABLE_PIM_SLICE) {
           roleDefinitionsCount,
           rolesWithAnyActiveAssignmentCount,
           activeAssignmentsCount,
+          globalAdminCount,
           dataProfile,
           truncated: completeness.truncated
         },
@@ -552,6 +563,7 @@ if (ENABLE_PIM_SLICE) {
       scannedRolesCount: targetRoles.length,
       rolesWithAnyActiveAssignmentCount,
       activeAssignmentsCount,
+      globalAdminCount,
       assignmentPrincipalTypeCounts: {
         user: distribution.user,
         group: distribution.group,

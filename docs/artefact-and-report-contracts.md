@@ -195,10 +195,38 @@ Artefacts:
 | `directory-roles-assignments.safe.json` | safe    | Default  |
 | `directory-roles-assignments.full.json` | full    | Expanded |
 
+#### Safe artefact shape (stable)
+
+Root object:
+
+* `capturedAt` (ISO string)
+* `tenant.tenantId`
+* `dataProfile`: `"safe"`
+* `completeness` — `isComplete`, `truncated`, `permissionDenied[]`, `slicesAttempted[]`, `slicesCompleted[]`, `notes[]`
+* `summary`:
+
+  * `roleDefinitionsCount` — total role templates in tenant
+  * `activatedRolesCount` — enabled roles returned by `/directoryRoles`
+  * `scannedRolesCount` — roles actually enumerated (may be capped)
+  * `rolesWithAnyActiveAssignmentCount`
+  * `activeAssignmentsCount`
+  * `globalAdminCount` — active Global Administrator assignments (additive field; `0` if role not found or permissionDenied)
+  * `assignmentPrincipalTypeCounts` — `{ user, group, servicePrincipal, unknown }`
+  * `truncated`, `maxRoles`, `concurrency`
+  * `pim` — `{ attempted, succeeded, eligibleAssignmentsCount }`
+* `roles[]` (safe) — per-role `{ roleId, roleTemplateId, roleDisplayName, assignmentCounts: { total, user, group, servicePrincipal, unknown } }`
+
+#### Full artefact additions
+
+* `tenant` extended with `primaryDomain`, `displayName`
+* `dataProfile`: `"full"`
+* `roles[]` (full) — per-role `{ roleId, roleTemplateId, roleDisplayName, assignments: [{ assignmentType, principalType, principal: { id, odataType, displayName, userPrincipalName, mail, appId, servicePrincipalType } }] }`
+
 Notes:
 
-* Evidence is consumed by XLSX reporting only
-* Completeness is surfaced via observed checks, not findings
+* Evidence is consumed by XLSX reporting and run-metrics derivation layer
+* Completeness is surfaced via observed checks (`ENTRA_DIRROLES_OBS_005`), not findings
+* `globalAdminCount` also available on `ENTRA_DIRROLES_OBS_001` for lightweight UI derivation
 
 ---
 

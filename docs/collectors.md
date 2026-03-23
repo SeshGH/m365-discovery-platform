@@ -279,14 +279,22 @@ Correctness is enforced by retry-until-ready semantics (see `assertReportReadyOr
 **Observed checks (current)**
 
 * `ENTRA_DIRROLES_OBS_001` — Directory roles inventory summary
-* `ENTRA_DIRROLES_OBS_002` — Assignment principal type distribution
+
+  * `roleDefinitionsCount` — total role templates available in the tenant
+  * `rolesWithAnyActiveAssignmentCount` — roles that have at least one active member
+  * `activeAssignmentsCount` — total active role assignments across all scanned roles
+  * `globalAdminCount` — number of active Global Administrator assignments (well-known templateId `62e90394-69f5-4237-9190-012177145e10` + display-name fallback)
+  * `dataProfile`, `truncated`
+
+* `ENTRA_DIRROLES_OBS_002` — Assignment principal type distribution (user / group / servicePrincipal / unknown counts)
 * `ENTRA_DIRROLES_OBS_003` — Group-based role assignments present
-* `ENTRA_DIRROLES_OBS_004` — Eligible / PIM coverage signal
-* `ENTRA_DIRROLES_OBS_005` — Data completeness for role assignment set
+* `ENTRA_DIRROLES_OBS_004` — Eligible / PIM coverage signal (best-effort; may be absent if PIM slice disabled)
+* `ENTRA_DIRROLES_OBS_005` — Data completeness for role assignment set (isComplete, permissionDenied, slices, notes)
 
 **Findings (current)**
 
 * `ENTRA_DIRROLES_001` — Non-user principals assigned to directory roles (severity: `low`)
+* `ENTRA_DIRROLES_002` — Directory roles assigned to groups (severity: `info`)
 
 **Artefacts (current)**
 
