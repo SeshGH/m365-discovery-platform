@@ -14,6 +14,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import type { CollectorContext, CollectorResult } from "./collectors/types";
 import { normalizeCollectorResult } from "./collectors/types";
+import { deriveAndPersistFindingsForRun } from "./findings";
 
 const WORKER_NAME = process.env.WORKER_NAME?.trim();
 const WORKER_ID = WORKER_NAME ? `worker-${WORKER_NAME}-${process.pid}` : `worker-${process.pid}`;
@@ -96,6 +97,37 @@ function computeBackoffMs(attemptsSoFar: number): number {
   return Math.min(60_000, 2_000 * Math.pow(2, Math.max(0, attemptsSoFar - 1)));
 }
 
+/**
+ * Derive and persist findings for a run once all non-report collector jobs are terminal.
+ * Called after each non-report job reaches a terminal state.
+ * Safe to call multiple times — deriveAndPersistFindingsForRun is idempotent (delete-then-insert).
+ * Non-fatal: a derivation failure must never fail or requeue the triggering collector job.
+ */
+async function maybeDeriveFindingsForRun(runId: string): Promise<void> {
+  // Only proceed if every non-report job for this run is now terminal.
+  const pendingCount = await prisma.job.count({
+    where: {
+      runId,
+      collectorId: { not: { startsWith: "report." } },
+      status: { notIn: ["succeeded", "failed"] }
+    }
+  });
+
+  if (pendingCount > 0) return;
+
+  try {
+    const result = await deriveAndPersistFindingsForRun({ prisma, runId });
+    console.log(
+      `[${WORKER_ID}] Findings derived: run=${runId} deleted=${result.deletedOwned} inserted=${result.inserted}`
+    );
+  } catch (err: any) {
+    // Findings derivation must never fail or requeue a collector job.
+    console.warn(
+      `[${WORKER_ID}] Findings derivation failed (non-fatal): run=${runId} error=${String(err?.message ?? err)}`
+    );
+  }
+}
+
 async function pollOnce() {
   const pollStartedAt = Date.now();
 
@@ -124,7 +156,7 @@ async function pollOnce() {
     );
   }
 
-  // Find one queued NON-report job first (so reports don’t run early)
+  // Find one queued NON-report job first (so reports don't run early)
   const baseWhere = {
     status: "queued" as const,
     lockedBy: null as any,
@@ -323,6 +355,12 @@ async function pollOnce() {
         { queued, running, failed }
       )} totalDuration=${ms(Date.now() - jobStartedAt)}`
     );
+
+    // Derive findings once all non-report collectors are terminal.
+    // Non-fatal — must not affect the current job's outcome.
+    if (!isReport) {
+      await maybeDeriveFindingsForRun(lockedJob.runId);
+    }
   } catch (err: any) {
     // IMPORTANT:
     // - "Report not ready" should never count as a real failure
@@ -376,6 +414,13 @@ async function pollOnce() {
           Date.now() - jobStartedAt
         )} error=${errMsg}`
       );
+
+      // Derive findings even when a job fails terminally — other collectors may have
+      // produced valid observed checks and their signals should still be surfaced.
+      // Non-fatal — must not affect the run's terminal state.
+      if (!isReport) {
+        await maybeDeriveFindingsForRun(lockedJob.runId);
+      }
     }
   }
 }

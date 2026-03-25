@@ -1,7 +1,6 @@
 // apps/worker/src/collectors/runSummaryCsvReportCollector.ts
 import type { Collector } from "./types";
 import { assertReportReadyOrThrow, deriveRunStatus } from "./reportUtils";
-import { deriveAndPersistFindingsForRun } from "../findings";
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -20,6 +19,8 @@ export const runSummaryCsvReportCollector: Collector = {
   displayName: "Run Summary CSV",
   async run(ctx) {
     // Gate report generation until all NON-report jobs are terminal.
+    // By the time this gate passes, deriveAndPersistFindingsForRun has already been
+    // called by the core run pipeline (apps/worker/src/index.ts) — findings are ready.
     await assertReportReadyOrThrow({ prisma: ctx.prisma, runId: ctx.run.id });
 
     const run = await ctx.prisma.run.findUnique({
@@ -45,23 +46,8 @@ export const runSummaryCsvReportCollector: Collector = {
     const observedChecks = run.observedChecks ?? [];
     const artefacts = run.artefacts ?? [];
 
-    // ---------------------------------------------
-    // Derived findings hook (idempotent, best-effort)
-    // ---------------------------------------------
-    // We derive findings from observed checks here so reports always reflect
-    // the latest "derived view" without moving business logic into report code.
-    try {
-      await deriveAndPersistFindingsForRun({
-        prisma: ctx.prisma,
-        runId: run.id,
-        observedChecks
-      });
-    } catch {
-      // Report generation must not fail because a derived finding rule had an issue.
-      // Any problems should be debugged via worker logs and fixed in derivation code.
-    }
-
-    // Re-load findings after derivation so CSV includes derived records
+    // Findings are derived by the core pipeline before report collectors run.
+    // Read them directly from the database — no re-derivation needed here.
     const findings = (await ctx.prisma.finding.findMany({
       where: { runId: run.id }
     })) as any[];

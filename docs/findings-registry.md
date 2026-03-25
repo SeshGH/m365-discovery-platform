@@ -153,7 +153,7 @@ Examples:
 
 * **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_003`, `ENTRA_DIRROLES_OBS_005`
 
-* **Severity (implemented):** `info`
+* **Severity (implemented):** `medium`
 
 * **Meaning:** One or more directory roles are assigned to **groups** (group-based role assignment is present).
 
@@ -166,3 +166,59 @@ Examples:
 
   * This can be a valid governance pattern, but it increases change-control and troubleshooting complexity.
   * Evidence remains counts-only; inventory detail remains in the directory roles artefact.
+
+---
+
+### `ENTRA_DIRROLES_010` — Excess number of Global Administrators
+
+* **Collector:** `entra.directoryRoles.assignments`
+* **Derivation:** `entra.directoryRoles.privilegedAccess` (`entraDirectoryRolesFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_001`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):**
+  * `high` if `globalAdminCount >= 5`
+  * `medium` if `globalAdminCount >= 3`
+
+* **Meaning:** The tenant has an elevated number of Global Administrator assignments, increasing blast radius of compromise.
+
+* **Guards (to avoid false signals):**
+  * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true` and not truncated).
+  * Only emit when `globalAdminCount >= 3`.
+
+* **Notes:**
+  * Uses `ENTRA_DIRROLES_OBS_001.globalAdminCount`, derived via the well-known Global Administrator template ID `62e90394-69f5-4237-9190-012177145e10` with display-name fallback.
+
+---
+
+### `ENTRA_DIRROLES_011` — Service principals assigned to directory roles
+
+* **Collector:** `entra.directoryRoles.assignments`
+* **Derivation:** `entra.directoryRoles.privilegedAccess` (`entraDirectoryRolesFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_002`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** One or more directory roles are assigned to service principals (non-human privileged access).
+
+* **Guards (to avoid false signals):**
+  * Emits whenever `ENTRA_DIRROLES_OBS_002.servicePrincipal > 0` is observed; partial data still warrants flagging presence of non-human privileged access.
+
+* **Notes:**
+  * Service principals with directory roles require strict credential and lifecycle governance.
+
+---
+
+### `ENTRA_DIRROLES_012` — Broad privileged assignment surface
+
+* **Collector:** `entra.directoryRoles.assignments`
+* **Derivation:** `entra.directoryRoles.privilegedAccess` (`entraDirectoryRolesFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_001`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** The total count of active directory role assignments is large (`>= 20`), indicating elevated governance complexity.
+
+* **Guards (to avoid false signals):**
+  * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true` and not truncated).
+  * Only emit when `activeAssignmentsCount >= 20`.
+

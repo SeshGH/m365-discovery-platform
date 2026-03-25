@@ -375,8 +375,7 @@ if (ENABLE_PIM_SLICE) {
     const groupAssignmentsCount = distribution.group;
     const groupBasedPresent = groupAssignmentsCount > 0;
 
-    // Global Administrator count — well-known roleTemplateId is stable across all tenants.
-    // Fall back to display-name match in case the role was activated without a templateId.
+    // Global Administrator count (well-known template ID with display-name fallback)
     const GLOBAL_ADMIN_TEMPLATE_ID = "62e90394-69f5-4237-9190-012177145e10";
     const globalAdminEntry = roleMemberResults.find(
       (r) =>
@@ -530,7 +529,7 @@ if (ENABLE_PIM_SLICE) {
           runId: ctx.run.id,
           jobId: ctx.job.id,
           checkId: "ENTRA_DIRROLES_002",
-          severity: "info",
+          severity: "medium",
           title: "Directory roles assigned to groups",
           description:
             "One or more directory roles are assigned to groups rather than directly to individual users. This can be a valid governance pattern, but it increases change-control and troubleshooting complexity.",
