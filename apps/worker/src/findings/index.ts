@@ -4,13 +4,15 @@ import { exoMailboxLicensingFinding } from "./exoMailboxLicensingFinding";
 import { spoSharingFinding } from "./spoSharingFinding";
 import { mdmComplianceFinding } from "./mdmComplianceFinding";
 import { eapHighPrivFinding } from "./eapHighPrivFinding";
+import { entraDirectoryRolesFinding } from "./entraDirectoryRolesFinding";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
   exoMailboxLicensingFinding,
   spoSharingFinding,
   mdmComplianceFinding,
-  eapHighPrivFinding
+  eapHighPrivFinding,
+  entraDirectoryRolesFinding
 ];
 
 function uniq(xs: string[]) {
