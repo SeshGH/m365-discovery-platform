@@ -454,7 +454,7 @@ export default async function RunPage({ params }: { params: Promise<{ tenantId: 
       severity: f.severity,
       checkId: f.checkId,
       title: f.title,
-      recommendation: f.recommendation ?? null
+      recommendation: f.recommendation ?? null,
       references: f.references ?? null
     }))
   };
