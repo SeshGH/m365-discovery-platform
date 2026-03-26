@@ -52,7 +52,10 @@ export const exoMailboxLicensingFinding: FindingDerivation = {
         severity: "info",
         title,
         recommendation,
-        confidence: "medium"
+        confidence: "medium",
+        references: {
+          observedChecks: ["EXO_MAILBOXES_OBS_001", "EXO_MAILBOXES_OBS_010"]
+        }
       }
     ];
   }

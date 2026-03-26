@@ -29,7 +29,10 @@ export const mdmComplianceFinding: FindingDerivation = {
         severity: "medium",
         title: `${noncompliant} device${noncompliant === 1 ? "" : "s"} reporting non-compliant in Intune`,
         recommendation:
-          "One or more managed devices are reporting a non-compliant state in Intune. Validate active compliance policies and device remediation status with the customer."
+          "One or more managed devices are reporting a non-compliant state in Intune. Validate active compliance policies and device remediation status with the customer.",
+        references: {
+          observedChecks: ["MDM_DEVICES_OBS_001"]
+        }
       }
     ];
   }

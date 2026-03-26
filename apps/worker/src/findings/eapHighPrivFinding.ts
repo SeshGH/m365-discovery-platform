@@ -27,7 +27,10 @@ export const eapHighPrivFinding: FindingDerivation = {
         severity: "medium",
         title: `${riskyApps} enterprise app${riskyApps === 1 ? "" : "s"} with high-privilege Graph permissions`,
         recommendation:
-          "One or more enterprise applications hold high-privilege Microsoft Graph permissions (such as Directory.ReadWrite.All, User.ReadWrite.All, or RoleManagement.ReadWrite.Directory). Validate with the customer that each application's permissions are justified by a documented business requirement, that application ownership and credential hygiene (certificates/secrets rotation) are confirmed, and that any unused permissions are removed."
+          "One or more enterprise applications hold high-privilege Microsoft Graph permissions (such as Directory.ReadWrite.All, User.ReadWrite.All, or RoleManagement.ReadWrite.Directory). Validate with the customer that each application's permissions are justified by a documented business requirement, that application ownership and credential hygiene (certificates/secrets rotation) are confirmed, and that any unused permissions are removed.",
+        references: {
+          observedChecks: ["ENTRA_EAP_OBS_001"]
+        }
       }
     ];
   }
