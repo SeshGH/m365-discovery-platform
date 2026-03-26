@@ -94,6 +94,19 @@ Examples:
 * **Demo-only:** Yes (current demo guardrails such as `EAP_MAX_APPS` — default cap is 100).
 * **UI/reporting note:** Treat as a completeness warning; avoid implying the tenant is “clean” if truncation occurred.
 
+### `ENTRA_EAP_COVERAGE_001` — Enterprise app permission review incomplete (scan capped)
+
+* **Collector:** `entra.enterpriseApps.permissions`
+* **Derivation:** `entra.enterpriseApps.highPrivilegePermissions` (`eapHighPrivFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_EAP_OBS_001`
+* **Severity (implemented):** `info`
+* **Meaning:** The enterprise application scan was capped by configured guardrails (`EAP_MAX_APPS`, default 100) before all tenant apps were reviewed. Permission review findings from this run are indicative only.
+* **Guards:** Only emits when `ENTRA_EAP_OBS_001.truncated === true`.
+* **Notes:**
+  * Exists to prevent a clean-looking run (zero `ENTRA_EAP_HIGH_PRIV_001` findings) from being misread as “all apps are clean” when coverage is partial.
+  * Includes scanned app count and cap limit in the title for immediate context.
+  * Non-alarmist: `info` severity — this is a coverage signal, not a security signal.
+
 ---
 
 ## Entra — Conditional Access (`ENTRA_CA_*`)

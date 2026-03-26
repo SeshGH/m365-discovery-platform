@@ -56,11 +56,28 @@ describe("derived findings include references.observedChecks", () => {
       assertReferences(findings[0].references);
     });
 
-    it("emits no findings when risky app count is zero", () => {
+    it("emits no findings when risky app count is zero and scan is not truncated", () => {
       const findings = eapHighPrivFinding.derive({
-        observedChecks: [obs("ENTRA_EAP_OBS_001", { riskyApps: 0 })]
+        observedChecks: [obs("ENTRA_EAP_OBS_001", { riskyApps: 0, truncated: false })]
       });
       expect(findings).toHaveLength(0);
+    });
+
+    it("emits ENTRA_EAP_COVERAGE_001 with references.observedChecks when scan is truncated", () => {
+      const findings = eapHighPrivFinding.derive({
+        observedChecks: [obs("ENTRA_EAP_OBS_001", { riskyApps: 0, truncated: true, maxApps: 100, scannedApps: 100 })]
+      });
+      const coverage = findings.find((f) => f.checkId === "ENTRA_EAP_COVERAGE_001");
+      expect(coverage).toBeDefined();
+      assertReferences(coverage!.references);
+    });
+
+    it("emits both ENTRA_EAP_HIGH_PRIV_001 and ENTRA_EAP_COVERAGE_001 when truncated and risky apps found", () => {
+      const findings = eapHighPrivFinding.derive({
+        observedChecks: [obs("ENTRA_EAP_OBS_001", { riskyApps: 2, truncated: true, maxApps: 100, scannedApps: 100 })]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_EAP_HIGH_PRIV_001")).toBe(true);
+      expect(findings.some((f) => f.checkId === "ENTRA_EAP_COVERAGE_001")).toBe(true);
     });
   });
 
