@@ -260,3 +260,29 @@ Examples:
   * Transient failure path (`low`): unexpected non-403 error — re-running the scan usually resolves it.
   * Exists to prevent a run with no SharePoint findings from being misread as "nothing to worry about" when the real cause is missing access.
 
+---
+
+### `SPO_SITES_COVERAGE_002` — SharePoint storage usage report unavailable
+
+* **Collector:** `sharepoint.sites.inventory`
+* **Derivation:** `spo.sites.coverage` (`spoSitesCoverageFinding.ts`)
+* **Derived from observed check(s):** `SPO_SITES_OBS_010`
+
+* **Severity (implemented):** `info`
+
+* **Meaning:** The SharePoint storage usage report (Graph `reports/getSharePointSiteUsageDetail`) could not be retrieved. Storage total metrics for this run are absent.
+
+* **Guards:**
+  * Only emits when `SPO_SITES_OBS_010.isComplete === false`.
+  * Suppressed when `isComplete === true` or the OBS is absent entirely.
+
+* **Title variants (all emit `info`):**
+  * `permissionDenied` includes `"microsoft.graph/reports:getSharePointSiteUsageDetail"` → "SharePoint storage usage report unavailable — reporting permissions missing"
+  * `truncated === true` (unexpected failure) → "SharePoint storage usage report unavailable"
+  * All other incomplete cases (400/404, report not yet generated) → "SharePoint storage usage report unavailable — report data not yet generated"
+
+* **Notes:**
+  * `info` severity — storage totals being absent is a coverage gap, not a security finding.
+  * Permission-denied path: `Reports.Read.All` (or equivalent) application permission requires admin consent.
+  * Report-not-ready path: Microsoft 365 usage reports can take 24–48 hours to initialise on new or lightly used tenants; re-running usually resolves it.
+

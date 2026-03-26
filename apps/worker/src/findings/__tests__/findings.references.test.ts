@@ -95,6 +95,81 @@ describe("derived findings include references.observedChecks", () => {
       const findings = spoSitesCoverageFinding.derive({ observedChecks: [] });
       expect(findings).toHaveLength(0);
     });
+
+    // SPO_SITES_COVERAGE_002 — storage report unavailable
+    it("emits SPO_SITES_COVERAGE_002 with references when reporting permissions denied", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_010", {
+            isComplete: false,
+            truncated: false,
+            permissionDenied: ["microsoft.graph/reports:getSharePointSiteUsageDetail"]
+          })
+        ]
+      });
+      const coverage = findings.find((f) => f.checkId === "SPO_SITES_COVERAGE_002");
+      expect(coverage).toBeDefined();
+      expect(coverage!.severity).toBe("info");
+      expect(coverage!.title).toMatch(/permissions missing/i);
+      assertReferences(coverage!.references);
+    });
+
+    it("emits SPO_SITES_COVERAGE_002 with references when report data not yet generated", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_010", {
+            isComplete: false,
+            truncated: false,
+            permissionDenied: []
+          })
+        ]
+      });
+      const coverage = findings.find((f) => f.checkId === "SPO_SITES_COVERAGE_002");
+      expect(coverage).toBeDefined();
+      expect(coverage!.severity).toBe("info");
+      expect(coverage!.title).toMatch(/not yet generated/i);
+      assertReferences(coverage!.references);
+    });
+
+    it("emits SPO_SITES_COVERAGE_002 with generic title when truncated (unexpected failure)", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_010", {
+            isComplete: false,
+            truncated: true,
+            permissionDenied: []
+          })
+        ]
+      });
+      const coverage = findings.find((f) => f.checkId === "SPO_SITES_COVERAGE_002");
+      expect(coverage).toBeDefined();
+      expect(coverage!.severity).toBe("info");
+      assertReferences(coverage!.references);
+    });
+
+    it("emits no SPO_SITES_COVERAGE_002 when storage report is complete", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_010", {
+            isComplete: true,
+            truncated: false,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_SITES_COVERAGE_002")).toBe(false);
+    });
+
+    it("emits both COVERAGE_001 and COVERAGE_002 when both OBS are incomplete", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_001", { isComplete: false, permissionDenied: [] }),
+          obs("SPO_SITES_OBS_010", { isComplete: false, truncated: false, permissionDenied: [] })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_SITES_COVERAGE_001")).toBe(true);
+      expect(findings.some((f) => f.checkId === "SPO_SITES_COVERAGE_002")).toBe(true);
+    });
   });
 
   describe("eapHighPrivFinding", () => {
