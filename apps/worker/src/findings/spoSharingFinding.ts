@@ -27,7 +27,10 @@ export const spoSharingFinding: FindingDerivation = {
           severity: "medium",
           title: "SharePoint tenant sharing allows anonymous links",
           recommendation:
-            "The tenant-level SharePoint sharing setting is configured to allow Anyone links (anonymous sharing). Validate with the customer that this is intentional and that link-expiry policies and scope restrictions are in place."
+            "The tenant-level SharePoint sharing setting is configured to allow Anyone links (anonymous sharing). Validate with the customer that this is intentional and that link-expiry policies and scope restrictions are in place.",
+          references: {
+            observedChecks: ["SPO_ADMIN_OBS_001"]
+          }
         }
       ];
     }
@@ -40,7 +43,10 @@ export const spoSharingFinding: FindingDerivation = {
           severity: "info",
           title: "SharePoint tenant sharing allows external user invitations",
           recommendation:
-            "External user invitations are enabled at the SharePoint tenant level. Validate with the customer that guest access governance and access review processes are in place."
+            "External user invitations are enabled at the SharePoint tenant level. Validate with the customer that guest access governance and access review processes are in place.",
+          references: {
+            observedChecks: ["SPO_ADMIN_OBS_001"]
+          }
         }
       ];
     }
