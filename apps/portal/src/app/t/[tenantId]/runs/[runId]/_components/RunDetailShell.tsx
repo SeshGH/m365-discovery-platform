@@ -1292,6 +1292,11 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                   and artefacts are linked by jobId where available.
                 </div>
 
+                <div className="subtle" style={{ marginTop: 6 }}>
+                  Linked observed checks:{" "}
+                  <code>{resolveEvidenceCheckIds(selected).join(", ")}</code>
+                </div>
+
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontWeight: 700, marginBottom: 6 }}>Observed checks</div>
 
