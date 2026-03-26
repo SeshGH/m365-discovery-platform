@@ -66,6 +66,7 @@ export async function deriveAndPersistFindingsForRun(params: {
       checkId: f.checkId,
       severity: f.severity,
       title: f.title,
+      description: (f as any).description ?? f.title,
       recommendation: f.recommendation ?? null,
 
       // Optional fields (won’t break if Prisma schema lacks them, but to be safe

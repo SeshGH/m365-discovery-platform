@@ -40,8 +40,6 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
           title: "Excess number of Global Administrators",
           recommendation:
             "Reduce standing Global Administrator assignments and adopt least privilege with role segmentation.",
-          category: "Identity",
-          confidence: "high",
           references: {
             globalAdminCount,
             observedChecks: ["ENTRA_DIRROLES_OBS_001", "ENTRA_DIRROLES_OBS_005"]
@@ -59,8 +57,6 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
           title: "Service principals assigned to privileged roles",
           recommendation:
             "Review service principal role assignments and restrict privileged access to managed identities where possible.",
-          category: "Identity",
-          confidence: "high",
           references: {
             servicePrincipalCount: spCount,
             observedChecks: ["ENTRA_DIRROLES_OBS_002", "ENTRA_DIRROLES_OBS_005"]
@@ -78,8 +74,6 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
           title: "Broad privileged role assignment surface",
           recommendation:
             "Reduce the number of standing role assignments and use just-in-time access where possible.",
-          category: "Identity",
-          confidence: "high",
           references: {
             activeAssignmentsCount,
             observedChecks: ["ENTRA_DIRROLES_OBS_001", "ENTRA_DIRROLES_OBS_005"]
