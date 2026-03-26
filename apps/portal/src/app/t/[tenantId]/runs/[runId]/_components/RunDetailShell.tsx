@@ -113,6 +113,7 @@ export type RunDetailViewModel = {
     checkId: string;
     title: string;
     recommendation: string | null;
+    references: unknown;
   }>;
 };
 
@@ -411,8 +412,6 @@ function SummaryTab({
 
   const canCtaEvidence = (m: RunDetailViewModel["environmentOverview"][number]) => m.evidenceQuery !== undefined;
 
-  // Build grouped sections from METRIC_GROUPS. Metrics not assigned to any group
-  // are collected into `rest` and shown below the named groups.
   const groupedMetrics = useMemo(() => {
     const byKey = new Map(headlineMetrics.map((m) => [m.key, m]));
     const used = new Set<string>();
@@ -639,8 +638,7 @@ function SummaryTab({
               {vm.completenessSignals.permissionDenied.length > 0 ? (
                 <div style={{ marginBottom: 6 }}>
                   <strong>Permission denied:</strong>{" "}
-                  <span style={{ color: "var(--muted)" }}>{vm.completenessSignals.permissionDenied.join(", ")}</span>
-                  {" "}
+                  <span style={{ color: "var(--muted)" }}>{vm.completenessSignals.permissionDenied.join(", ")}</span>{" "}
                   <button
                     type="button"
                     className="link subtle"
@@ -823,17 +821,11 @@ function SummaryTab({
   );
 }
 
-// ── interpretMetric ───────────────────────────────────────────────────────────
-// Presentation-only interpretation layer. Reads m.key + m.value (existing contract
-// fields) and returns a short human-readable insight string, or null.
-// Lives entirely in the UI layer — no backend/contract changes required.
-
 type EnvMetricItem = RunDetailViewModel["environmentOverview"][number];
 
 function interpretMetric(m: EnvMetricItem): string | null {
   if (m.value === "—") return null;
 
-  // Parse numeric portion from formatted value strings ("1,234", "222 (capped)", etc.)
   const num = parseFloat(m.value.replace(/,/g, ""));
   const hasNum = Number.isFinite(num);
   const capped = m.value.includes("(capped)");
@@ -899,9 +891,6 @@ function interpretMetric(m: EnvMetricItem): string | null {
   }
 }
 
-// ── HeadlineMetricCard ────────────────────────────────────────────────────────
-// Extracted from the flat env-grid loop so it can be reused across group sections.
-
 function HeadlineMetricCard({
   m,
   onGoEvidenceQuery,
@@ -953,54 +942,42 @@ function HeadlineMetricCard({
   );
 }
 
-// ── METRIC_GROUPS ─────────────────────────────────────────────────────────────
-// Presentation-only grouping: maps domain section labels to ordered EnvMetric keys.
-// Keys must match EnvMetric.key values produced by run-metrics.ts.
-// Metrics not listed here appear in an unlabelled "Other" section below the groups.
-// To add a new collector's metrics: add its key(s) to the relevant group, or create
-// a new { label, keys } entry.
-
 const METRIC_GROUPS: ReadonlyArray<{ label: string; keys: ReadonlyArray<string> }> = [
-  { label: "Entra ID",   keys: ["users", "groups", "apps", "ca", "global_admins"] },
-  { label: "Exchange",   keys: ["exo_mailboxes_total", "exo_mailboxes_near50", "exo_mailboxes_over50", "mailboxes"] },
+  { label: "Entra ID", keys: ["users", "groups", "apps", "ca", "global_admins"] },
+  { label: "Exchange", keys: ["exo_mailboxes_total", "exo_mailboxes_near50", "exo_mailboxes_over50", "mailboxes"] },
   { label: "SharePoint", keys: ["spo_sites_in_report", "spo_sharing_capability", "spo_storage_used_gb"] },
-  { label: "Intune",     keys: ["mdm_devices_total", "mdm_noncompliant_devices"] },
+  { label: "Intune", keys: ["mdm_devices_total", "mdm_noncompliant_devices"] }
 ];
-
-// ── SectionIcon ───────────────────────────────────────────────────────────────
-// Inline SVG icons for each domain group header — no external icon dependency.
-// Paths match the lucide-react icon set (24×24 viewBox, stroke-based).
 
 function SectionIcon({ name }: { name: string }) {
   const p = {
-    width: 18, height: 18, viewBox: "0 0 24 24",
-    fill: "none", stroke: "currentColor", strokeWidth: 2,
-    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
-    style: { flexShrink: 0 }, "aria-hidden": true,
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    style: { flexShrink: 0 },
+    "aria-hidden": true
   };
-  // Entra ID → Shield
-  if (name === "Entra ID") return (
-    <svg {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-  );
-  // Exchange → Mail
-  if (name === "Exchange") return (
-    <svg {...p}>
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-    </svg>
-  );
-  // SharePoint → Folder
-  if (name === "SharePoint") return (
-    <svg {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
-  );
-  // Intune → Smartphone
-  if (name === "Intune") return (
-    <svg {...p}>
-      <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
-      <path d="M12 18h.01" />
-    </svg>
-  );
-  // Other / fallback → Layers
+  if (name === "Entra ID") return <svg {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>;
+  if (name === "Exchange")
+    return (
+      <svg {...p}>
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+      </svg>
+    );
+  if (name === "SharePoint") return <svg {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>;
+  if (name === "Intune")
+    return (
+      <svg {...p}>
+        <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+        <path d="M12 18h.01" />
+      </svg>
+    );
   return (
     <svg {...p}>
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -1025,6 +1002,22 @@ function severityTone(s: string): "bad" | "warn" | "muted" {
   if (x === "critical" || x === "high") return "bad";
   if (x === "medium") return "warn";
   return "muted";
+}
+
+function resolveEvidenceCheckIds(finding: RunDetailViewModel["findings"][number]): string[] {
+  const refs = finding.references;
+  if (
+    refs !== null &&
+    typeof refs === "object" &&
+    "observedChecks" in refs
+  ) {
+    const { observedChecks } = refs as { observedChecks: unknown };
+    if (Array.isArray(observedChecks) && observedChecks.length > 0) {
+      const ids = observedChecks.filter((id): id is string => typeof id === "string");
+      if (ids.length > 0) return ids;
+    }
+  }
+  return [finding.checkId];
 }
 
 function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: (q?: string) => void }) {
@@ -1064,7 +1057,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
   const evidenceObserved = useMemo(() => {
     if (!selected) return [];
-    return vm.observedChecks.filter((o) => o.checkId === selected.checkId);
+    const ids = resolveEvidenceCheckIds(selected);
+    return vm.observedChecks.filter((o) => ids.includes(o.checkId));
   }, [selected, vm.observedChecks]);
 
   const evidenceJobIds = useMemo(() => {
@@ -1096,14 +1090,20 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
     }
 
     for (const f of vm.findings) {
-      const obs = observedByCheckId.get(String(f.checkId ?? "")) ?? [];
+      const ids = resolveEvidenceCheckIds(f);
       const jobIds = new Set<string>();
-      for (const o of obs) if (o.jobId) jobIds.add(o.jobId);
+      let observedCount = 0;
+
+      for (const id of ids) {
+        const matching = observedByCheckId.get(id) ?? [];
+        observedCount += matching.length;
+        for (const o of matching) if (o.jobId) jobIds.add(o.jobId);
+      }
 
       let artefactCount = 0;
       for (const id of jobIds) artefactCount += artefactsByJobId.get(id) ?? 0;
 
-      stats.set(f.id, { observed: obs.length, artefacts: artefactCount });
+      stats.set(f.id, { observed: observedCount, artefacts: artefactCount });
     }
 
     return stats;
@@ -1111,11 +1111,6 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
   return (
     <>
-      {/* unchanged */}
-      {/* (snip: rest of FindingsTab stays identical to your version) */}
-      {/* Keeping full file replacement, so do not remove. */}
-      {/* --- */}
-      {/* START unchanged content */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h3 style={{ marginBottom: 6 }}>Findings</h3>
@@ -1285,7 +1280,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                   <button
                     type="button"
                     className="link subtle"
-                    onClick={() => onGoEvidence(selected.checkId)}
+                    onClick={() => onGoEvidence(resolveEvidenceCheckIds(selected)[0] ?? selected.checkId)}
                     style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
                   >
                     View in Evidence tab →
@@ -1293,8 +1288,8 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
                 </div>
 
                 <div className="subtle" style={{ marginTop: 6 }}>
-                  Evidence is best-effort: observed checks are linked by <code>checkId</code> match, and artefacts are linked by jobId
-                  where available.
+                  Evidence is best-effort: observed checks are linked via <code>references.observedChecks</code> for derived findings,
+                  and artefacts are linked by jobId where available.
                 </div>
 
                 <div style={{ marginTop: 10 }}>
@@ -1302,8 +1297,7 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
 
                   {evidenceObserved.length === 0 ? (
                     <div className="subtle">
-                      No observed checks matched this finding’s <code>checkId</code>. Use Evidence to search for the checkId or related
-                      collector activity.
+                      No observed checks linked to this finding. Use Evidence to search for related collector activity.
                     </div>
                   ) : (
                     <div className="card" style={{ overflow: "hidden" }}>
@@ -1395,16 +1389,13 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           )}
         </div>
       </div>
-      {/* END unchanged content */}
     </>
   );
 }
 
-// Detects typical Prisma/ULID-ish ids you use for observed/job/etc (e.g. cml6nzeyv002suz2h677ffc91)
 function looksLikeRunEntityId(q: string): boolean {
   const x = norm(q);
   if (!x) return false;
-  // conservative: starts with "c" and length >= 18
   return x.startsWith("c") && x.length >= 18 && /^[a-z0-9]+$/.test(x);
 }
 
@@ -1423,25 +1414,20 @@ function EvidenceTab({
     const q = norm(query);
     if (!q) return vm.observedChecks;
 
-    // 1) Exact match on checkId (case-insensitive)
     const exactByCheckId = vm.observedChecks.filter((o) => norm(o.checkId) === q);
     if (exactByCheckId.length > 0) return exactByCheckId;
 
-    // 2) Exact match on collectorId
     const exactByCollectorId = vm.observedChecks.filter((o) => norm(o.collectorId) === q);
     if (exactByCollectorId.length > 0) return exactByCollectorId;
 
-    // 3) Exact match on jobId (helps when copying from UI / logs)
     const exactByJobId = vm.observedChecks.filter((o) => o.jobId && norm(o.jobId) === q);
     if (exactByJobId.length > 0) return exactByJobId;
 
-    // 4) Exact match on observed check entity id (handy for deep-linking / copy-paste)
     if (looksLikeRunEntityId(q)) {
       const exactById = vm.observedChecks.filter((o) => norm(o.id) === q);
       if (exactById.length > 0) return exactById;
     }
 
-    // 5) Fuzzy fallback (current behaviour)
     return vm.observedChecks.filter((o) => {
       const hay = [o.checkId, o.collectorId, o.id, o.jobId ?? "", (o.signals ?? []).join(" "), o.observedAt ?? ""]
         .map((x) => norm(x))
@@ -1462,13 +1448,9 @@ function EvidenceTab({
     return keys.map((k) => ({ collectorId: k, items: map.get(k) ?? [] }));
   }, [filtered]);
 
-  // Resolve a human-readable label from environmentOverview when the active query
-  // matches a registry-provided evidenceQuery. Falls back to null (raw query shown).
   const resolvedQueryLabel = useMemo(() => {
     if (!query) return null;
-    const match = vm.environmentOverview.find(
-      (m) => typeof m.evidenceQuery === "string" && m.evidenceQuery === query
-    );
+    const match = vm.environmentOverview.find((m) => typeof m.evidenceQuery === "string" && m.evidenceQuery === query);
     return match ? match.label : null;
   }, [vm.environmentOverview, query]);
 
