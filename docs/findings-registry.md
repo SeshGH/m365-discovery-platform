@@ -235,3 +235,28 @@ Examples:
   * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true` and not truncated).
   * Only emit when `activeAssignmentsCount >= 20`.
 
+---
+
+## SharePoint — Sites (`SPO_SITES_*`)
+
+### `SPO_SITES_COVERAGE_001` — SharePoint site inventory incomplete
+
+* **Collector:** `sharepoint.sites.inventory`
+* **Derivation:** `spo.sites.coverage` (`spoSitesCoverageFinding.ts`)
+* **Derived from observed check(s):** `SPO_SITES_OBS_001`
+
+* **Severity (implemented):**
+  * `medium` when `permissionDenied` includes `"microsoft.graph/sites:list"` (active permissions gap)
+  * `low` when `isComplete === false` but no permission denial (transient/unexpected failure)
+
+* **Meaning:** The SharePoint site inventory did not complete. Site count metrics and any downstream findings that rely on site enumeration will be absent or partial for this run.
+
+* **Guards:**
+  * Only emits when `SPO_SITES_OBS_001.isComplete === false`.
+  * Suppressed when `isComplete === true` (collection succeeded) or when the OBS is absent entirely.
+
+* **Notes:**
+  * Permission-denied path (`medium`): missing `Sites.Read.All` application permission — actionable, requires admin consent.
+  * Transient failure path (`low`): unexpected non-403 error — re-running the scan usually resolves it.
+  * Exists to prevent a run with no SharePoint findings from being misread as "nothing to worry about" when the real cause is missing access.
+

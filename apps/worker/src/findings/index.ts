@@ -5,11 +5,13 @@ import { spoSharingFinding } from "./spoSharingFinding";
 import { mdmComplianceFinding } from "./mdmComplianceFinding";
 import { eapHighPrivFinding } from "./eapHighPrivFinding";
 import { entraDirectoryRolesFinding } from "./entraDirectoryRolesFinding";
+import { spoSitesCoverageFinding } from "./spoSitesCoverageFinding";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
   exoMailboxLicensingFinding,
   spoSharingFinding,
+  spoSitesCoverageFinding,
   mdmComplianceFinding,
   eapHighPrivFinding,
   entraDirectoryRolesFinding

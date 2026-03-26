@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { spoSharingFinding } from "../spoSharingFinding";
+import { spoSitesCoverageFinding } from "../spoSitesCoverageFinding";
 import { eapHighPrivFinding } from "../eapHighPrivFinding";
 import { exoMailboxLicensingFinding } from "../exoMailboxLicensingFinding";
 import { mdmComplianceFinding } from "../mdmComplianceFinding";
@@ -43,6 +44,55 @@ describe("derived findings include references.observedChecks", () => {
       const findings = spoSharingFinding.derive({
         observedChecks: [obs("SPO_ADMIN_OBS_001", { sharingCapability: "disabled" })]
       });
+      expect(findings).toHaveLength(0);
+    });
+  });
+
+  describe("spoSitesCoverageFinding", () => {
+    it("emits SPO_SITES_COVERAGE_001 at medium severity with references when permission denied on sites:list", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_001", {
+            isComplete: false,
+            permissionDenied: ["microsoft.graph/sites:list"]
+          })
+        ]
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].checkId).toBe("SPO_SITES_COVERAGE_001");
+      expect(findings[0].severity).toBe("medium");
+      assertReferences(findings[0].references);
+    });
+
+    it("emits SPO_SITES_COVERAGE_001 at low severity with references when incomplete but no permission denial", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_001", {
+            isComplete: false,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].checkId).toBe("SPO_SITES_COVERAGE_001");
+      expect(findings[0].severity).toBe("low");
+      assertReferences(findings[0].references);
+    });
+
+    it("emits no findings when collection is complete", () => {
+      const findings = spoSitesCoverageFinding.derive({
+        observedChecks: [
+          obs("SPO_SITES_OBS_001", {
+            isComplete: true,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings).toHaveLength(0);
+    });
+
+    it("emits no findings when SPO_SITES_OBS_001 is absent", () => {
+      const findings = spoSitesCoverageFinding.derive({ observedChecks: [] });
       expect(findings).toHaveLength(0);
     });
   });
