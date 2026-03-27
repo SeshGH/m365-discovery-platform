@@ -114,22 +114,70 @@ Examples:
 ### `ENTRA_CA_001` — No enabled Conditional Access policies detected
 
 * **Collector:** `entra.conditionalAccess.policies`
-
+* **Emission model:** Collector-emitted (not derivation pipeline). Emitted directly by `entraConditionalAccessPoliciesCollector.ts` during the collection job.
 * **Derived from observed check(s):** `ENTRA_CA_OBS_001`
-
 * **Severity (implemented):** `low`
-
 * **Meaning:** Conditional Access policies were enumerated successfully and **none** were in an enabled state.
-
 * **Guards (to avoid false signals):**
-
   * Only emit when evidence is complete (i.e. not permission-denied and not truncated/capped).
   * Do **not** emit when `permissionDenied === true` or `truncated === true`.
-
 * **Notes:**
-
   * This is a hygiene / baseline signal and can be interpreted differently depending on tenant maturity and licensing.
   * Detailed policy configuration remains in Conditional Access artefacts; the finding is a summary signal.
+  * Because this is collector-emitted, it is **not** in the `DERIVATIONS` registry in `findings/index.ts`. The posture findings below (`ENTRA_CA_002`–`ENTRA_CA_004`) are derivation-pipeline findings and all gate on `enabledPolicies > 0` to avoid double-noise.
+
+---
+
+### `ENTRA_CA_002` — No Conditional Access policy enforces MFA
+
+* **Collector:** `entra.conditionalAccess.policies`
+* **Derivation:** `entra.conditionalAccess.posture` (`entraConditionalAccessFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_CA_OBS_001`
+* **Severity (implemented):** `medium`
+* **Meaning:** Conditional Access policies are present and enabled, but none of them have an MFA grant control (`builtInControls` includes `"mfa"`). No MFA enforcement is detectable via Conditional Access.
+* **Guards (to avoid false signals):**
+  * Only emit when `permissionDenied === false` and `truncated === false` (reliable data).
+  * Only emit when `enabledPolicies > 0` (zero-policy case is `ENTRA_CA_001` territory).
+  * Only emit when `policiesWithMfaGrantControl === 0`.
+* **Notes:**
+  * The collector's `policiesWithMfaGrantControl` counts enabled policies where `grantControls.builtInControls` includes `"mfa"`.
+  * Does not attempt to infer MFA from authentication strength policies or per-app controls — only the standard `mfa` built-in control is checked.
+  * A tenant may have MFA enforced via per-user MFA or other mechanisms not visible to this collector; the finding is a CA-scoped signal, not a global MFA absence claim.
+
+---
+
+### `ENTRA_CA_003` — Legacy authentication protocols not blocked by Conditional Access
+
+* **Collector:** `entra.conditionalAccess.policies`
+* **Derivation:** `entra.conditionalAccess.posture` (`entraConditionalAccessFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_CA_OBS_001`
+* **Severity (implemented):** `medium`
+* **Meaning:** No enabled Conditional Access policy is detected that blocks legacy authentication protocols (Exchange ActiveSync and Other client app types with a Block grant control). Legacy protocols do not support modern authentication and can bypass MFA.
+* **Guards (to avoid false signals):**
+  * Only emit when `permissionDenied === false` and `truncated === false`.
+  * Only emit when `enabledPolicies > 0`.
+  * Only emit when `hasLegacyAuthPolicyDetected === false`.
+* **Notes:**
+  * The collector's `detectsLegacyAuthBlock` checks for a policy with `clientAppTypes` containing `"exchangeactivesync"` or `"other"` AND `grantControls.builtInControls` containing `"block"`.
+  * If a policy targets legacy auth but uses grant controls other than Block (e.g. MFA), `hasLegacyAuthPolicyDetected` will be `false` and this finding will still emit — the detection is specifically for Block-based legacy auth blocking.
+
+---
+
+### `ENTRA_CA_004` — Conditional Access policies contain user exclusions
+
+* **Collector:** `entra.conditionalAccess.policies`
+* **Derivation:** `entra.conditionalAccess.posture` (`entraConditionalAccessFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_CA_OBS_001`
+* **Severity (implemented):** `low`
+* **Meaning:** One or more enabled Conditional Access policies have entries in their `excludeUsers` array. Excluded users bypass the policy's controls (including MFA). The finding title includes the total exclusion count for immediate context.
+* **Guards (to avoid false signals):**
+  * Only emit when `permissionDenied === false` and `truncated === false`.
+  * Only emit when `enabledPolicies > 0`.
+  * Only emit when `policiesExcludingUsersCount > 0`.
+* **Notes:**
+  * `policiesExcludingUsersCount` is the **sum** of `excludeUsers.length` across all scanned policies — not a count of policies with exclusions. A single policy with 3 excluded users contributes 3.
+  * Break-glass / emergency access accounts are a valid reason to have exclusions; the finding is a governance advisory, not an automatic misconfiguration flag.
+  * Group exclusions (`excludeGroups`) are not counted here — only `excludeUsers` entries are reflected in `policiesExcludingUsersCount`.
 
 ---
 

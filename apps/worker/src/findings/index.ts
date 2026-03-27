@@ -5,6 +5,7 @@ import { spoSharingFinding } from "./spoSharingFinding";
 import { mdmComplianceFinding } from "./mdmComplianceFinding";
 import { eapHighPrivFinding } from "./eapHighPrivFinding";
 import { entraDirectoryRolesFinding } from "./entraDirectoryRolesFinding";
+import { entraConditionalAccessFinding } from "./entraConditionalAccessFinding";
 import { spoSitesCoverageFinding } from "./spoSitesCoverageFinding";
 import { exoMailboxesCoverageFinding } from "./exoMailboxesCoverageFinding";
 
@@ -16,7 +17,8 @@ const DERIVATIONS: FindingDerivation[] = [
   spoSitesCoverageFinding,
   mdmComplianceFinding,
   eapHighPrivFinding,
-  entraDirectoryRolesFinding
+  entraDirectoryRolesFinding,
+  entraConditionalAccessFinding
 ];
 
 function uniq(xs: string[]) {
