@@ -26,7 +26,9 @@ type TransportRule = {
   // SetSCL=-1 instructs Exchange Online Protection to classify matching
   // messages as non-spam regardless of content analysis results.
   // null / undefined = action not set on this rule.
-  SetSCL?: number | null;
+  // Exchange returns this as a string ("-1") via InvokeCommand despite the
+  // underlying type being numeric — both forms must be handled.
+  SetSCL?: number | string | null;
 };
 
 // InvokeCommand response envelope.
@@ -94,7 +96,9 @@ function ruleHasExternalForwarding(rule: TransportRule, primaryDomain: string): 
  * but do not unconditionally bypass filtering.
  */
 function ruleBypassesSpamFilter(rule: TransportRule): boolean {
-  return rule.SetSCL === -1;
+  // Exchange returns SetSCL as a string ("-1") via InvokeCommand even though
+  // the underlying property is numeric. Accept both forms.
+  return rule.SetSCL === -1 || rule.SetSCL === "-1";
 }
 
 // ─── Collector ────────────────────────────────────────────────────────────────
