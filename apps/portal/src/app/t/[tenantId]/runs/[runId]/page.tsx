@@ -1,4 +1,11 @@
 // apps/portal/src/app/t/[tenantId]/runs/[runId]/page.tsx
+
+// Force dynamic rendering on every request so router.refresh() in
+// RunDetailShell always re-executes the server component with fresh data.
+// Without this, Next.js may serve a Full Route Cache hit and the
+// polling-driven refresh sees stale run status indefinitely.
+export const dynamic = "force-dynamic";
+
 import {
   getRun,
   listRunJobs,
