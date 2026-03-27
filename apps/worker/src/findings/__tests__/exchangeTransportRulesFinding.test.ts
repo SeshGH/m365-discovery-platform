@@ -23,6 +23,8 @@ function healthyObs(overrides: Record<string, unknown> = {}): ObservedCheckLike 
     forwardingRuleNames: [],
     rulesWithSclBypassCount: 0,
     sclBypassRuleNames: [],
+    rulesWithSuppressiveActionCount: 0,
+    suppressiveActionRuleNames: [],
     tenantPrimaryDomain: "contoso.com",
     ...overrides
   });
@@ -186,7 +188,96 @@ describe("exchangeTransportRulesFinding", () => {
     expect((f!.references as any).observedChecks).toContain("EXO_TRANSPORT_OBS_001");
   });
 
-  // ── Both findings co-emitting ────────────────────────────────────────────
+  // ── EXO_TRANSPORT_003: broad suppressive action ──────────────────────────
+
+  it("emits no EXO_TRANSPORT_003 when rulesWithSuppressiveActionCount is 0", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [healthyObs({ rulesWithSuppressiveActionCount: 0 })]
+    });
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_003")).toBeUndefined();
+  });
+
+  it("emits EXO_TRANSPORT_003 at high severity when broad suppressive rules are present", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({
+          rulesWithSuppressiveActionCount: 1,
+          suppressiveActionRuleNames: ["Drop All Inbound"]
+        })
+      ]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe("high");
+  });
+
+  it("uses singular 'rule' in EXO_TRANSPORT_003 title when count is 1", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [healthyObs({ rulesWithSuppressiveActionCount: 1 })]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect(f!.title).toMatch(/1 mail flow rule\b/);
+  });
+
+  it("uses plural 'rules' in EXO_TRANSPORT_003 title when count > 1", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [healthyObs({ rulesWithSuppressiveActionCount: 3 })]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect(f!.title).toMatch(/3 mail flow rules\b/);
+  });
+
+  it("includes rule names in EXO_TRANSPORT_003 references", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({
+          rulesWithSuppressiveActionCount: 1,
+          suppressiveActionRuleNames: ["Suspicious Delete Rule"]
+        })
+      ]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect((f!.references as any).suppressiveActionRuleNames).toContain("Suspicious Delete Rule");
+  });
+
+  it("caps EXO_TRANSPORT_003 rule names in references at 10", () => {
+    const manyNames = Array.from({ length: 15 }, (_, i) => `Suppress Rule ${i + 1}`);
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({ rulesWithSuppressiveActionCount: 15, suppressiveActionRuleNames: manyNames })
+      ]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect((f!.references as any).suppressiveActionRuleNames.length).toBeLessThanOrEqual(10);
+  });
+
+  it("includes observedChecks reference in EXO_TRANSPORT_003", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [healthyObs({ rulesWithSuppressiveActionCount: 1 })]
+    });
+    const f = findings.find((x) => x.checkId === "EXO_TRANSPORT_003");
+    expect((f!.references as any).observedChecks).toContain("EXO_TRANSPORT_OBS_001");
+  });
+
+  it("emits no EXO_TRANSPORT_003 when permissionDenied is true (even with suppressive rules)", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({ permissionDenied: true, rulesWithSuppressiveActionCount: 1 })
+      ]
+    });
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_003")).toBeUndefined();
+  });
+
+  it("emits no EXO_TRANSPORT_003 when truncated is true (even with suppressive rules)", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({ truncated: true, rulesWithSuppressiveActionCount: 1 })
+      ]
+    });
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_003")).toBeUndefined();
+  });
+
+  // ── All three findings co-emitting ───────────────────────────────────────
 
   it("emits both EXO_TRANSPORT_001 and EXO_TRANSPORT_002 when both conditions are met", () => {
     const findings = exchangeTransportRulesFinding.derive({
@@ -201,6 +292,24 @@ describe("exchangeTransportRulesFinding", () => {
     });
     expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_001")).toBeDefined();
     expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_002")).toBeDefined();
+  });
+
+  it("emits all three findings when all three conditions are met", () => {
+    const findings = exchangeTransportRulesFinding.derive({
+      observedChecks: [
+        healthyObs({
+          rulesWithExternalForwardingCount: 1,
+          forwardingRuleNames: ["Forward to attacker"],
+          rulesWithSclBypassCount: 1,
+          sclBypassRuleNames: ["Bypass Spam For Partner"],
+          rulesWithSuppressiveActionCount: 1,
+          suppressiveActionRuleNames: ["Drop All Inbound"]
+        })
+      ]
+    });
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_001")).toBeDefined();
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_002")).toBeDefined();
+    expect(findings.find((x) => x.checkId === "EXO_TRANSPORT_003")).toBeDefined();
   });
 
   // ── Healthy baseline ─────────────────────────────────────────────────────

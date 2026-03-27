@@ -414,6 +414,29 @@ Examples:
 
 ---
 
+### `EXO_TRANSPORT_003` — Mail flow rule with suppressive action and no scope conditions detected
+
+* **Collector:** `exchange.transportRules`
+* **Derivation:** `exchange.transportRules.posture` (`exchangeTransportRulesFinding.ts`)
+* **Derived from observed check(s):** `EXO_TRANSPORT_OBS_001`
+
+* **Severity (implemented):** `high`
+
+* **Meaning:** At least one **enabled** Exchange transport rule carries a suppressive action (`DeleteMessage` or `Quarantine`) **and** has no detectable narrowing conditions. A rule that silently deletes or quarantines messages without any scope restriction applies to all messages in the connector's context with no discrimination.
+
+* **Guards (to avoid false signals):**
+  * Only emit when `EXO_TRANSPORT_OBS_001.isComplete === true` (i.e. `permissionDenied === false` and `truncated === false`).
+  * Only emit when `rulesWithSuppressiveActionCount > 0`.
+  * The **breadth heuristic** in the collector already pre-filters: only rules where ALL of the following condition fields are absent or empty are counted — `SenderDomainIs`, `From`, `FromAddressContainsWords`, `FromAddressMatchesPatterns`, `FromMemberOf`, `SenderIpRanges`, `SubjectContainsWords`, `SubjectMatchesPatterns`, `RecipientDomainIs`, `SentTo`, `SentToMemberOf`, `RecipientAddressContainsWords`, `AnyOfRecipientAddressContainsWords`, `MessageTypeMatches`. Narrow admin rules (e.g. "delete NDRs from a specific domain") are excluded by this heuristic and will not generate findings.
+
+* **Notes:**
+  * **Attack pattern:** Attackers who have compromised an admin account sometimes create broad delete or quarantine rules to suppress security alert emails, password change notifications, or sign-in alerts that would otherwise surface the compromise to legitimate users. Rules with no conditions maximise the suppression surface.
+  * **Heuristic limitation:** The collector checks a representative but not exhaustive set of condition fields. Exchange has additional condition fields (e.g. `HeaderContainsWords`, `AttachmentExtensionMatchesWords`, `HasSenderOverride`) that are not in the breadth check. A rule that uses only one of those unlisted conditions will still appear "broad" here. Reviewers should always confirm the full rule configuration directly in the Exchange admin centre.
+  * `high` severity reflects the potential for complete mail-loss or alert suppression at tenant scale. Legitimate suppressive rules (e.g. deleting meeting-room auto-accept noise) should have narrow conditions; the finding is the prompt to confirm those conditions exist.
+  * `references.suppressiveActionRuleNames` carries up to 10 rule names for quick identification during review.
+
+---
+
 ### Observed check: `EXO_TRANSPORT_OBS_001`
 
 > **Registry note:** Observed checks are documented here inline for the Exchange transport rules domain because no separate `findings-observed-checks.md` entry exists yet for this collector. Move to that document when the transport rules OBS section is formalised.
@@ -444,6 +467,12 @@ Examples:
   // ── EXO_TRANSPORT_002: spam-filter bypass detection ───────────────────────
   "rulesWithSclBypassCount": 1,          // enabled rules where SetSCL === -1
   "sclBypassRuleNames": ["Rule name"],   // names of those rules (max 20 entries)
+
+  // ── EXO_TRANSPORT_003: broad suppressive-action detection ─────────────────
+  // Only counts enabled rules with DeleteMessage=true or Quarantine=true
+  // that also have NO detectable narrowing conditions (breadth heuristic).
+  "rulesWithSuppressiveActionCount": 0,      // enabled broad suppressive-action rules
+  "suppressiveActionRuleNames": [],          // names of those rules (max 20 entries)
 
   // ── Context ───────────────────────────────────────────────────────────────
   "tenantPrimaryDomain": "contoso.com"  // domain used for "external" determination at collection time

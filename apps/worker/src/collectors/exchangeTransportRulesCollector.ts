@@ -29,6 +29,32 @@ type TransportRule = {
   // Exchange returns this as a string ("-1") via InvokeCommand despite the
   // underlying type being numeric — both forms must be handled.
   SetSCL?: number | string | null;
+  // Suppressive actions (EXO_TRANSPORT_003):
+  // DeleteMessage=true silently drops matching messages with no delivery or NDR.
+  DeleteMessage?: boolean;
+  // Quarantine holds matching messages in the quarantine store rather than
+  // delivering them. Exchange returns this as a boolean or omits it.
+  Quarantine?: boolean | null;
+  // ── Narrowing condition fields (used by breadth heuristic) ───────────────
+  // These are the most common conditions that restrict a rule's scope.
+  // If ALL are absent/empty, the rule is considered "broad" — it applies to
+  // all messages without discrimination.
+  SenderDomainIs?: string[];
+  From?: string[];
+  FromAddressContainsWords?: string[];
+  FromAddressMatchesPatterns?: string[];
+  FromMemberOf?: string[];
+  SenderIpRanges?: string[];
+  SubjectContainsWords?: string[];
+  SubjectMatchesPatterns?: string[];
+  RecipientDomainIs?: string[];
+  SentTo?: string[];
+  SentToMemberOf?: string[];
+  RecipientAddressContainsWords?: string[];
+  AnyOfRecipientAddressContainsWords?: string[];
+  // MessageTypeMatches is a single enum value (e.g. "OOF", "NDR", "AutoForward")
+  // rather than an array. Present and non-empty → rule has a type condition.
+  MessageTypeMatches?: string | null;
 };
 
 // InvokeCommand response envelope.
@@ -101,6 +127,58 @@ function ruleBypassesSpamFilter(rule: TransportRule): boolean {
   return rule.SetSCL === -1 || rule.SetSCL === "-1";
 }
 
+/**
+ * Returns true if the rule carries a suppressive action: DeleteMessage (silent
+ * drop) or Quarantine. These actions prevent message delivery entirely rather
+ * than redirecting or modifying the message.
+ */
+function ruleHasSuppressiveAction(rule: TransportRule): boolean {
+  if (rule.DeleteMessage === true) return true;
+  if (rule.Quarantine === true) return true;
+  return false;
+}
+
+// Representative set of condition fields that narrow a rule's scope.
+// If ALL of these are absent or empty on an enabled rule, the rule applies to
+// every message in scope of the connector without further discrimination.
+// Note: Exchange has additional condition fields not listed here; the heuristic
+// is intentionally conservative — it flags only rules with NO detectable
+// narrowing criteria from this representative set.
+const NARROWING_CONDITION_FIELDS: (keyof TransportRule)[] = [
+  "SenderDomainIs",
+  "From",
+  "FromAddressContainsWords",
+  "FromAddressMatchesPatterns",
+  "FromMemberOf",
+  "SenderIpRanges",
+  "SubjectContainsWords",
+  "SubjectMatchesPatterns",
+  "RecipientDomainIs",
+  "SentTo",
+  "SentToMemberOf",
+  "RecipientAddressContainsWords",
+  "AnyOfRecipientAddressContainsWords",
+  "MessageTypeMatches"
+];
+
+/**
+ * Returns true when none of the representative narrowing condition fields are
+ * set on the rule (the rule applies to all messages with no scope restriction).
+ * Used to reduce false positives for EXO_TRANSPORT_003: only a suppressive
+ * rule with no detectable conditions warrants a finding.
+ */
+function ruleIsBroad(rule: TransportRule): boolean {
+  for (const field of NARROWING_CONDITION_FIELDS) {
+    const v = rule[field];
+    if (v === null || v === undefined) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    if (typeof v === "string" && v === "") continue;
+    // At least one narrowing condition is present — not a broad rule.
+    return false;
+  }
+  return true;
+}
+
 // ─── Collector ────────────────────────────────────────────────────────────────
 
 // Cap the number of rule names stored per detection category to bound OBS size.
@@ -126,6 +204,9 @@ export const exchangeTransportRulesCollector: Collector = {
     // EXO_TRANSPORT_002: spam filter bypass (SetSCL=-1)
     let rulesWithSclBypassCount = 0;
     const sclBypassRuleNames: string[] = [];
+    // EXO_TRANSPORT_003: broad suppressive action (delete/quarantine + no conditions)
+    let rulesWithSuppressiveActionCount = 0;
+    const suppressiveActionRuleNames: string[] = [];
 
     // ── Completeness signals (populated on error path) ────────────────────
     // These are the contract the derivation pipeline depends on.
@@ -180,6 +261,16 @@ export const exchangeTransportRulesCollector: Collector = {
           rulesWithSclBypassCount++;
           if (sclBypassRuleNames.length < MAX_RULE_NAMES_PER_CATEGORY) {
             sclBypassRuleNames.push(rule.Name ?? rule.Identity ?? "(unknown)");
+          }
+        }
+
+        // EXO_TRANSPORT_003 detection: suppressive action with no narrowing conditions.
+        // Only flag the rule when ruleIsBroad() is true so that legitimate narrow
+        // admin rules (e.g. "delete NDR from [specific domain]") are not surfaced.
+        if (ruleHasSuppressiveAction(rule) && ruleIsBroad(rule)) {
+          rulesWithSuppressiveActionCount++;
+          if (suppressiveActionRuleNames.length < MAX_RULE_NAMES_PER_CATEGORY) {
+            suppressiveActionRuleNames.push(rule.Name ?? rule.Identity ?? "(unknown)");
           }
         }
       }
@@ -248,6 +339,13 @@ export const exchangeTransportRulesCollector: Collector = {
             rulesWithSclBypassCount,
             sclBypassRuleNames,
 
+            // EXO_TRANSPORT_003: broad suppressive-action detection results.
+            // rulesWithSuppressiveActionCount > 0 means at least one enabled rule
+            // deletes or quarantines messages AND has no detectable narrowing
+            // conditions (i.e. it applies to all messages in scope).
+            rulesWithSuppressiveActionCount,
+            suppressiveActionRuleNames,
+
             // Domain context used for "external" determination.
             // Stored in OBS so findings derivations can show it in references.
             tenantPrimaryDomain: primaryDomain
@@ -271,7 +369,8 @@ export const exchangeTransportRulesCollector: Collector = {
         totalRules,
         enabledRulesCount,
         rulesWithExternalForwardingCount,
-        rulesWithSclBypassCount
+        rulesWithSclBypassCount,
+        rulesWithSuppressiveActionCount
       }
     };
   }

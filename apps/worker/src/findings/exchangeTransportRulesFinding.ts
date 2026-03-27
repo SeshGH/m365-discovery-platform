@@ -15,7 +15,7 @@ function toStringArray(v: unknown): string[] {
 export const exchangeTransportRulesFinding: FindingDerivation = {
   id: "exchange.transportRules.posture",
 
-  emits: ["EXO_TRANSPORT_001", "EXO_TRANSPORT_002"],
+  emits: ["EXO_TRANSPORT_001", "EXO_TRANSPORT_002", "EXO_TRANSPORT_003"],
 
   derive({ observedChecks }): DerivedFinding[] {
     const obs = observedChecks.find((o) => o.checkId === "EXO_TRANSPORT_OBS_001");
@@ -84,6 +84,43 @@ export const exchangeTransportRulesFinding: FindingDerivation = {
         references: {
           rulesWithSclBypassCount: count,
           sclBypassRuleNames,
+          observedChecks: ["EXO_TRANSPORT_OBS_001"]
+        }
+      });
+    }
+
+    // ── EXO_TRANSPORT_003: broad suppressive action (delete/quarantine) ────────
+    // Only surfaces when a rule with DeleteMessage or Quarantine has no
+    // detectable narrowing conditions. Narrow admin rules (e.g. "delete NDRs
+    // from a specific domain") are excluded by the collector's breadth heuristic
+    // and will not appear here.
+    const rulesWithSuppressiveActionCount = asNumber(d?.rulesWithSuppressiveActionCount) ?? 0;
+
+    if (rulesWithSuppressiveActionCount > 0) {
+      const count = rulesWithSuppressiveActionCount;
+      const suppressiveActionRuleNames = toStringArray(d?.suppressiveActionRuleNames).slice(0, 10);
+
+      findings.push({
+        checkId: "EXO_TRANSPORT_003",
+        severity: "high",
+        title:
+          `${count} mail flow rule${count === 1 ? "" : "s"} with suppressive action ` +
+          `(delete/quarantine) and no scope conditions detected`,
+        recommendation:
+          "One or more enabled Exchange transport rules are configured to silently delete or " +
+          "quarantine messages and have no detectable narrowing conditions — no sender domain, " +
+          "sender address, subject, recipient, or IP range criteria were found. " +
+          "A rule that drops or quarantines all matched messages without scope restrictions can " +
+          "cause significant mail loss and is a known attacker persistence technique used to " +
+          "suppress security alert emails, NDR notifications, or targeted correspondence. " +
+          "Review each flagged rule in the Exchange admin centre: confirm its conditions are " +
+          "intentionally narrow, verify it was created by a known administrator for a documented " +
+          "business purpose, and remove any rule whose origin or scope cannot be explained. " +
+          "Note: the collector checks a representative set of condition fields — verify the full " +
+          "rule configuration directly in the Exchange admin centre before drawing conclusions.",
+        references: {
+          rulesWithSuppressiveActionCount: count,
+          suppressiveActionRuleNames,
           observedChecks: ["EXO_TRANSPORT_OBS_001"]
         }
       });
