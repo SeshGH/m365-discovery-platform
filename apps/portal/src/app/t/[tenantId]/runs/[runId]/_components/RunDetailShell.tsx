@@ -430,6 +430,11 @@ function SummaryTab({
     return { groups, rest };
   }, [headlineMetrics]);
 
+  const findingCounts = useMemo(() => {
+    const coverage = vm.findings.filter((f) => f.checkId.includes("_COVERAGE_")).length;
+    return { coverage, posture: vm.findings.length - coverage };
+  }, [vm.findings]);
+
   return (
     <>
       <div className="card card-pad" style={{ marginTop: 12, marginBottom: 12 }}>
@@ -585,6 +590,33 @@ function SummaryTab({
           </span>
         </div>
       </div>
+
+      {vm.findings.length > 0 ? (
+        <div className="card card-pad" style={{ marginBottom: 12, marginTop: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 900, fontSize: 15 }}>Findings quality &amp; coverage</div>
+            <div style={{ display: "flex", gap: 16 }}>
+              <span>
+                <strong>{findingCounts.posture}</strong>{" "}
+                <span className="subtle">posture finding{findingCounts.posture !== 1 ? "s" : ""}</span>
+              </span>
+              <span>
+                <strong>{findingCounts.coverage}</strong>{" "}
+                <span className="subtle">coverage finding{findingCounts.coverage !== 1 ? "s" : ""}</span>
+              </span>
+            </div>
+          </div>
+          {findingCounts.coverage > 0 ? (
+            <div className="subtle" style={{ marginTop: 6 }}>
+              Coverage findings (checkId contains <code>_COVERAGE_</code>) indicate scan visibility limitations — missing permissions or incomplete data collection. They do not reflect tenant risk by themselves.
+            </div>
+          ) : (
+            <div className="subtle" style={{ marginTop: 6 }}>
+              No coverage limitations detected — all collectors completed successfully.
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="grid-2" style={{ marginBottom: 12, marginTop: 12 }}>
         <div className="card card-pad">
