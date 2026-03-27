@@ -10,8 +10,8 @@ const EXCHANGE_ADMIN_BASE = "https://outlook.office365.com/adminapi/beta";
 
 // ─── Exchange transport rule shape ───────────────────────────────────────────
 // Properties use Exchange PowerShell naming (PascalCase) as returned by
-// InvokeCommand with Get-TransportRule. Only the fields relevant to forwarding
-// detection are typed; all other properties are ignored.
+// InvokeCommand with Get-TransportRule. Only the fields relevant to the
+// implemented detections are typed; all other properties are ignored.
 type TransportRule = {
   Identity?: string;
   Name?: string;
@@ -22,6 +22,11 @@ type TransportRule = {
   ForwardMessageTo?: string[];
   BlindCopyTo?: string[];
   CopyTo?: string[];
+  // Spam filter bypass:
+  // SetSCL=-1 instructs Exchange Online Protection to classify matching
+  // messages as non-spam regardless of content analysis results.
+  // null / undefined = action not set on this rule.
+  SetSCL?: number | null;
 };
 
 // InvokeCommand response envelope.
@@ -82,9 +87,20 @@ function ruleHasExternalForwarding(rule: TransportRule, primaryDomain: string): 
   );
 }
 
+/**
+ * Returns true if the rule sets SCL to -1, bypassing spam filtering.
+ * SCL -1 is the only Exchange-defined value that means "bypass EOP spam
+ * analysis for matched messages". All other SetSCL values modify the score
+ * but do not unconditionally bypass filtering.
+ */
+function ruleBypassesSpamFilter(rule: TransportRule): boolean {
+  return rule.SetSCL === -1;
+}
+
 // ─── Collector ────────────────────────────────────────────────────────────────
 
-const MAX_FORWARDING_RULE_NAMES = 20;
+// Cap the number of rule names stored per detection category to bound OBS size.
+const MAX_RULE_NAMES_PER_CATEGORY = 20;
 
 export const exchangeTransportRulesCollector: Collector = {
   id: "exchange.transportRules",
@@ -100,8 +116,12 @@ export const exchangeTransportRulesCollector: Collector = {
     // ── Accumulators (populated on success path) ──────────────────────────
     let totalRules = 0;
     let enabledRulesCount = 0;
+    // EXO_TRANSPORT_001: external forwarding
     let rulesWithExternalForwardingCount = 0;
     const forwardingRuleNames: string[] = [];
+    // EXO_TRANSPORT_002: spam filter bypass (SetSCL=-1)
+    let rulesWithSclBypassCount = 0;
+    const sclBypassRuleNames: string[] = [];
 
     // ── Completeness signals (populated on error path) ────────────────────
     // These are the contract the derivation pipeline depends on.
@@ -143,10 +163,19 @@ export const exchangeTransportRulesCollector: Collector = {
       enabledRulesCount = enabledRules.length;
 
       for (const rule of enabledRules) {
+        // EXO_TRANSPORT_001 detection
         if (ruleHasExternalForwarding(rule, primaryDomain)) {
           rulesWithExternalForwardingCount++;
-          if (forwardingRuleNames.length < MAX_FORWARDING_RULE_NAMES) {
+          if (forwardingRuleNames.length < MAX_RULE_NAMES_PER_CATEGORY) {
             forwardingRuleNames.push(rule.Name ?? rule.Identity ?? "(unknown)");
+          }
+        }
+
+        // EXO_TRANSPORT_002 detection
+        if (ruleBypassesSpamFilter(rule)) {
+          rulesWithSclBypassCount++;
+          if (sclBypassRuleNames.length < MAX_RULE_NAMES_PER_CATEGORY) {
+            sclBypassRuleNames.push(rule.Name ?? rule.Identity ?? "(unknown)");
           }
         }
       }
@@ -205,9 +234,15 @@ export const exchangeTransportRulesCollector: Collector = {
             totalRules,
             enabledRulesCount,
 
-            // External-forwarding detection results.
+            // EXO_TRANSPORT_001: external-forwarding detection results.
             rulesWithExternalForwardingCount,
             forwardingRuleNames,
+
+            // EXO_TRANSPORT_002: spam-filter bypass detection results.
+            // rulesWithSclBypassCount > 0 means at least one enabled rule
+            // sets SCL to -1, explicitly bypassing EOP spam analysis.
+            rulesWithSclBypassCount,
+            sclBypassRuleNames,
 
             // Domain context used for "external" determination.
             // Stored in OBS so findings derivations can show it in references.
@@ -231,7 +266,8 @@ export const exchangeTransportRulesCollector: Collector = {
         truncated,
         totalRules,
         enabledRulesCount,
-        rulesWithExternalForwardingCount
+        rulesWithExternalForwardingCount,
+        rulesWithSclBypassCount
       }
     };
   }

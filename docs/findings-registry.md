@@ -392,12 +392,34 @@ Examples:
 
 ---
 
+### `EXO_TRANSPORT_002` — Mail flow rule bypasses spam filtering (SCL -1)
+
+* **Collector:** `exchange.transportRules`
+* **Derivation:** `exchange.transportRules.posture` (`exchangeTransportRulesFinding.ts`)
+* **Derived from observed check(s):** `EXO_TRANSPORT_OBS_001`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** At least one **enabled** Exchange transport rule sets the Spam Confidence Level (SCL) to `-1`. SCL -1 instructs Exchange Online Protection to skip spam analysis for any message matched by the rule's conditions, delivering those messages directly to the inbox regardless of content.
+
+* **Guards (to avoid false signals):**
+  * Only emit when `EXO_TRANSPORT_OBS_001.isComplete === true`.
+  * Only emit when `rulesWithSclBypassCount > 0`.
+
+* **Notes:**
+  * **Why `SetSCL=-1` specifically:** SCL -1 is the only Exchange-defined value that unconditionally bypasses spam analysis. Other `SetSCL` values (0–9) adjust the score but do not remove filtering. A rule with `SetSCL=-1` is an explicit, deliberate bypass.
+  * **Legitimate uses:** Trusted on-premises relay servers, approved bulk mail systems, and shared-mailbox relay scenarios commonly use SCL bypass rules. The finding is intentionally `medium` (not `high`) because legitimate uses are common — the value is in prompting a review, not raising an alarm.
+  * **Attack pattern:** Phishing infrastructure operators sometimes create broad SCL bypass rules (e.g. targeting all inbound mail from a specific domain or IP range they control) to ensure malicious payloads reach inboxes past EOP spam filtering. A bypass rule with unexpectedly broad conditions is the signal to investigate.
+  * The finding title includes the count of affected rules. `references.sclBypassRuleNames` carries up to 10 rule names for reviewer orientation.
+
+---
+
 ### Observed check: `EXO_TRANSPORT_OBS_001`
 
 > **Registry note:** Observed checks are documented here inline for the Exchange transport rules domain because no separate `findings-observed-checks.md` entry exists yet for this collector. Move to that document when the transport rules OBS section is formalised.
 
 * **Collector:** `exchange.transportRules`
-* **API:** `GET https://outlook.office365.com/adminapi/beta/{tenantId}/TransportRule`
+* **API:** `POST https://outlook.office365.com/adminapi/beta/{tenantId}/InvokeCommand` (`Get-TransportRule`)
 
 **Payload shape:**
 
@@ -415,9 +437,15 @@ Examples:
   "totalRules": 5,            // total transport rules in tenant
   "enabledRulesCount": 3,     // rules in "Enabled" state
 
-  // ── External-forwarding detection ─────────────────────────────────────────
+  // ── EXO_TRANSPORT_001: external-forwarding detection ──────────────────────
   "rulesWithExternalForwardingCount": 1, // enabled rules with external recipient in any forwarding action
   "forwardingRuleNames": ["Rule name"],  // names of those rules (max 20 entries)
+
+  // ── EXO_TRANSPORT_002: spam-filter bypass detection ───────────────────────
+  "rulesWithSclBypassCount": 1,          // enabled rules where SetSCL === -1
+  "sclBypassRuleNames": ["Rule name"],   // names of those rules (max 20 entries)
+
+  // ── Context ───────────────────────────────────────────────────────────────
   "tenantPrimaryDomain": "contoso.com"  // domain used for "external" determination at collection time
 }
 ```
