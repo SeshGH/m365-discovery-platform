@@ -170,6 +170,111 @@ export async function graphGetAllPages<TItem>(token: string, url: string): Promi
 }
 
 /**
+ * Exchange Online Admin API token.
+ *
+ * Uses the same app registration as Graph (GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET)
+ * but targets the Exchange Online resource scope instead of Graph.
+ *
+ * Required: app permission `Exchange.ManageAsApp` (application role) granted in
+ * the target tenant, and the service principal assigned the Exchange Administrator
+ * role (or a scoped Exchange management role) via the Exchange admin centre.
+ */
+export async function getExchangeAdminAccessToken(params: { tenantId: string }): Promise<string> {
+  const clientId = requireEnv("GRAPH_CLIENT_ID");
+  const clientSecret = requireEnv("GRAPH_CLIENT_SECRET");
+
+  const clientRequestId = makeClientRequestId();
+
+  const body = new URLSearchParams();
+  body.set("client_id", clientId);
+  body.set("client_secret", clientSecret);
+  body.set("grant_type", "client_credentials");
+  body.set("scope", "https://outlook.office365.com/.default");
+
+  const tokenUrl = `https://login.microsoftonline.com/${params.tenantId}/oauth2/v2.0/token`;
+
+  const res = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "client-request-id": clientRequestId
+    },
+    body
+  });
+
+  if (!res.ok) {
+    const ids = extractRequestIds(res.headers);
+    const text = await readErrorBody(res);
+    const msg = `[collectors] Failed to get Exchange Admin token (${res.status}) tenant=${params.tenantId} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url: tokenUrl,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: text
+    });
+  }
+
+  const json = (await res.json()) as TokenResponse;
+  if (!json.access_token) throw new Error("[collectors] No access_token in Exchange Admin token response");
+  return json.access_token;
+}
+
+/**
+ * Single JSON GET against the Exchange Online Admin REST API
+ * (`https://outlook.office365.com/adminapi/beta/{tenantId}/…`).
+ * Token must come from `getExchangeAdminAccessToken`.
+ */
+export async function exchangeAdminGet<T>(token: string, url: string): Promise<T> {
+  const clientRequestId = makeClientRequestId();
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "client-request-id": clientRequestId
+    }
+  });
+
+  if (!res.ok) {
+    const ids = extractRequestIds(res.headers);
+    const text = await readErrorBody(res);
+    const msg = `[collectors] Exchange Admin GET failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: text
+    });
+  }
+
+  return (await res.json()) as T;
+}
+
+/**
+ * Paginated GET against the Exchange Online Admin REST API.
+ * Follows `@odata.nextLink` until exhausted, same as `graphGetAllPages`.
+ */
+export async function exchangeAdminGetAllPages<TItem>(token: string, url: string): Promise<TItem[]> {
+  type Page<T> = { value: T[]; "@odata.nextLink"?: string };
+
+  const items: TItem[] = [];
+  let next: string | undefined = url;
+
+  while (next) {
+    const page: any = await exchangeAdminGet<Page<TItem>>(token, next);
+    items.push(...(page.value ?? []));
+    next = page["@odata.nextLink"];
+  }
+
+  return items;
+}
+
+/**
  * Client-credentials helpers used by auth test and any future "raw graph" collectors.
  * These mirror what was in apps/worker/src/lib/graph.ts (now being removed).
  */

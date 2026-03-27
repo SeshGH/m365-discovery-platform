@@ -365,3 +365,66 @@ Examples:
   * Permission-denied path: `Reports.Read.All` application permission requires admin consent.
   * Report-not-ready path: Exchange reporting initialisation can take 24–48 hours on new or lightly used tenants; re-running usually resolves it.
 
+---
+
+## Exchange — Transport Rules (`EXO_TRANSPORT_*`)
+
+### `EXO_TRANSPORT_001` — Mail flow rule routing email to external recipients detected
+
+* **Collector:** `exchange.transportRules`
+* **Derivation:** `exchange.transportRules.posture` (`exchangeTransportRulesFinding.ts`)
+* **Derived from observed check(s):** `EXO_TRANSPORT_OBS_001`
+
+* **Severity (implemented):** `high`
+
+* **Meaning:** At least one **enabled** Exchange transport rule contains an action that routes messages to addresses outside the tenant's primary domain. Actions checked: `RedirectMessageTo`, `ForwardMessageTo`, `BlindCopyTo`, `CopyTo`.
+
+* **Guards (to avoid false signals):**
+  * Only emit when `EXO_TRANSPORT_OBS_001.isComplete === true` (i.e. `permissionDenied === false` and `truncated === false`). When collection was incomplete, the absence of this finding **must not** be read as "no forwarding rules exist".
+  * Only emit when `rulesWithExternalForwardingCount > 0`.
+
+* **Notes:**
+  * **Detection scope:** "External" is determined at collection time by comparing each recipient address against the tenant's `primaryDomain` and any `.onmicrosoft.com` routing domain. Tenants with multiple verified custom domains may receive false positives for rules forwarding to a secondary custom domain — reviewers should verify recipient domains against the organisation's verified domain list.
+  * **Risk context:** Auto-forwarding transport rules are among the most common persistence mechanisms observed in business email compromise (BEC) attacks. Attackers create rules to silently forward a copy of received mail to an external mailbox, enabling ongoing surveillance without visible inbox items.
+  * The finding title includes the count of affected rules. The `references.forwardingRuleNames` field carries up to 10 rule names for quick identification during review (capped to bound the finding payload size).
+  * A `high` severity reflects the near-certain data-exfiltration risk when external forwarding is unexplained. Legitimate partner-relay rules should be documented and excepted; the finding is the prompt to confirm that documentation exists.
+  * **Required permissions:** `Exchange.ManageAsApp` application role + Exchange Administrator role assignment for the app service principal. These are separate from the Microsoft Graph permissions used by other collectors and must be granted independently in the Exchange admin centre.
+
+---
+
+### Observed check: `EXO_TRANSPORT_OBS_001`
+
+> **Registry note:** Observed checks are documented here inline for the Exchange transport rules domain because no separate `findings-observed-checks.md` entry exists yet for this collector. Move to that document when the transport rules OBS section is formalised.
+
+* **Collector:** `exchange.transportRules`
+* **API:** `GET https://outlook.office365.com/adminapi/beta/{tenantId}/TransportRule`
+
+**Payload shape:**
+
+```jsonc
+{
+  // ── Completeness signals (always present) ─────────────────────────────────
+  // Derivation pipeline must gate on isComplete before drawing risk conclusions.
+  "isComplete": true,         // true iff permissionDenied===false && truncated===false
+  "permissionDenied": false,  // 401/403 from Exchange Admin API
+  "truncated": false,         // any other error (token failure, 5xx, network)
+  "errorCode": null,          // HTTP status that caused failure, or null
+  "errorMessage": null,       // truncated error body (≤400 chars), or null
+
+  // ── Facts (meaningful only when isComplete === true) ──────────────────────
+  "totalRules": 5,            // total transport rules in tenant
+  "enabledRulesCount": 3,     // rules in "Enabled" state
+
+  // ── External-forwarding detection ─────────────────────────────────────────
+  "rulesWithExternalForwardingCount": 1, // enabled rules with external recipient in any forwarding action
+  "forwardingRuleNames": ["Rule name"],  // names of those rules (max 20 entries)
+  "tenantPrimaryDomain": "contoso.com"  // domain used for "external" determination at collection time
+}
+```
+
+**`isComplete` is the primary gate** for findings derivation. `permissionDenied` and `truncated` are retained as separate booleans to allow future coverage findings to distinguish between the two failure modes (actionable permissions gap vs transient error).
+
+**Permission failure path** (`permissionDenied: true`): the app registration lacks `Exchange.ManageAsApp` or the service principal has not been assigned an Exchange management role in this tenant. This is separate from the Microsoft Graph permissions required by other collectors.
+
+**Truncated path** (`truncated: true`): token acquisition failure (misconfigured credentials), unexpected HTTP error, or network failure. Re-running the scan after confirming credentials and role assignments usually resolves it.
+
