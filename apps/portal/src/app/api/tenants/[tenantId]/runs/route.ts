@@ -12,6 +12,7 @@ const DEFAULT_MODULE_KEYS = [
   "entra.directoryRoles.assignments",
   "entra.enterpriseApps.permissions",
   "exchange.mailboxes.inventory",
+  "exchange.transportRules",
 
   // SharePoint Online discovery
   "sharepoint.sites.inventory",
