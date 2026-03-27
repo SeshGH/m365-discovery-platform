@@ -263,7 +263,10 @@ const MODULE_TO_COLLECTOR_ID: Record<string, string> = {
   "entra.groups.inventory": "entra.groups.inventory",
 
   // Exchange transport rules
-  "exchange.transportRules": "exchange.transportRules"
+  "exchange.transportRules": "exchange.transportRules",
+
+  // Exchange connectors
+  "exchange.connectors": "exchange.connectors"
 };
 
 // Legacy run summary collectors (CSV/XLSX) are deprecated and no longer scheduled by default.

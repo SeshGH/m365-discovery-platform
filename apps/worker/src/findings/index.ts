@@ -9,6 +9,7 @@ import { entraConditionalAccessFinding } from "./entraConditionalAccessFinding";
 import { spoSitesCoverageFinding } from "./spoSitesCoverageFinding";
 import { exoMailboxesCoverageFinding } from "./exoMailboxesCoverageFinding";
 import { exchangeTransportRulesFinding } from "./exchangeTransportRulesFinding";
+import { exchangeConnectorsFinding } from "./exchangeConnectorsFinding";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
@@ -20,7 +21,8 @@ const DERIVATIONS: FindingDerivation[] = [
   eapHighPrivFinding,
   entraDirectoryRolesFinding,
   entraConditionalAccessFinding,
-  exchangeTransportRulesFinding
+  exchangeTransportRulesFinding,
+  exchangeConnectorsFinding
 ];
 
 function uniq(xs: string[]) {

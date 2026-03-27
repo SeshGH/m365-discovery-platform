@@ -485,3 +485,71 @@ Examples:
 
 **Truncated path** (`truncated: true`): token acquisition failure (misconfigured credentials), unexpected HTTP error, or network failure. Re-running the scan after confirming credentials and role assignments usually resolves it.
 
+---
+
+## Exchange — Connectors (`EXO_CONNECTOR_*`)
+
+### `EXO_CONNECTOR_001` — Inbound connector accepts mail without sender IP restriction or TLS certificate validation
+
+* **Collector:** `exchange.connectors`
+* **Derivation:** `exchange.connectors.posture` (`exchangeConnectorsFinding.ts`)
+* **Derived from observed check(s):** `EXO_CONNECTOR_OBS_001`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** At least one **enabled** inbound Exchange connector has neither a sender IP restriction (`SenderIPAddresses`) nor a TLS certificate identity check (`RestrictDomainsToCertificate` / `TlsSenderCertificateName`). Without at least one of these controls, the connector relies solely on sender domain matching (`SenderDomains`), which any SMTP server can spoof.
+
+* **Guards (to avoid false signals):**
+  * Only emit when `EXO_CONNECTOR_OBS_001.isComplete === true` (i.e. `permissionDenied === false` and `truncated === false`). When collection was incomplete, the absence of this finding must not be read as "no permissive connectors exist".
+  * Only emit when `permissiveInboundConnectorsCount > 0`.
+
+* **Notes:**
+  * **Detection logic:** A connector is "permissive" when all three conditions hold:
+    1. `Enabled === true`
+    2. `SenderIPAddresses` is absent or empty (no source IP restriction)
+    3. `RestrictDomainsToCertificate !== true` AND `TlsSenderCertificateName` is empty/null (no TLS cert identity check)
+    If the connector has either a non-empty `SenderIPAddresses` list OR a certificate check, it is **not** flagged.
+  * **Why `RequireTLS=true` alone does not qualify:** `RequireTLS` enforces that the connection uses TLS but does not validate the sender's certificate subject. Any SMTP server with a valid TLS certificate passes. Certificate identity validation (`RestrictDomainsToCertificate` + `TlsSenderCertificateName`) is required to verify WHO holds the certificate.
+  * **Risk context:** Permissive inbound connectors are a common misconfiguration in hybrid Exchange environments. An attacker with knowledge of the tenant's connector domains can route spoofed mail through the connector, potentially bypassing anti-phishing controls and triggering `TreatMessagesAsInternal` trust if that setting is enabled.
+  * **Legitimate use:** Many on-premises relay and partner connectors are legitimately permissive when the sending server's IP range is dynamic or unknown. The finding is `medium` (not `high`) to reflect that legitimate uses are common and a review-prompt is more appropriate than an alarm.
+  * `references.permissiveInboundConnectorNames` carries up to 10 connector names for reviewer orientation.
+  * **Required permissions:** same as other Exchange collectors — `Exchange.ManageAsApp` application role + Exchange Administrator role for the service principal.
+
+---
+
+### Observed check: `EXO_CONNECTOR_OBS_001`
+
+> **Registry note:** Observed checks are documented here inline for the Exchange connectors domain. Move to `docs/findings-observed-checks.md` when the connectors OBS section is formalised.
+
+* **Collector:** `exchange.connectors`
+* **API:** `POST https://outlook.office365.com/adminapi/beta/{tenantId}/InvokeCommand` (`Get-InboundConnector`)
+
+**Payload shape:**
+
+```jsonc
+{
+  // ── Completeness signals (always present) ─────────────────────────────────
+  "isComplete": true,         // true iff permissionDenied===false && truncated===false
+  "permissionDenied": false,  // 401/403 from Exchange Admin API
+  "truncated": false,         // any other error (token failure, 5xx, network)
+  "errorCode": null,          // HTTP status that caused failure, or null
+  "errorMessage": null,       // truncated error body (≤400 chars), or null
+
+  // ── Inventory facts (meaningful only when isComplete === true) ────────────
+  "totalInboundConnectors": 2,           // total inbound connectors (enabled + disabled)
+  "enabledInboundConnectorsCount": 2,    // connectors in enabled state
+
+  // ── EXO_CONNECTOR_001: permissive inbound connector detection ─────────────
+  // A connector is "permissive" when enabled AND has no SenderIPAddresses AND
+  // has no TLS cert check (RestrictDomainsToCertificate or TlsSenderCertificateName).
+  "permissiveInboundConnectorsCount": 1,             // count of permissive connectors
+  "permissiveInboundConnectorNames": ["Connector"]   // names of those connectors (max 20)
+}
+```
+
+**`isComplete` is the primary gate** for findings derivation. `permissionDenied` and `truncated` are retained as separate booleans to allow future coverage findings to distinguish between the two failure modes.
+
+**Permission failure path** (`permissionDenied: true`): same as the transport rules collector — `Exchange.ManageAsApp` application role + Exchange Administrator role for the service principal must be granted.
+
+**Truncated path** (`truncated: true`): token acquisition failure or unexpected HTTP error. Re-running the scan usually resolves it.
+

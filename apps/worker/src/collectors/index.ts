@@ -10,6 +10,7 @@ import { sharepointAdminSettingsCollector } from "./sharepointAdminSettingsColle
 import { intuneDevicesOverviewCollector } from "./intuneDevicesOverviewCollector";
 import { entraGroupsInventoryCollector } from "./entraGroupsInventoryCollector";
 import { exchangeTransportRulesCollector } from "./exchangeTransportRulesCollector";
+import { exchangeConnectorsCollector } from "./exchangeConnectorsCollector";
 
 // DEPRECATED (legacy exports): retained only so historical runs with queued jobs still work.
 // These are no longer scheduled by default; portal-derived report snapshots replace them.
@@ -28,6 +29,7 @@ const collectors: Collector[] = [
   intuneDevicesOverviewCollector,
   entraGroupsInventoryCollector,
   exchangeTransportRulesCollector,
+  exchangeConnectorsCollector,
 
   // DEPRECATED legacy report collectors (do not schedule by default)
   runSummaryCsvReportCollector,
