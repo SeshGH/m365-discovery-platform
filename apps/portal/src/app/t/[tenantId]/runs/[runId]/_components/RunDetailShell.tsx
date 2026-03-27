@@ -607,28 +607,24 @@ function SummaryTab({
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
             <div style={{ fontWeight: 900, fontSize: 15 }}>Findings quality &amp; coverage</div>
             <div style={{ display: "flex", gap: 16 }}>
-              <span>
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => onGoFindings("posture")}
-                  style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", fontWeight: 700, color: "var(--fg)" }}
-                >
-                  {findingCounts.posture}
-                </button>{" "}
+              <button
+                type="button"
+                className="link"
+                onClick={() => onGoFindings("posture")}
+                style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--fg)" }}
+              >
+                <strong>{findingCounts.posture}</strong>{" "}
                 <span className="subtle">posture finding{findingCounts.posture !== 1 ? "s" : ""}</span>
-              </span>
-              <span>
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => onGoFindings("coverage")}
-                  style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", fontWeight: 700, color: "var(--fg)" }}
-                >
-                  {findingCounts.coverage}
-                </button>{" "}
+              </button>
+              <button
+                type="button"
+                className="link"
+                onClick={() => onGoFindings("coverage")}
+                style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--fg)" }}
+              >
+                <strong>{findingCounts.coverage}</strong>{" "}
                 <span className="subtle">coverage finding{findingCounts.coverage !== 1 ? "s" : ""}</span>
-              </span>
+              </button>
             </div>
           </div>
           {findingCounts.coverage > 0 ? (
@@ -1292,6 +1288,7 @@ function FindingsTab({
                 >
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <Badge badge={sevBadge} />
+                    <Badge badge={{ label: isCoverageFinding(f) ? "Coverage" : "Posture", tone: "muted" }} />
                     <div style={{ fontWeight: 800 }}>{f.title}</div>
                   </div>
 
