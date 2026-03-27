@@ -2,7 +2,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export type BadgeTone = "ok" | "warn" | "bad" | "muted";
 export type BadgeModel = { label: string; tone: BadgeTone };
@@ -160,6 +161,16 @@ function TabButton({
   );
 }
 
+// How often to re-fetch server data while a run is in progress.
+const POLL_INTERVAL_MS = 5_000;
+
+// Statuses from which a run will never transition. Polling stops here.
+const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
+
+function isTerminalStatus(s: unknown): boolean {
+  return TERMINAL_STATUSES.has(String(s ?? "").toLowerCase().trim());
+}
+
 function norm(s: unknown): string {
   return String(s ?? "").toLowerCase().trim();
 }
@@ -242,6 +253,18 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
 
   // Findings kind filter is shell-owned so Summary tab can pre-select it.
   const [findingsKindFilter, setFindingsKindFilter] = useState<FindingsKindFilter>("all");
+
+  // ── Auto-refresh while run is in progress ─────────────────────────────────
+  // router.refresh() re-runs the server component and patches the RSC tree in
+  // place — the active tab and all other client state are preserved.
+  const router = useRouter();
+  const isTerminal = isTerminalStatus(vm.run.status);
+
+  useEffect(() => {
+    if (isTerminal) return;
+    const id = setInterval(() => router.refresh(), POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isTerminal, router]);
 
   const tabs = useMemo(
     () => [
@@ -338,6 +361,11 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
               <span className="subtle" style={{ marginLeft: 6 }}>
                 {vm.confidence.reasons.join(" · ")}
               </span>
+              {!isTerminal && (
+                <span className="subtle" style={{ marginLeft: 8, fontSize: "0.82em" }}>
+                  · updating automatically…
+                </span>
+              )}
             </div>
           </div>
 
