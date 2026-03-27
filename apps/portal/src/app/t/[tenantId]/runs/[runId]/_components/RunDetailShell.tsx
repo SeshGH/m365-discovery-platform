@@ -302,6 +302,13 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     return { label, tone: vm.confidence.tone };
   }, [vm.confidence.level, vm.confidence.tone]);
 
+  const runQualityBadge: BadgeModel = useMemo(() => {
+    const partial = vm.findings.some(isCoverageFinding);
+    return partial
+      ? { label: "run quality: partial", tone: "warn" }
+      : { label: "run quality: complete", tone: "ok" };
+  }, [vm.findings]);
+
   return (
     <main>
       <p style={{ margin: "10px 0 0 0" }}>
@@ -327,6 +334,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
               <Badge badge={vm.phaseBadge} />
               <Badge badge={vm.completenessBadge} />
               <Badge badge={confidenceBadge} />
+              <Badge badge={runQualityBadge} />
               <span className="subtle" style={{ marginLeft: 6 }}>
                 {vm.confidence.reasons.join(" · ")}
               </span>
