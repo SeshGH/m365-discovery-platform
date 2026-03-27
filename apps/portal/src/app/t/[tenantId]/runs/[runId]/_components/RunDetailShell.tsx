@@ -130,6 +130,7 @@ function Badge({ badge }: { badge: BadgeModel }) {
 }
 
 type TabKey = "summary" | "findings" | "evidence" | "jobs";
+type FindingsKindFilter = "all" | "posture" | "coverage";
 
 function TabButton({
   active,
@@ -161,6 +162,10 @@ function TabButton({
 
 function norm(s: unknown): string {
   return String(s ?? "").toLowerCase().trim();
+}
+
+function isCoverageFinding(f: { checkId: string }): boolean {
+  return f.checkId.includes("_COVERAGE_");
 }
 
 function isMissingValue(v: string | null | undefined): boolean {
@@ -235,6 +240,9 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   // Evidence filter must be shell-owned so Next Actions can drive it.
   const [evidenceQuery, setEvidenceQuery] = useState<string>("");
 
+  // Findings kind filter is shell-owned so Summary tab can pre-select it.
+  const [findingsKindFilter, setFindingsKindFilter] = useState<FindingsKindFilter>("all");
+
   const tabs = useMemo(
     () => [
       { key: "summary" as const, label: "Summary" },
@@ -274,7 +282,10 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     });
   };
 
-  const goToFindings = () => setTab("findings");
+  const goToFindings = (filter?: FindingsKindFilter) => {
+    if (filter) setFindingsKindFilter(filter);
+    setTab("findings");
+  };
 
   const onAction = (a: RunDetailViewModel["nextActions"][number]) => {
     if (a.cta.goToTab === "findings") return goToFindings();
@@ -382,7 +393,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
           onAction={onAction}
         />
       ) : null}
-      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} /> : null}
+      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} kindFilter={findingsKindFilter} onKindFilterChange={setFindingsKindFilter} /> : null}
       {tab === "evidence" ? <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} /> : null}
       {tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
@@ -405,7 +416,7 @@ function SummaryTab({
   onGoEvidenceQuery: (q: string) => void;
   onGoReports: () => void;
   onGoJobs: () => void;
-  onGoFindings: () => void;
+  onGoFindings: (filter?: FindingsKindFilter) => void;
   onAction: (a: RunDetailViewModel["nextActions"][number]) => void;
 }) {
   const headlineMetrics = useMemo(() => vm.environmentOverview.filter((m) => m.key !== "signals"), [vm.environmentOverview]);
@@ -431,7 +442,7 @@ function SummaryTab({
   }, [headlineMetrics]);
 
   const findingCounts = useMemo(() => {
-    const coverage = vm.findings.filter((f) => f.checkId.includes("_COVERAGE_")).length;
+    const coverage = vm.findings.filter(isCoverageFinding).length;
     return { coverage, posture: vm.findings.length - coverage };
   }, [vm.findings]);
 
@@ -500,7 +511,7 @@ function SummaryTab({
 
           <button
             type="button"
-            onClick={onGoFindings}
+            onClick={() => onGoFindings()}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -597,11 +608,25 @@ function SummaryTab({
             <div style={{ fontWeight: 900, fontSize: 15 }}>Findings quality &amp; coverage</div>
             <div style={{ display: "flex", gap: 16 }}>
               <span>
-                <strong>{findingCounts.posture}</strong>{" "}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => onGoFindings("posture")}
+                  style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", fontWeight: 700, color: "var(--fg)" }}
+                >
+                  {findingCounts.posture}
+                </button>{" "}
                 <span className="subtle">posture finding{findingCounts.posture !== 1 ? "s" : ""}</span>
               </span>
               <span>
-                <strong>{findingCounts.coverage}</strong>{" "}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => onGoFindings("coverage")}
+                  style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", fontWeight: 700, color: "var(--fg)" }}
+                >
+                  {findingCounts.coverage}
+                </button>{" "}
                 <span className="subtle">coverage finding{findingCounts.coverage !== 1 ? "s" : ""}</span>
               </span>
             </div>
@@ -1052,19 +1077,38 @@ function resolveEvidenceCheckIds(finding: RunDetailViewModel["findings"][number]
   return [finding.checkId];
 }
 
-function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidence: (q?: string) => void }) {
+function FindingsTab({
+  vm,
+  onGoEvidence,
+  kindFilter,
+  onKindFilterChange
+}: {
+  vm: RunDetailViewModel;
+  onGoEvidence: (q?: string) => void;
+  kindFilter: FindingsKindFilter;
+  onKindFilterChange: (f: FindingsKindFilter) => void;
+}) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const findingsFiltered = useMemo(() => {
-    const q = norm(query);
-    if (!q) return vm.findings;
+  const kindCounts = useMemo(() => {
+    const coverage = vm.findings.filter(isCoverageFinding).length;
+    return { all: vm.findings.length, coverage, posture: vm.findings.length - coverage };
+  }, [vm.findings]);
 
-    return vm.findings.filter((f) => {
+  const findingsFiltered = useMemo(() => {
+    let xs = vm.findings;
+    if (kindFilter === "coverage") xs = xs.filter(isCoverageFinding);
+    else if (kindFilter === "posture") xs = xs.filter((f) => !isCoverageFinding(f));
+
+    const q = norm(query);
+    if (!q) return xs;
+
+    return xs.filter((f) => {
       const hay = [f.title, f.checkId, f.severity].map((x) => norm(x)).join(" | ");
       return hay.includes(q);
     });
-  }, [vm.findings, query]);
+  }, [vm.findings, query, kindFilter]);
 
   const findingsSorted = useMemo(() => {
     const xs = findingsFiltered.slice();
@@ -1152,9 +1196,17 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           </p>
         </div>
 
-        <div className="subtle" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span>
-            Showing {findingsSorted.length} of {vm.findings.length}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {(["all", "posture", "coverage"] as const).map((f) => (
+              <TabButton key={f} active={kindFilter === f} onClick={() => onKindFilterChange(f)}>
+                {f === "all" ? `All (${kindCounts.all})` : f === "posture" ? `Posture (${kindCounts.posture})` : `Coverage (${kindCounts.coverage})`}
+              </TabButton>
+            ))}
+          </div>
+
+          <span className="subtle">
+            Showing {findingsSorted.length} of {kindFilter === "all" ? vm.findings.length : kindFilter === "coverage" ? kindCounts.coverage : kindCounts.posture}
           </span>
 
           <input
@@ -1204,7 +1256,9 @@ function FindingsTab({ vm, onGoEvidence }: { vm: RunDetailViewModel; onGoEvidenc
           }}
         >
           <div style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
-            <div style={{ fontWeight: 800 }}>All findings</div>
+            <div style={{ fontWeight: 800 }}>
+              {kindFilter === "coverage" ? "Coverage findings" : kindFilter === "posture" ? "Posture findings" : "All findings"}
+            </div>
             <div className="subtle" style={{ marginTop: 4 }}>
               Select an item to see details and supporting evidence.
             </div>
