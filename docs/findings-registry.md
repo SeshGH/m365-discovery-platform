@@ -286,3 +286,34 @@ Examples:
   * Permission-denied path: `Reports.Read.All` (or equivalent) application permission requires admin consent.
   * Report-not-ready path: Microsoft 365 usage reports can take 24–48 hours to initialise on new or lightly used tenants; re-running usually resolves it.
 
+---
+
+## Exchange — Mailboxes (`EXO_MAILBOXES_*`)
+
+### `EXO_MAILBOXES_COVERAGE_001` — Exchange mailbox usage report unavailable
+
+* **Collector:** `exchange.mailboxes.inventory`
+* **Derivation:** `exo.mailboxes.coverage` (`exoMailboxesCoverageFinding.ts`)
+* **Derived from observed check(s):** `EXO_MAILBOXES_OBS_001`
+
+* **Severity (implemented):**
+  * `medium` when `permissionDenied` includes `"microsoft.graph/reports:getMailboxUsageDetail"` (active permissions gap)
+  * `low` when `truncated === true` (unexpected/transient failure)
+  * `info` otherwise (report not yet generated — 400/404 path)
+
+* **Meaning:** The Exchange mailbox usage report could not be retrieved. Mailbox count, size distribution, and licensing pressure metrics are unavailable for this run.
+
+* **Guards:**
+  * Only emits when `EXO_MAILBOXES_OBS_001.isComplete === false`.
+  * Suppressed when `isComplete === true` or when the OBS is absent entirely.
+
+* **Title variants:**
+  * `permissionDenied` includes `"microsoft.graph/reports:getMailboxUsageDetail"` → "Exchange mailbox usage report unavailable — reporting permissions missing"
+  * `truncated === true` (unexpected failure) → "Exchange mailbox usage report unavailable"
+  * All other incomplete cases (400/404, report not ready) → "Exchange mailbox usage report unavailable — report data not yet generated"
+
+* **Notes:**
+  * Exists to prevent a run with zero `EXO_LICENSE_001` findings from being misread as "no mailbox pressure" when the real cause is missing or unavailable reporting data.
+  * Permission-denied path: `Reports.Read.All` application permission requires admin consent.
+  * Report-not-ready path: Exchange reporting initialisation can take 24–48 hours on new or lightly used tenants; re-running usually resolves it.
+

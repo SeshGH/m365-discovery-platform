@@ -3,6 +3,7 @@ import { spoSharingFinding } from "../spoSharingFinding";
 import { spoSitesCoverageFinding } from "../spoSitesCoverageFinding";
 import { eapHighPrivFinding } from "../eapHighPrivFinding";
 import { exoMailboxLicensingFinding } from "../exoMailboxLicensingFinding";
+import { exoMailboxesCoverageFinding } from "../exoMailboxesCoverageFinding";
 import { mdmComplianceFinding } from "../mdmComplianceFinding";
 import type { ObservedCheckLike } from "../types";
 
@@ -203,6 +204,76 @@ describe("derived findings include references.observedChecks", () => {
       });
       expect(findings.some((f) => f.checkId === "ENTRA_EAP_HIGH_PRIV_001")).toBe(true);
       expect(findings.some((f) => f.checkId === "ENTRA_EAP_COVERAGE_001")).toBe(true);
+    });
+  });
+
+  describe("exoMailboxesCoverageFinding", () => {
+    it("emits EXO_MAILBOXES_COVERAGE_001 at medium severity when reporting permissions denied", () => {
+      const findings = exoMailboxesCoverageFinding.derive({
+        observedChecks: [
+          obs("EXO_MAILBOXES_OBS_001", {
+            isComplete: false,
+            truncated: false,
+            permissionDenied: ["microsoft.graph/reports:getMailboxUsageDetail"]
+          })
+        ]
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].checkId).toBe("EXO_MAILBOXES_COVERAGE_001");
+      expect(findings[0].severity).toBe("medium");
+      expect(findings[0].title).toMatch(/permissions missing/i);
+      assertReferences(findings[0].references);
+    });
+
+    it("emits EXO_MAILBOXES_COVERAGE_001 at info severity when report not yet generated", () => {
+      const findings = exoMailboxesCoverageFinding.derive({
+        observedChecks: [
+          obs("EXO_MAILBOXES_OBS_001", {
+            isComplete: false,
+            truncated: false,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].checkId).toBe("EXO_MAILBOXES_COVERAGE_001");
+      expect(findings[0].severity).toBe("info");
+      expect(findings[0].title).toMatch(/not yet generated/i);
+      assertReferences(findings[0].references);
+    });
+
+    it("emits EXO_MAILBOXES_COVERAGE_001 at low severity when truncated (unexpected failure)", () => {
+      const findings = exoMailboxesCoverageFinding.derive({
+        observedChecks: [
+          obs("EXO_MAILBOXES_OBS_001", {
+            isComplete: false,
+            truncated: true,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0].checkId).toBe("EXO_MAILBOXES_COVERAGE_001");
+      expect(findings[0].severity).toBe("low");
+      assertReferences(findings[0].references);
+    });
+
+    it("emits no findings when collection is complete", () => {
+      const findings = exoMailboxesCoverageFinding.derive({
+        observedChecks: [
+          obs("EXO_MAILBOXES_OBS_001", {
+            isComplete: true,
+            truncated: false,
+            permissionDenied: []
+          })
+        ]
+      });
+      expect(findings).toHaveLength(0);
+    });
+
+    it("emits no findings when EXO_MAILBOXES_OBS_001 is absent", () => {
+      const findings = exoMailboxesCoverageFinding.derive({ observedChecks: [] });
+      expect(findings).toHaveLength(0);
     });
   });
 
