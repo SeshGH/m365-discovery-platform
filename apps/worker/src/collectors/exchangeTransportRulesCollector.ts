@@ -1,7 +1,7 @@
 // apps/worker/src/collectors/exchangeTransportRulesCollector.ts
 
 import type { Collector } from "./types";
-import { getExchangeAdminAccessToken, exchangeAdminGetAllPages, GraphHttpError } from "./graph";
+import { getExchangeAdminAccessToken, exchangeAdminPost, GraphHttpError } from "./graph";
 
 // Exchange Online Admin REST API base.
 // Token must be scoped to https://outlook.office365.com/.default via
@@ -9,9 +9,9 @@ import { getExchangeAdminAccessToken, exchangeAdminGetAllPages, GraphHttpError }
 const EXCHANGE_ADMIN_BASE = "https://outlook.office365.com/adminapi/beta";
 
 // ─── Exchange transport rule shape ───────────────────────────────────────────
-// Properties use Exchange PowerShell naming (PascalCase) as returned by the
-// Exchange Online Admin REST API. Only the fields relevant to forwarding
-// detection are typed; remaining properties are ignored.
+// Properties use Exchange PowerShell naming (PascalCase) as returned by
+// InvokeCommand with Get-TransportRule. Only the fields relevant to forwarding
+// detection are typed; all other properties are ignored.
 type TransportRule = {
   Identity?: string;
   Name?: string;
@@ -22,6 +22,15 @@ type TransportRule = {
   ForwardMessageTo?: string[];
   BlindCopyTo?: string[];
   CopyTo?: string[];
+};
+
+// InvokeCommand response envelope.
+// ResultSize field uses the non-standard "@AdminAPI.ResultSize" annotation.
+// All results are returned in a single response when ResultSize=Unlimited is
+// passed — there is no @odata.nextLink pagination for InvokeCommand.
+type InvokeCommandResponse<T> = {
+  "@AdminAPI.ResultSize"?: number;
+  value: T[];
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -103,9 +112,30 @@ export const exchangeTransportRulesCollector: Collector = {
 
     try {
       const token = await getExchangeAdminAccessToken({ tenantId });
-      const url = `${EXCHANGE_ADMIN_BASE}/${encodeURIComponent(tenantId)}/TransportRule`;
 
-      const rules = await exchangeAdminGetAllPages<TransportRule>(token, url);
+      // TransportRule is NOT an OData entity set in the Exchange Admin REST API.
+      // The correct surface is InvokeCommand, which maps Exchange PowerShell
+      // cmdlets to REST. This is the same mechanism used by the EXO V3
+      // PowerShell module internally.
+      //
+      // ResultSize: "Unlimited" instructs Exchange to return all rules in a
+      // single response. InvokeCommand does not use @odata.nextLink pagination.
+      const invokeUrl = `${EXCHANGE_ADMIN_BASE}/${encodeURIComponent(tenantId)}/InvokeCommand`;
+
+      const response = await exchangeAdminPost<InvokeCommandResponse<TransportRule>>(
+        token,
+        invokeUrl,
+        {
+          CmdletInput: {
+            CmdletName: "Get-TransportRule",
+            Parameters: {
+              ResultSize: "Unlimited"
+            }
+          }
+        }
+      );
+
+      const rules: TransportRule[] = Array.isArray(response.value) ? response.value : [];
 
       totalRules = rules.length;
 

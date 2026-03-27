@@ -256,8 +256,47 @@ export async function exchangeAdminGet<T>(token: string, url: string): Promise<T
 }
 
 /**
+ * JSON POST against the Exchange Online Admin REST API.
+ * Used primarily for the InvokeCommand endpoint, which is the only supported
+ * way to invoke Exchange cmdlets (e.g. Get-TransportRule) via REST.
+ * Token must come from `getExchangeAdminAccessToken`.
+ */
+export async function exchangeAdminPost<T>(token: string, url: string, body: unknown): Promise<T> {
+  const clientRequestId = makeClientRequestId();
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "client-request-id": clientRequestId
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const ids = extractRequestIds(res.headers);
+    const text = await readErrorBody(res);
+    const msg = `[collectors] Exchange Admin POST failed (${res.status}) url=${url} clientRequestId=${clientRequestId} requestId=${ids.requestId ?? "n/a"}: ${text}`;
+    throw new GraphHttpError({
+      message: msg,
+      status: res.status,
+      url,
+      requestId: ids.requestId,
+      clientRequestId,
+      bodyText: text
+    });
+  }
+
+  return (await res.json()) as T;
+}
+
+/**
  * Paginated GET against the Exchange Online Admin REST API.
  * Follows `@odata.nextLink` until exhausted, same as `graphGetAllPages`.
+ * Note: the InvokeCommand endpoint uses POST (see exchangeAdminPost), not GET.
+ * This helper is retained for direct entity-set GETs on the admin API surface.
  */
 export async function exchangeAdminGetAllPages<TItem>(token: string, url: string): Promise<TItem[]> {
   type Page<T> = { value: T[]; "@odata.nextLink"?: string };
