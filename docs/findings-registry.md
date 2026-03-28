@@ -181,6 +181,32 @@ Examples:
 
 ---
 
+### `ENTRA_CA_005` — No enabled all-users MFA Conditional Access policy detected in available evidence
+
+* **Collector:** `entra.conditionalAccess.policies`
+* **Derivation:** `entra.conditionalAccess.posture` (`entraConditionalAccessFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_CA_DERIVED_001` (derived OBS — see `docs/findings-observed-checks.md`)
+* **Severity (implemented):** `medium`
+* **Meaning:** Conditional Access policies exist in an enabled state, but the available per-policy evidence does not contain any policy that simultaneously satisfies all three of: enabled state, an MFA grant control (`builtInControls` includes `"mfa"`), and all-users targeting (`includeUsers: "All"`).
+* **Guards (to avoid false signals):**
+  * Only emit when `ENTRA_CA_DERIVED_001` is present in the run's observed checks. Absence of the OBS means the CA artefact was incomplete (permission-denied or truncated) and this finding must not fire.
+  * Only emit when `hasAnyEnabledPolicy === true`. When no policies are enabled, `ENTRA_CA_001` is the primary signal; do not double-emit.
+  * Only emit when `hasEnabledMfaForAllUsers !== true`.
+  * Note: the `enabledPolicies === 0` early return in OBS-001 processing (which would prevent any CA finding from emitting) is safe here because `enabledPolicies === 0` implies `hasAnyEnabledPolicy === false`, which is already a guard above.
+* **Relationship to `ENTRA_CA_002`:**
+  * `ENTRA_CA_002` fires when `policiesWithMfaGrantControl === 0` (no MFA policy in any state, from `ENTRA_CA_OBS_001`).
+  * `ENTRA_CA_005` fires when `hasEnabledMfaForAllUsers === false` (no policy satisfies the enabled + all-users + MFA intersection, from `ENTRA_CA_DERIVED_001`).
+  * Both may co-emit when no MFA CA policies exist at all. `ENTRA_CA_005` provides distinct value when MFA policies exist in some form but none is the enabled + all-users combination.
+* **Evidence limitations (must be noted — do not suppress the finding based on these):**
+  1. **Authentication strength grants:** CA policies using `authenticationStrength` grants (e.g. phishing-resistant MFA) rather than the standard `mfa` built-in control are **not visible** in the safe artefact profile. Such policies would not set `hasEnabledMfaForAllUsers = true` and would not suppress this finding.
+  2. **Role-targeted policies:** CA policies that target specific directory roles via `includeRoles` are **not detected** as all-users policies. The safe artefact strips `includeRoles` GUIDs; only `includeRolesCount` is preserved. A policy covering only Global Administrators (not `includeUsers: "All"`) would not suppress this finding.
+  * Both limitations are documented in the recommendation text to inform the reviewer that a false positive is possible when either pattern is in use.
+* **Notes:**
+  * This is a CA-scoped, evidence-bounded signal. It does not claim that MFA is absent from the tenant — only that the per-policy evidence does not show an enabled, all-users, MFA-grant-control policy.
+  * The finding wording deliberately says "not detected in available evidence" rather than "does not exist" to accurately reflect the evidence bounds.
+
+---
+
 ## Entra — Directory Roles (`ENTRA_DIRROLES_*`)
 
 ### `ENTRA_DIRROLES_001` — Non-user principals assigned to directory roles

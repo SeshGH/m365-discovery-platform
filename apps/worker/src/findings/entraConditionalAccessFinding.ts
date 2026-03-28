@@ -10,7 +10,7 @@ function asNumber(v: unknown): number | null {
 export const entraConditionalAccessFinding: FindingDerivation = {
   id: "entra.conditionalAccess.posture",
 
-  emits: ["ENTRA_CA_002", "ENTRA_CA_003", "ENTRA_CA_004"],
+  emits: ["ENTRA_CA_002", "ENTRA_CA_003", "ENTRA_CA_004", "ENTRA_CA_005"],
 
   derive({ observedChecks }): DerivedFinding[] {
     const obs = observedChecks.find((o) => o.checkId === "ENTRA_CA_OBS_001");
@@ -89,6 +89,53 @@ export const entraConditionalAccessFinding: FindingDerivation = {
           observedChecks: ["ENTRA_CA_OBS_001"]
         }
       });
+    }
+
+    // ENTRA_CA_005 — No enabled all-users MFA policy detected in per-policy evidence.
+    //
+    // Reads ENTRA_CA_DERIVED_001 (a derived OBS computed from the safe artefact).
+    // The derived OBS provides the per-policy (state × grantControls × userScope)
+    // intersection that is not available in the aggregated ENTRA_CA_OBS_001.
+    //
+    // Guard: derived OBS absence means the CA artefact was incomplete (permission-
+    // denied or truncated) — do not emit. The finding gates purely on the presence
+    // of ENTRA_CA_DERIVED_001, not on any field within ENTRA_CA_OBS_001.
+    //
+    // Known evidence limits (must be acknowledged in recommendation text):
+    // 1. Authentication strength grants (e.g. phishing-resistant MFA) are not
+    //    captured in the safe artefact — policies using them appear as having no
+    //    MFA builtInControl and would not suppress this finding.
+    // 2. Policies targeting directory roles via includeRoles are not visible in
+    //    the safe artefact profile — such policies would not suppress this finding.
+    const derivedObs = observedChecks.find((o) => o.checkId === "ENTRA_CA_DERIVED_001");
+    if (derivedObs) {
+      const dd = derivedObs.data as any;
+      if (dd?.hasAnyEnabledPolicy === true && dd?.hasEnabledMfaForAllUsers !== true) {
+        findings.push({
+          checkId: "ENTRA_CA_005",
+          severity: "medium",
+          title:
+            "No enabled all-users MFA Conditional Access policy detected in available evidence",
+          recommendation:
+            "Conditional Access policies are enabled but no policy was found in the available " +
+            "evidence combining all of: enabled state, an MFA grant control " +
+            "(builtInControls includes 'mfa'), and all-users targeting (includeUsers: 'All'). " +
+            "Review whether a Conditional Access policy covering all users and requiring MFA " +
+            "is in place. " +
+            "Note: two categories of MFA enforcement are not visible in the evidence used for " +
+            "this signal and would not suppress it — (1) policies using authentication strength " +
+            "grants such as phishing-resistant MFA rather than the standard 'mfa' built-in " +
+            "control, and (2) policies targeting specific directory roles (e.g. Global " +
+            "Administrator) via the includeRoles scope. If either pattern is in use, this " +
+            "finding may be a false positive and should be reviewed in context.",
+          references: {
+            hasAnyEnabledPolicy: dd?.hasAnyEnabledPolicy,
+            hasAnyMfaPolicy: dd?.hasAnyMfaPolicy,
+            hasEnabledMfaForAllUsers: dd?.hasEnabledMfaForAllUsers,
+            observedChecks: ["ENTRA_CA_DERIVED_001"]
+          }
+        });
+      }
     }
 
     return findings;

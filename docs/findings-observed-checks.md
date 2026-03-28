@@ -297,5 +297,15 @@ Absence of `ENTRA_CA_DERIVED_001` in the run's observed checks is the completene
 
 `hasEnabledMfaForAllUsers` is derived from `conditions.users.targetsAllUsers`. CA policies that target specific directory roles via `includeRoles` are **not detected** here because `includeRoles` IDs are stripped from the safe artefact profile. This produces conservative false negatives (fails to credit role-targeted protection) but never false positives.
 
+**Limitation — authentication strength grants:**
+
+CA policies using `authenticationStrength` grants (e.g. phishing-resistant MFA) rather than the `mfa` built-in control are not visible in the safe artefact profile. Such policies do not set `hasEnabledMfaForAllUsers = true`.
+
+**Current consumers:**
+
+| Finding | Derivation | Condition |
+|---|---|---|
+| `ENTRA_CA_005` | `entra.conditionalAccess.posture` | `hasAnyEnabledPolicy === true` AND `hasEnabledMfaForAllUsers !== true` |
+
 ---
 
