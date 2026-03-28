@@ -5,6 +5,8 @@ import { eapHighPrivFinding } from "../eapHighPrivFinding";
 import { exoMailboxLicensingFinding } from "../exoMailboxLicensingFinding";
 import { exoMailboxesCoverageFinding } from "../exoMailboxesCoverageFinding";
 import { mdmComplianceFinding } from "../mdmComplianceFinding";
+import { mdmCoverageFinding } from "../mdmCoverageFinding";
+import { mdmComplianceGapFinding } from "../mdmComplianceGapFinding";
 import type { ObservedCheckLike } from "../types";
 
 function obs(checkId: string, data: unknown): ObservedCheckLike {
@@ -424,6 +426,232 @@ describe("derived findings include references.observedChecks", () => {
         observedChecks: [obs("MDM_DEVICES_OBS_001", { counts: { noncompliant: 0 } })]
       });
       expect(findings).toHaveLength(0);
+    });
+  });
+
+  describe("mdmCoverageFinding", () => {
+    // Helpers for the two OBS this finding reads.
+    function mdmObs(data: Record<string, unknown>): ObservedCheckLike {
+      return obs("MDM_DEVICES_OBS_001", data);
+    }
+    function usersObs(data: Record<string, unknown>): ObservedCheckLike {
+      return obs("ENTRA_USERS_OBS_001", data);
+    }
+
+    const completeMdmZero = { isComplete: true, counts: { total: 0 } };
+    const completeUsers10 = { isComplete: true, enabledUsers: 10 };
+
+    it("emits no finding when MDM_DEVICES_OBS_001 is absent", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [usersObs(completeUsers10)]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits no finding when ENTRA_USERS_OBS_001 is absent", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [mdmObs(completeMdmZero)]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits no finding when MDM isComplete is false (permission-denied or error)", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [
+          mdmObs({ isComplete: false, counts: { total: 0 } }),
+          usersObs(completeUsers10)
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits no finding when users isComplete is false", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [
+          mdmObs(completeMdmZero),
+          usersObs({ isComplete: false, enabledUsers: 10 })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits no finding when devices are enrolled (total > 0)", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [
+          mdmObs({ isComplete: true, counts: { total: 5 } }),
+          usersObs(completeUsers10)
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits no finding when enabledUsers is 0 (no users to protect)", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [
+          mdmObs(completeMdmZero),
+          usersObs({ isComplete: true, enabledUsers: 0 })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COVERAGE_001")).toBe(false);
+    });
+
+    it("emits MDM_COVERAGE_001 when no devices enrolled and enabled users exist", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [mdmObs(completeMdmZero), usersObs(completeUsers10)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COVERAGE_001");
+      expect(finding).toBeDefined();
+    });
+
+    it("emits MDM_COVERAGE_001 at medium severity", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [mdmObs(completeMdmZero), usersObs(completeUsers10)]
+      });
+      expect(findings.find((f) => f.checkId === "MDM_COVERAGE_001")?.severity).toBe("medium");
+    });
+
+    it("includes references.observedChecks with both OBS IDs", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [mdmObs(completeMdmZero), usersObs(completeUsers10)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COVERAGE_001");
+      assertReferences(finding?.references);
+      const ids = (finding?.references as any).observedChecks as string[];
+      expect(ids).toContain("MDM_DEVICES_OBS_001");
+      expect(ids).toContain("ENTRA_USERS_OBS_001");
+    });
+
+    it("reads enabledUsers from counts.usersEnabled when top-level enabledUsers is absent", () => {
+      const findings = mdmCoverageFinding.derive({
+        observedChecks: [
+          mdmObs(completeMdmZero),
+          usersObs({ isComplete: true, counts: { usersEnabled: 15 } })
+        ]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COVERAGE_001");
+      expect(finding).toBeDefined();
+      expect((finding?.references as any).enabledUsers).toBe(15);
+    });
+  });
+
+  describe("mdmComplianceGapFinding", () => {
+    // Helper: build MDM_DEVICES_OBS_001 with full compliance count shape.
+    function mdmGapObs(data: Record<string, unknown>): ObservedCheckLike {
+      return obs("MDM_DEVICES_OBS_001", data);
+    }
+
+    // Represents an enrolled tenant where no device has a definitive verdict.
+    const allUnknown = {
+      isComplete: true,
+      counts: {
+        total: 4,
+        compliant: 0,
+        noncompliant: 0,
+        unknown: 3,
+        notApplicable: 1,
+        inGracePeriod: 0,
+        conflict: 0
+      }
+    };
+
+    it("emits no finding when MDM_DEVICES_OBS_001 is absent", () => {
+      const findings = mdmComplianceGapFinding.derive({ observedChecks: [] });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
+    });
+
+    it("emits no finding when isComplete is false", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [
+          mdmGapObs({ isComplete: false, counts: { total: 5, compliant: 0, noncompliant: 0 } })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
+    });
+
+    it("emits no finding when total is 0 (no enrolled devices)", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [
+          mdmGapObs({
+            isComplete: true,
+            counts: { total: 0, compliant: 0, noncompliant: 0, unknown: 0 }
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
+    });
+
+    it("emits no finding when at least one device is compliant", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [
+          mdmGapObs({
+            isComplete: true,
+            counts: { total: 3, compliant: 1, noncompliant: 0, unknown: 2 }
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
+    });
+
+    it("emits no finding when at least one device is noncompliant", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [
+          mdmGapObs({
+            isComplete: true,
+            counts: { total: 3, compliant: 0, noncompliant: 2, unknown: 1 }
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
+    });
+
+    it("emits MDM_COMPLIANCE_GAP_001 when total > 0 and no compliant or noncompliant devices", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [mdmGapObs(allUnknown)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COMPLIANCE_GAP_001");
+      expect(finding).toBeDefined();
+    });
+
+    it("emits MDM_COMPLIANCE_GAP_001 at medium severity", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [mdmGapObs(allUnknown)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COMPLIANCE_GAP_001");
+      expect(finding?.severity).toBe("medium");
+    });
+
+    it("includes references.observedChecks with MDM_DEVICES_OBS_001", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [mdmGapObs(allUnknown)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COMPLIANCE_GAP_001");
+      assertReferences(finding?.references);
+      const ids = (finding?.references as any).observedChecks as string[];
+      expect(ids).toContain("MDM_DEVICES_OBS_001");
+    });
+
+    it("includes count fields in references", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [mdmGapObs(allUnknown)]
+      });
+      const finding = findings.find((f) => f.checkId === "MDM_COMPLIANCE_GAP_001");
+      const refs = finding?.references as any;
+      expect(refs.totalEnrolledDevices).toBe(4);
+      expect(refs.compliant).toBe(0);
+      expect(refs.noncompliant).toBe(0);
+      expect(refs.unknown).toBe(3);
+    });
+
+    it("does not emit when both compliant and noncompliant counts are positive", () => {
+      const findings = mdmComplianceGapFinding.derive({
+        observedChecks: [
+          mdmGapObs({
+            isComplete: true,
+            counts: { total: 6, compliant: 3, noncompliant: 3, unknown: 0 }
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
     });
   });
 });

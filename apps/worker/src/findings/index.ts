@@ -3,6 +3,8 @@ import type { FindingDerivation, ObservedCheckLike } from "./types";
 import { exoMailboxLicensingFinding } from "./exoMailboxLicensingFinding";
 import { spoSharingFinding } from "./spoSharingFinding";
 import { mdmComplianceFinding } from "./mdmComplianceFinding";
+import { mdmCoverageFinding } from "./mdmCoverageFinding";
+import { mdmComplianceGapFinding } from "./mdmComplianceGapFinding";
 import { eapHighPrivFinding } from "./eapHighPrivFinding";
 import { entraDirectoryRolesFinding } from "./entraDirectoryRolesFinding";
 import { entraConditionalAccessFinding } from "./entraConditionalAccessFinding";
@@ -18,6 +20,8 @@ const DERIVATIONS: FindingDerivation[] = [
   spoSharingFinding,
   spoSitesCoverageFinding,
   mdmComplianceFinding,
+  mdmCoverageFinding,
+  mdmComplianceGapFinding,
   eapHighPrivFinding,
   entraDirectoryRolesFinding,
   entraConditionalAccessFinding,
@@ -79,7 +83,7 @@ export async function deriveAndPersistFindingsForRun(params: {
       description: (f as any).description ?? f.title,
       recommendation: f.recommendation ?? null,
 
-      // Optional fields (won’t break if Prisma schema lacks them, but to be safe
+      // Optional fields (won't break if Prisma schema lacks them, but to be safe
       // we only attach them if present via "as any")
       ...(f.category != null ? { category: f.category } : {}),
       ...(f.confidence != null ? { confidence: f.confidence } : {}),
