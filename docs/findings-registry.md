@@ -311,6 +311,34 @@ Examples:
 
 ---
 
+### `ENTRA_PIM_001` — No PIM-eligible role assignments detected
+
+* **Collector:** `entra.directoryRoles.assignments`
+* **Derivation:** `entra.directoryRoles.privilegedAccess` (`entraDirectoryRolesFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_001`, `ENTRA_DIRROLES_OBS_004`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** The Privileged Identity Management (PIM) eligibility schedules API was successfully queried and returned zero eligible role assignments, while standing active role assignments are present in the directory. This suggests privileged access is granted on a permanent basis rather than through just-in-time (JIT) activation. Standing privileged access widens the window of exposure if a privileged account is compromised — an attacker gains immediate and continuous elevated access without needing to trigger or approve a PIM activation request.
+
+* **Guards (to avoid false signals):**
+  1. `ENTRA_DIRROLES_OBS_004` must be present. The collector only emits this OBS when `DIRROLES_ENABLE_PIM_SLICE !== "0"` (env-controlled, default `"1"`). Absence means the PIM slice was explicitly disabled; the finding is skipped silently.
+  2. `ENTRA_DIRROLES_OBS_004.succeeded === true`. The collector sets `succeeded: false` on 403 (Entra ID P2 not licensed or admin consent missing) and on any other API error. Absence of eligibility data must not be read as absence of eligible roles.
+  3. `eligibleAssignmentsCount === 0`. The collector sets this to `schedules.length` on success and leaves it `undefined` on failure. `asNumber(undefined)` returns `null`, so the `=== 0` check silently guards the undefined path.
+  4. Core completeness (`ENTRA_DIRROLES_OBS_005.isComplete === true` and `truncated !== true`) — active assignment data must be trustworthy.
+  5. `ENTRA_DIRROLES_OBS_001.activeAssignmentsCount > 0`. If there are no standing assignments there is nothing to protect with JIT; emitting would be noise.
+
+* **Evidence limitation — PIM for Groups:**
+  The `roleEligibilitySchedules` endpoint covers **direct role eligibility** only. PIM for Groups — where group membership is eligible and that group holds a directory role — creates equivalent JIT coverage that is **not visible** via this endpoint. A tenant using PIM for Groups would still show `eligibleAssignmentsCount === 0` and `ENTRA_PIM_001` would fire. The recommendation text acknowledges this so reviewers can dismiss the finding when PIM for Groups is in active use.
+
+* **Relationship to `ENTRA_DIRROLES_010` and `ENTRA_DIRROLES_012`:**
+  * `ENTRA_DIRROLES_010` — flags an elevated count of Global Administrators (blast-radius risk)
+  * `ENTRA_DIRROLES_012` — flags a large total active-assignment surface (governance complexity)
+  * `ENTRA_PIM_001` — flags the absence of JIT governance over whatever standing assignments exist
+  * All three can co-emit and each addresses a distinct risk dimension.
+
+---
+
 ## SharePoint — Admin Settings (`SPO_SHARING_*`, `SPO_LEGACY_AUTH_*`)
 
 ### `SPO_SHARING_001` — SharePoint tenant sharing capability is permissive

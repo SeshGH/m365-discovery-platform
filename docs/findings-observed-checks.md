@@ -279,8 +279,13 @@ This model allows:
   // null  = API call failed (use isComplete to distinguish)
   "isLegacyAuthProtocolsEnabled": false,
 
-  // ── Unconsumed (collected, no finding yet) ────────────────────────────────
+  // ── SPO_RESHARING_001: external users can re-share content ───────────────
+  // true  = external users can re-share files, folders, and sites they received access to
+  // false = re-sharing by external users is disabled
+  // null  = API call failed (use isComplete to distinguish)
   "isResharingByExternalUsersEnabled": false,
+
+  // ── Unconsumed (collected, no finding yet) ────────────────────────────────
   "isRequireAcceptingUserToMatchInvitedUserEnabled": true
 }
 ```
@@ -295,6 +300,53 @@ This model allows:
 |---|---|---|
 | `SPO_SHARING_001` | `spo.admin.settings.sharing` | `sharingCapability === "externalUserAndGuestSharing"` OR `"externalUserSharingOnly"` |
 | `SPO_LEGACY_AUTH_001` | `spo.admin.settings.sharing` | `isComplete === true` AND `isLegacyAuthProtocolsEnabled === true` |
+| `SPO_RESHARING_001` | `spo.admin.settings.sharing` | `isComplete === true` AND `isResharingByExternalUsersEnabled === true` |
+
+---
+
+## Entra — Directory Roles (`ENTRA_DIRROLES_OBS_*`)
+
+### `ENTRA_DIRROLES_OBS_004` — PIM role eligibility schedules
+
+* **Collector:** `entra.directoryRoles.assignments` (`entraDirectoryRolesAssignmentsCollector.ts`)
+* **API:** `GET https://graph.microsoft.com/v1.0/roleManagement/directory/roleEligibilitySchedules`
+* **Required permission:** `RoleEligibilitySchedule.Read.Directory` (application) — requires Entra ID P2 licensing
+* **Emission condition:** Only written when the `DIRROLES_ENABLE_PIM_SLICE` environment variable is not `"0"` (default `"1"` = enabled). Absence of this OBS means the PIM slice was deliberately disabled.
+
+**Payload shape:**
+
+```jsonc
+{
+  // ── Attempt flag (always present when OBS is emitted) ─────────────────────
+  "attempted": true,
+
+  // ── Query outcome ─────────────────────────────────────────────────────────
+  // true  = roleEligibilitySchedules API call succeeded
+  // false = 403 (P2 not licensed or admin consent missing), or any other error
+  "succeeded": true,
+
+  // ── Eligibility count (only present when succeeded === true) ──────────────
+  // schedules.length on success; undefined on failure
+  "eligibleAssignmentsCount": 0,
+
+  // ── Optional metadata ─────────────────────────────────────────────────────
+  "dataProfile": "...",
+  "truncated": false
+}
+```
+
+**Key guard: `succeeded` must be checked before drawing conclusions from `eligibleAssignmentsCount`.**
+When `succeeded === false`, `eligibleAssignmentsCount` is absent (`undefined`). An `asNumber(undefined)` call returns `null`, not `0` — but consuming findings must still explicitly gate on `succeeded === true` to avoid treating an API failure as "zero eligible assignments."
+
+**Permission failure path:** A 403 response (sets `succeeded: false`) indicates either that Entra ID P2 licensing is not present for the tenant or that the `RoleEligibilitySchedule.Read.Directory` application permission has not been consented. In both cases no eligibility conclusions can be drawn.
+
+**Limitation — PIM for Groups:** This OBS covers direct role eligibility schedules only. PIM for Groups (where group membership is eligible and that group holds a directory role) creates equivalent JIT coverage that is **not** visible via the `roleEligibilitySchedules` endpoint. `eligibleAssignmentsCount` will be `0` even when PIM for Groups is actively governing privileged access.
+
+**Current consumers:**
+
+| Finding | Derivation | Condition |
+|---|---|---|
+| `ENTRA_PIM_001` | `entra.directoryRoles.privilegedAccess` | `succeeded === true` AND `eligibleAssignmentsCount === 0` AND core complete AND `activeAssignmentsCount > 0` |
 
 ---
 
