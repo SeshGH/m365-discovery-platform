@@ -306,6 +306,54 @@ This model allows:
 
 ## Entra — Directory Roles (`ENTRA_DIRROLES_OBS_*`)
 
+### `ENTRA_DIRROLES_OBS_001` — Directory roles assignment summary
+
+* **Collector:** `entra.directoryRoles.assignments` (`entraDirectoryRolesAssignmentsCollector.ts`)
+* **APIs:**
+  * `GET https://graph.microsoft.com/v1.0/directoryRoleTemplates?$select=id,displayName`
+  * `GET https://graph.microsoft.com/v1.0/directoryRoles?$select=id,displayName,roleTemplateId`
+  * `GET https://graph.microsoft.com/v1.0/directoryRoles/{id}/members` (per role)
+* **Required permissions:** `RoleManagement.Read.Directory` (application)
+
+**Payload shape:**
+
+```jsonc
+{
+  // Total count of role definition templates returned by the API
+  "roleDefinitionsCount": 90,
+
+  // Count of roles that have at least one active member assignment
+  "rolesWithAnyActiveAssignmentCount": 12,
+
+  // Total count of active directory role assignments across all roles
+  "activeAssignmentsCount": 25,
+
+  // Count of assignments to the Global Administrator role specifically
+  // Derived via template ID 62e90394-69f5-4237-9190-012177145e10 with display-name fallback.
+  // Defaults to 0 if the Global Administrator role is not found in the enumeration.
+  "globalAdminCount": 2,
+
+  // Data profile used during collection ("safe" | "full")
+  "dataProfile": "safe",
+
+  // true if the directory roles list was capped at DIRROLES_MAX_ROLES (default 50)
+  "truncated": false
+}
+```
+
+**Note:** `ENTRA_DIRROLES_OBS_001` reflects the **active** assignment surface only (standing assignments). Eligible (PIM) assignments are covered by `ENTRA_DIRROLES_OBS_004`. The completeness gate for findings that read this OBS is `ENTRA_DIRROLES_OBS_005.isComplete === true` and `truncated !== true`.
+
+**Current consumers:**
+
+| Finding | Derivation | Condition |
+|---|---|---|
+| `ENTRA_GLOBAL_ADMIN_001` | `entra.directoryRoles.privilegedAccess` | core complete AND `globalAdminCount > 1` |
+| `ENTRA_DIRROLES_010` | `entra.directoryRoles.privilegedAccess` | core complete AND `globalAdminCount >= 3` |
+| `ENTRA_DIRROLES_012` | `entra.directoryRoles.privilegedAccess` | core complete AND `activeAssignmentsCount >= 20` |
+| `ENTRA_PIM_001` | `entra.directoryRoles.privilegedAccess` | core complete AND `activeAssignmentsCount > 0` AND OBS_004 succeeded with `eligibleAssignmentsCount === 0` |
+
+---
+
 ### `ENTRA_DIRROLES_OBS_004` — PIM role eligibility schedules
 
 * **Collector:** `entra.directoryRoles.assignments` (`entraDirectoryRolesAssignmentsCollector.ts`)

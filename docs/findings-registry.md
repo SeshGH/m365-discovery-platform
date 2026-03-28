@@ -256,6 +256,32 @@ Examples:
 
 ---
 
+### `ENTRA_GLOBAL_ADMIN_001` — Multiple Global Administrators detected
+
+* **Collector:** `entra.directoryRoles.assignments`
+* **Derivation:** `entra.directoryRoles.privilegedAccess` (`entraDirectoryRolesFinding.ts`)
+* **Derived from observed check(s):** `ENTRA_DIRROLES_OBS_001`, `ENTRA_DIRROLES_OBS_005`
+
+* **Severity (implemented):** `medium`
+
+* **Meaning:** Based on available evidence, more than one Global Administrator assignment exists in this tenant. Standing Global Administrator access shared across multiple accounts increases blast radius — if any one of those accounts is compromised, the attacker immediately holds the highest level of privilege in the Microsoft 365 environment. This is a baseline governance signal about the existence of shared standing GA access, not a comment on the absolute count being unusually high.
+
+* **Guards (to avoid false signals):**
+  * Only emit when core evidence is complete (`ENTRA_DIRROLES_OBS_005.isComplete === true` and not truncated). Absence of completeness confirmation means the count may be understated; no finding is emitted.
+  * Only emit when `globalAdminCount > 1` (strict: two or more GA assignments observed).
+  * Do **not** emit when `globalAdminCount` is `null` or absent.
+
+* **Relationship to `ENTRA_DIRROLES_010`:**
+  * `ENTRA_GLOBAL_ADMIN_001` — baseline governance signal: "more than one GA assignment exists at all" (threshold: `> 1`)
+  * `ENTRA_DIRROLES_010` — elevated count signal: "the number of GA assignments is unusually high" (threshold: `>= 3`, with severity escalating at `>= 5`)
+  * Both findings may co-emit when `globalAdminCount >= 3`. Each addresses a distinct risk dimension and neither supersedes the other.
+
+* **Notes:**
+  * Uses `ENTRA_DIRROLES_OBS_001.globalAdminCount`, derived via the well-known Global Administrator template ID `62e90394-69f5-4237-9190-012177145e10` with display-name fallback.
+  * The recommendation deliberately does not frame this as a fault — it is a governance prompt. The tenant may have legitimate operational reasons for multiple GA accounts (e.g., break-glass accounts, delegation across geo regions). The recommendation points to role minimisation and PIM/JIT as the stronger future-state control.
+
+---
+
 ### `ENTRA_DIRROLES_010` — Excess number of Global Administrators
 
 * **Collector:** `entra.directoryRoles.assignments`

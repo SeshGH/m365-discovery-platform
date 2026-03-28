@@ -21,7 +21,13 @@ function coreIsComplete(obs005: ObservedCheckLike | undefined): boolean {
 export const entraDirectoryRolesFinding: FindingDerivation = {
   id: "entra.directoryRoles.privilegedAccess",
 
-  emits: ["ENTRA_DIRROLES_010", "ENTRA_DIRROLES_011", "ENTRA_DIRROLES_012", "ENTRA_PIM_001"],
+  emits: [
+    "ENTRA_GLOBAL_ADMIN_001",
+    "ENTRA_DIRROLES_010",
+    "ENTRA_DIRROLES_011",
+    "ENTRA_DIRROLES_012",
+    "ENTRA_PIM_001"
+  ],
 
   derive({ observedChecks }): DerivedFinding[] {
     const obs001 = observedChecks.find((o) => o.checkId === "ENTRA_DIRROLES_OBS_001");
@@ -32,8 +38,53 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
     const complete = coreIsComplete(obs005);
     const findings: DerivedFinding[] = [];
 
+    // ── ENTRA_GLOBAL_ADMIN_001 + ENTRA_DIRROLES_010 + ENTRA_DIRROLES_012 ──────
+    // All three findings read from OBS_001 under the core completeness gate.
     if (complete && obs001) {
       const globalAdminCount = asNumber((obs001.data as any)?.globalAdminCount);
+      const activeAssignmentsCount = asNumber((obs001.data as any)?.activeAssignmentsCount);
+
+      // ── ENTRA_GLOBAL_ADMIN_001: more than one Global Administrator exists ────
+      //
+      // Baseline governance signal: shared standing Global Administrator access
+      // creates meaningful blast-radius risk regardless of whether the count is
+      // "too high" by any threshold.  This finding fires whenever globalAdminCount
+      // exceeds 1 (i.e. two or more GA assignments exist).
+      //
+      // Relationship to ENTRA_DIRROLES_010:
+      //   ENTRA_DIRROLES_010 fires at >= 3 ("elevated / excess count").
+      //   ENTRA_GLOBAL_ADMIN_001 fires at > 1 ("more than one exists at all").
+      //   Both may co-emit when the count is >= 3 — each addresses a distinct
+      //   risk dimension and neither supersedes the other.
+      if (globalAdminCount !== null && globalAdminCount > 1) {
+        findings.push({
+          checkId: "ENTRA_GLOBAL_ADMIN_001",
+          severity: "medium",
+          title: "Multiple Global Administrators detected",
+          recommendation:
+            "Based on available evidence, more than one Global Administrator assignment " +
+            "exists in this tenant. Standing Global Administrator access shared across " +
+            "multiple accounts increases blast radius — if any one of those accounts is " +
+            "compromised, the attacker immediately holds the highest level of privilege in " +
+            "the Microsoft 365 environment. Where possible, reduce the number of standing " +
+            "Global Administrator assignments. Consider whether each holder genuinely " +
+            "requires Global Administrator specifically, or whether a more scoped " +
+            "administrative role (such as Exchange Administrator, Security Administrator, " +
+            "or User Administrator) would satisfy the operational need with less privilege. " +
+            "For tenants with Entra ID P2 licensing, migrating remaining Global " +
+            "Administrator assignments to Privileged Identity Management (PIM) eligible " +
+            "assignments is the stronger long-term control: it requires explicit activation, " +
+            "time-bounding, and optionally approval or justification before privilege is " +
+            "exercised. This finding does not imply the count is unusually high; it is a " +
+            "baseline governance prompt that shared standing GA access exists.",
+          references: {
+            globalAdminCount,
+            observedChecks: ["ENTRA_DIRROLES_OBS_001", "ENTRA_DIRROLES_OBS_005"]
+          }
+        });
+      }
+
+      // ── ENTRA_DIRROLES_010: excess Global Administrator count ────────────────
       if (globalAdminCount !== null && globalAdminCount >= 3) {
         findings.push({
           checkId: "ENTRA_DIRROLES_010",
@@ -47,8 +98,26 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
           }
         });
       }
+
+      // ── ENTRA_DIRROLES_012: broad privileged assignment surface ──────────────
+      if (activeAssignmentsCount !== null && activeAssignmentsCount >= 20) {
+        findings.push({
+          checkId: "ENTRA_DIRROLES_012",
+          severity: activeAssignmentsCount >= 50 ? "high" : "medium",
+          title: "Broad privileged role assignment surface",
+          recommendation:
+            "Reduce the number of standing role assignments and use just-in-time access where possible.",
+          references: {
+            activeAssignmentsCount,
+            observedChecks: ["ENTRA_DIRROLES_OBS_001", "ENTRA_DIRROLES_OBS_005"]
+          }
+        });
+      }
     }
 
+    // ── ENTRA_DIRROLES_011: service principals in directory roles ─────────────
+    // Does not require core completeness — partial data still warrants flagging
+    // the presence of non-human privileged principals.
     if (obs002) {
       const spCount = asNumber((obs002.data as any)?.servicePrincipal);
       if (spCount !== null && spCount > 0) {
@@ -61,23 +130,6 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
           references: {
             servicePrincipalCount: spCount,
             observedChecks: ["ENTRA_DIRROLES_OBS_002", "ENTRA_DIRROLES_OBS_005"]
-          }
-        });
-      }
-    }
-
-    if (complete && obs001) {
-      const activeAssignmentsCount = asNumber((obs001.data as any)?.activeAssignmentsCount);
-      if (activeAssignmentsCount !== null && activeAssignmentsCount >= 20) {
-        findings.push({
-          checkId: "ENTRA_DIRROLES_012",
-          severity: activeAssignmentsCount >= 50 ? "high" : "medium",
-          title: "Broad privileged role assignment surface",
-          recommendation:
-            "Reduce the number of standing role assignments and use just-in-time access where possible.",
-          references: {
-            activeAssignmentsCount,
-            observedChecks: ["ENTRA_DIRROLES_OBS_001", "ENTRA_DIRROLES_OBS_005"]
           }
         });
       }

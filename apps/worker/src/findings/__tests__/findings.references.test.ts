@@ -892,4 +892,103 @@ describe("derived findings include references.observedChecks", () => {
     });
   });
 
+  // ── ENTRA_GLOBAL_ADMIN_001 ────────────────────────────────────────────────
+
+  describe("entraDirectoryRolesFinding — ENTRA_GLOBAL_ADMIN_001 (multiple Global Admins)", () => {
+    function gaObs001(globalAdminCount: number): ObservedCheckLike {
+      return obs("ENTRA_DIRROLES_OBS_001", { globalAdminCount, activeAssignmentsCount: globalAdminCount });
+    }
+
+    function gaObs005(isComplete: boolean, truncated = false): ObservedCheckLike {
+      return obs("ENTRA_DIRROLES_OBS_005", { isComplete, truncated });
+    }
+
+    const completeObs005 = gaObs005(true, false);
+
+    it("does not emit when ENTRA_DIRROLES_OBS_001 is absent", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("does not emit when ENTRA_DIRROLES_OBS_005 is absent", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2)]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("does not emit when OBS_005.isComplete is false", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), gaObs005(false)]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("does not emit when OBS_005.truncated is true", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), gaObs005(true, true)]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("does not emit when globalAdminCount is 0", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(0), completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("does not emit when globalAdminCount is 1", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(1), completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(false);
+    });
+
+    it("emits ENTRA_GLOBAL_ADMIN_001 when globalAdminCount is 2", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(true);
+    });
+
+    it("emits ENTRA_GLOBAL_ADMIN_001 at medium severity", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), completeObs005]
+      });
+      const finding = findings.find((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001");
+      expect(finding?.severity).toBe("medium");
+    });
+
+    it("includes references with globalAdminCount and both OBS IDs", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), completeObs005]
+      });
+      const finding = findings.find((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001");
+      assertReferences(finding?.references);
+      const refs = finding?.references as any;
+      expect(refs.globalAdminCount).toBe(2);
+      const ids = refs.observedChecks as string[];
+      expect(ids).toContain("ENTRA_DIRROLES_OBS_001");
+      expect(ids).toContain("ENTRA_DIRROLES_OBS_005");
+    });
+
+    it("co-emits ENTRA_GLOBAL_ADMIN_001 and ENTRA_DIRROLES_010 when globalAdminCount is 3", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(3), completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_GLOBAL_ADMIN_001")).toBe(true);
+      expect(findings.some((f) => f.checkId === "ENTRA_DIRROLES_010")).toBe(true);
+    });
+
+    it("does not emit ENTRA_DIRROLES_010 when globalAdminCount is 2 (below 010 threshold)", () => {
+      const findings = entraDirectoryRolesFinding.derive({
+        observedChecks: [gaObs001(2), completeObs005]
+      });
+      expect(findings.some((f) => f.checkId === "ENTRA_DIRROLES_010")).toBe(false);
+    });
+  });
+
 });
