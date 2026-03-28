@@ -5,7 +5,7 @@ import type { FindingDerivation, DerivedFinding } from "./types";
 export const spoSharingFinding: FindingDerivation = {
   id: "spo.admin.settings.sharing",
 
-  emits: ["SPO_SHARING_001", "SPO_LEGACY_AUTH_001"],
+  emits: ["SPO_SHARING_001", "SPO_LEGACY_AUTH_001", "SPO_RESHARING_001"],
 
   derive({ observedChecks }): DerivedFinding[] {
     const obs = observedChecks.find((o) => o.checkId === "SPO_ADMIN_OBS_001");
@@ -79,6 +79,45 @@ export const spoSharingFinding: FindingDerivation = {
           "additional defence in depth and is still recommended.",
         references: {
           isLegacyAuthProtocolsEnabled: true,
+          observedChecks: ["SPO_ADMIN_OBS_001"]
+        }
+      });
+    }
+
+    // ── SPO_RESHARING_001: external users can re-share content ───────────────
+    //
+    // Guard: only evaluate when collection is complete (isComplete === true).
+    // isResharingByExternalUsersEnabled is null on any API failure; the explicit
+    // isComplete guard provides defence in depth alongside the strict === true check.
+    //
+    // When enabled, external collaborators who receive shared files, folders, or
+    // sites can forward those shares to additional external parties without any
+    // further approval from the tenant.  The tenant loses visibility and control
+    // over where the data travels after the first external share.
+    //
+    // Relationship to SPO_SHARING_001: SPO_SHARING_001 flags external sharing being
+    // on at all; SPO_RESHARING_001 flags the additional risk that externals can
+    // extend that sharing to parties unknown to the tenant.  Both can co-emit.
+    if (d?.isComplete === true && d?.isResharingByExternalUsersEnabled === true) {
+      findings.push({
+        checkId: "SPO_RESHARING_001",
+        severity: "medium",
+        title: "External users can re-share SharePoint content",
+        recommendation:
+          "Based on available evidence, the SharePoint tenant setting that allows external users " +
+          "to re-share files, folders, and sites they have received access to is enabled. " +
+          "When this setting is on, an external collaborator can forward shared content to " +
+          "additional external parties without any further approval from the tenant, creating " +
+          "a viral sharing chain that the tenant cannot easily audit or revoke. " +
+          "Review whether this setting is intentionally enabled for business reasons. " +
+          "If external users legitimately need to collaborate with further external parties, " +
+          "consider whether a governed guest-to-guest sharing model or an explicit link-sharing " +
+          "policy with expiry and scope limits is more appropriate than open re-sharing. " +
+          "If there is no business requirement for external re-sharing, disable the setting in " +
+          "the SharePoint admin centre under Sharing > External sharing > " +
+          "'Allow guests to share items they don't own'.",
+        references: {
+          isResharingByExternalUsersEnabled: true,
           observedChecks: ["SPO_ADMIN_OBS_001"]
         }
       });

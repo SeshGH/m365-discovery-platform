@@ -654,4 +654,99 @@ describe("derived findings include references.observedChecks", () => {
       expect(findings.some((f) => f.checkId === "MDM_COMPLIANCE_GAP_001")).toBe(false);
     });
   });
+
+  // ── SPO_RESHARING_001 ────────────────────────────────────────────────────
+
+  describe("spoSharingFinding — SPO_RESHARING_001 (external users can re-share content)", () => {
+    it("does not emit when SPO_ADMIN_OBS_001 is absent", () => {
+      const findings = spoSharingFinding.derive({ observedChecks: [] });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(false);
+    });
+
+    it("does not emit when isComplete is false", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: false, isResharingByExternalUsersEnabled: true })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(false);
+    });
+
+    it("does not emit when isResharingByExternalUsersEnabled is null", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: true, isResharingByExternalUsersEnabled: null })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(false);
+    });
+
+    it("does not emit when isResharingByExternalUsersEnabled is false", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: true, isResharingByExternalUsersEnabled: false })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(false);
+    });
+
+    it("emits SPO_RESHARING_001 when isComplete is true and isResharingByExternalUsersEnabled is true", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: true, isResharingByExternalUsersEnabled: true })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(true);
+    });
+
+    it("emits SPO_RESHARING_001 at medium severity", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: true, isResharingByExternalUsersEnabled: true })
+        ]
+      });
+      const finding = findings.find((f) => f.checkId === "SPO_RESHARING_001");
+      expect(finding?.severity).toBe("medium");
+    });
+
+    it("includes references.observedChecks with SPO_ADMIN_OBS_001", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({ isComplete: true, isResharingByExternalUsersEnabled: true })
+        ]
+      });
+      const finding = findings.find((f) => f.checkId === "SPO_RESHARING_001");
+      assertReferences(finding?.references);
+      const ids = (finding?.references as any).observedChecks as string[];
+      expect(ids).toContain("SPO_ADMIN_OBS_001");
+    });
+
+    it("co-emits SPO_RESHARING_001 and SPO_SHARING_001 when both conditions are met", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({
+            isComplete: true,
+            sharingCapability: "externalUserAndGuestSharing",
+            isResharingByExternalUsersEnabled: true
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_SHARING_001")).toBe(true);
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(true);
+    });
+
+    it("does not emit SPO_RESHARING_001 when re-sharing is disabled even if sharing is enabled", () => {
+      const findings = spoSharingFinding.derive({
+        observedChecks: [
+          spoAdminObs({
+            isComplete: true,
+            sharingCapability: "externalUserAndGuestSharing",
+            isResharingByExternalUsersEnabled: false
+          })
+        ]
+      });
+      expect(findings.some((f) => f.checkId === "SPO_RESHARING_001")).toBe(false);
+    });
+  });
+
 });
