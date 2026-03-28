@@ -245,3 +245,57 @@ This model allows:
 ---
 
 **If documentation and runtime behaviour disagree, runtime behaviour wins.**
+
+---
+
+## Derived Observed Checks
+
+Some observed checks are **not written directly by collectors**. Instead, they are computed in a second-stage derivation pass that runs after all collector jobs are terminal and before findings are derived. These are called **Derived Observed Checks**.
+
+Derived OBS:
+
+* Are written with `jobId: null` to distinguish them from collector-written OBS
+* Are stored in the same `ObservedCheck` table
+* Are idempotent: deleted and re-inserted on each derivation pass
+* May read artefact content from S3 to distill per-object data into structured signals
+* Are emitted ONLY when the source artefact is complete — absence of the OBS is itself the incompleteness signal to findings
+
+The pipeline order is:
+
+```
+collectors → raw OBS → derived OBS → findings
+```
+
+Derived OBS exist because artefact content (stored in S3) is not accessible to the findings derivation layer. Derived OBS bridge that gap.
+
+---
+
+### `ENTRA_CA_DERIVED_001` — Conditional Access MFA coverage signal
+
+* **Derivation module:** `derivedObservedChecks/index.ts` (`evaluateCaArtefact`)
+* **Source artefact:** `conditional-access-policies.safe.json`
+* **Collector:** `entra.conditionalAccess.policies`
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `hasAnyEnabledPolicy` | `boolean` | At least one policy with `state === "enabled"` |
+| `hasAnyMfaPolicy` | `boolean` | At least one policy with `"mfa"` in `builtInControls` (any state) |
+| `hasEnabledMfaForAllUsers` | `boolean` | At least one policy: enabled AND mfa AND `targetsAllUsers === true` |
+
+**Guards (conditions that prevent emission):**
+
+* No `conditional-access-policies.safe.json` artefact record found for the run → **do not emit**
+* S3 read fails → **do not emit**
+* JSON parse fails → **do not emit**
+* `summary.permissionDenied === true` OR `summary.truncated === true` → **do not emit**
+
+Absence of `ENTRA_CA_DERIVED_001` in the run's observed checks is the completeness signal. Findings must treat the OBS as a guard: if it is not present, do not emit.
+
+**Limitation — role-targeted policies:**
+
+`hasEnabledMfaForAllUsers` is derived from `conditions.users.targetsAllUsers`. CA policies that target specific directory roles via `includeRoles` are **not detected** here because `includeRoles` IDs are stripped from the safe artefact profile. This produces conservative false negatives (fails to credit role-targeted protection) but never false positives.
+
+---
+

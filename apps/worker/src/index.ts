@@ -15,6 +15,7 @@ import crypto from "node:crypto";
 import type { CollectorContext, CollectorResult } from "./collectors/types";
 import { normalizeCollectorResult } from "./collectors/types";
 import { deriveAndPersistFindingsForRun } from "./findings";
+import { deriveSecondaryObservedChecksForRun } from "./derivedObservedChecks";
 
 const WORKER_NAME = process.env.WORKER_NAME?.trim();
 const WORKER_ID = WORKER_NAME ? `worker-${WORKER_NAME}-${process.pid}` : `worker-${process.pid}`;
@@ -116,6 +117,28 @@ async function maybeDeriveFindingsForRun(runId: string): Promise<void> {
   if (pendingCount > 0) return;
 
   try {
+    // Stage 1: derive secondary observed checks from artefact content.
+    // Must run BEFORE findings derivation so derived OBS are available.
+    const secondaryResult = await deriveSecondaryObservedChecksForRun({
+      prisma,
+      runId,
+      s3: S3,
+      bucket: S3_BUCKET
+    });
+    if (secondaryResult.derived.length > 0) {
+      console.log(
+        `[${WORKER_ID}] Secondary OBS derived: run=${runId} checkIds=${secondaryResult.derived.join(",")}`
+      );
+    }
+  } catch (err: any) {
+    // Secondary OBS derivation must never fail or requeue a collector job.
+    console.warn(
+      `[${WORKER_ID}] Secondary OBS derivation failed (non-fatal): run=${runId} error=${String(err?.message ?? err)}`
+    );
+  }
+
+  try {
+    // Stage 2: derive findings from all observed checks (including derived OBS).
     const result = await deriveAndPersistFindingsForRun({ prisma, runId });
     console.log(
       `[${WORKER_ID}] Findings derived: run=${runId} deleted=${result.deletedOwned} inserted=${result.inserted}`
