@@ -248,6 +248,56 @@ This model allows:
 
 ---
 
+## SharePoint — Admin Settings (`SPO_ADMIN_OBS_001`)
+
+### `SPO_ADMIN_OBS_001` — SharePoint admin tenant settings
+
+* **Collector:** `sharepoint.admin.settings` (`sharepointAdminSettingsCollector.ts`)
+* **API:** `GET https://graph.microsoft.com/v1.0/admin/sharepoint/settings`
+* **Required permission:** `SharePointTenantSettings.Read.All` (application, admin consent required)
+
+**Payload shape:**
+
+```jsonc
+{
+  // ── Completeness signals (always present) ─────────────────────────────────
+  "isComplete": true,           // true iff the API call succeeded without error
+  "permissionDenied": [],       // ["microsoft.graph/admin/sharepoint/settings"] on 403
+  "notes": ["..."],             // human-readable collector notes
+
+  // ── Settings (meaningful only when isComplete === true) ───────────────────
+  // All settings fields are null when isComplete === false.
+
+  // ── SPO_SHARING_001: tenant sharing capability ────────────────────────────
+  // Values: "disabled" | "existingExternalUserSharingOnly" |
+  //         "externalUserSharingOnly" | "externalUserAndGuestSharing" | null
+  "sharingCapability": "externalUserSharingOnly",
+
+  // ── SPO_LEGACY_AUTH_001: legacy authentication protocols ──────────────────
+  // true  = legacy auth is enabled at the SharePoint service level
+  // false = legacy auth is disabled
+  // null  = API call failed (use isComplete to distinguish)
+  "isLegacyAuthProtocolsEnabled": false,
+
+  // ── Unconsumed (collected, no finding yet) ────────────────────────────────
+  "isResharingByExternalUsersEnabled": false,
+  "isRequireAcceptingUserToMatchInvitedUserEnabled": true
+}
+```
+
+**`isComplete` is the primary gate** for all settings-based findings. On any API failure the entire settings block is null; the absence of findings must not be read as "settings are safe."
+
+**Permission failure path** (`permissionDenied` includes `"microsoft.graph/admin/sharepoint/settings"`): `SharePointTenantSettings.Read.All` application permission has not been granted or consented. This permission requires Global Administrator or SharePoint Administrator consent.
+
+**Current consumers:**
+
+| Finding | Derivation | Condition |
+|---|---|---|
+| `SPO_SHARING_001` | `spo.admin.settings.sharing` | `sharingCapability === "externalUserAndGuestSharing"` OR `"externalUserSharingOnly"` |
+| `SPO_LEGACY_AUTH_001` | `spo.admin.settings.sharing` | `isComplete === true` AND `isLegacyAuthProtocolsEnabled === true` |
+
+---
+
 ## Derived Observed Checks
 
 Some observed checks are **not written directly by collectors**. Instead, they are computed in a second-stage derivation pass that runs after all collector jobs are terminal and before findings are derived. These are called **Derived Observed Checks**.

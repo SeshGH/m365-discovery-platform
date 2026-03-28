@@ -11,6 +11,10 @@ function obs(checkId: string, data: unknown): ObservedCheckLike {
   return { checkId, data };
 }
 
+function spoAdminObs(data: Record<string, unknown>): ObservedCheckLike {
+  return obs("SPO_ADMIN_OBS_001", data);
+}
+
 function assertReferences(refs: unknown): void {
   expect(refs).toBeDefined();
   expect(refs).toHaveProperty("observedChecks");
@@ -21,6 +25,8 @@ function assertReferences(refs: unknown): void {
 
 describe("derived findings include references.observedChecks", () => {
   describe("spoSharingFinding", () => {
+    // ── SPO_SHARING_001 ────────────────────────────────────────────────────
+
     it("includes references.observedChecks when anonymous sharing is enabled", () => {
       const findings = spoSharingFinding.derive({
         observedChecks: [
@@ -46,6 +52,99 @@ describe("derived findings include references.observedChecks", () => {
         observedChecks: [obs("SPO_ADMIN_OBS_001", { sharingCapability: "disabled" })]
       });
       expect(findings).toHaveLength(0);
+    });
+
+    // ── SPO_LEGACY_AUTH_001 ────────────────────────────────────────────────
+
+    describe("SPO_LEGACY_AUTH_001 — legacy authentication protocols enabled", () => {
+      it("emits no finding when SPO_ADMIN_OBS_001 is absent", () => {
+        const findings = spoSharingFinding.derive({ observedChecks: [] });
+        expect(findings.some((f) => f.checkId === "SPO_LEGACY_AUTH_001")).toBe(false);
+      });
+
+      it("emits no finding when isComplete is false (permission-denied or failure)", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: false, isLegacyAuthProtocolsEnabled: true })
+          ]
+        });
+        expect(findings.some((f) => f.checkId === "SPO_LEGACY_AUTH_001")).toBe(false);
+      });
+
+      it("emits no finding when isLegacyAuthProtocolsEnabled is false", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: true, isLegacyAuthProtocolsEnabled: false })
+          ]
+        });
+        expect(findings.some((f) => f.checkId === "SPO_LEGACY_AUTH_001")).toBe(false);
+      });
+
+      it("emits no finding when isLegacyAuthProtocolsEnabled is null", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: true, isLegacyAuthProtocolsEnabled: null })
+          ]
+        });
+        expect(findings.some((f) => f.checkId === "SPO_LEGACY_AUTH_001")).toBe(false);
+      });
+
+      it("emits SPO_LEGACY_AUTH_001 when isComplete is true and isLegacyAuthProtocolsEnabled is true", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: true, isLegacyAuthProtocolsEnabled: true })
+          ]
+        });
+        const finding = findings.find((f) => f.checkId === "SPO_LEGACY_AUTH_001");
+        expect(finding).toBeDefined();
+      });
+
+      it("emits SPO_LEGACY_AUTH_001 at medium severity", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: true, isLegacyAuthProtocolsEnabled: true })
+          ]
+        });
+        const finding = findings.find((f) => f.checkId === "SPO_LEGACY_AUTH_001");
+        expect(finding?.severity).toBe("medium");
+      });
+
+      it("SPO_LEGACY_AUTH_001 includes references.observedChecks", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({ isComplete: true, isLegacyAuthProtocolsEnabled: true })
+          ]
+        });
+        const finding = findings.find((f) => f.checkId === "SPO_LEGACY_AUTH_001");
+        assertReferences(finding?.references);
+      });
+
+      it("co-emits SPO_LEGACY_AUTH_001 and SPO_SHARING_001 when both conditions are met", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({
+              isComplete: true,
+              sharingCapability: "externalUserAndGuestSharing",
+              isLegacyAuthProtocolsEnabled: true
+            })
+          ]
+        });
+        expect(findings.some((f) => f.checkId === "SPO_SHARING_001")).toBe(true);
+        expect(findings.some((f) => f.checkId === "SPO_LEGACY_AUTH_001")).toBe(true);
+      });
+
+      it("does not emit SPO_LEGACY_AUTH_001 when sharing is restricted and legacy auth is false", () => {
+        const findings = spoSharingFinding.derive({
+          observedChecks: [
+            spoAdminObs({
+              isComplete: true,
+              sharingCapability: "disabled",
+              isLegacyAuthProtocolsEnabled: false
+            })
+          ]
+        });
+        expect(findings).toHaveLength(0);
+      });
     });
   });
 

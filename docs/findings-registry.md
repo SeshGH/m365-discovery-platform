@@ -311,6 +311,51 @@ Examples:
 
 ---
 
+## SharePoint — Admin Settings (`SPO_SHARING_*`, `SPO_LEGACY_AUTH_*`)
+
+### `SPO_SHARING_001` — SharePoint tenant sharing capability is permissive
+
+* **Collector:** `sharepoint.admin.settings`
+* **Derivation:** `spo.admin.settings.sharing` (`spoSharingFinding.ts`)
+* **Derived from observed check(s):** `SPO_ADMIN_OBS_001`
+* **Severity (implemented):** `medium` or `info` (depends on sharing level — see below)
+* **Meaning:** The tenant-level SharePoint sharing setting is in a permissive state. The finding fires for two distinct sharing levels with different severities:
+
+  | `sharingCapability` value | Severity | Title |
+  |---|---|---|
+  | `externalUserAndGuestSharing` | `medium` | "SharePoint tenant sharing allows anonymous links" |
+  | `externalUserSharingOnly` | `info` | "SharePoint tenant sharing allows external user invitations" |
+
+* **Guards (to avoid false signals):**
+  * Only emit when `sharingCapability` is a non-null string (null implies the API call failed or was permission-denied).
+  * No finding emitted for `"disabled"` or `"existingExternalUserSharingOnly"`.
+* **Notes:**
+  * This is a tenant-level governance signal. Site-level sharing controls may be more restrictive.
+  * `externalUserAndGuestSharing` (Anyone links) is the highest-risk setting; link-expiry and scope policies should be validated.
+  * `externalUserSharingOnly` is common in organisations with legitimate external collaboration; the `info` severity reflects that it is a well-known, commonly-accepted configuration.
+
+---
+
+### `SPO_LEGACY_AUTH_001` — SharePoint legacy authentication protocols are enabled
+
+* **Collector:** `sharepoint.admin.settings`
+* **Derivation:** `spo.admin.settings.sharing` (`spoSharingFinding.ts`)
+* **Derived from observed check(s):** `SPO_ADMIN_OBS_001`
+* **Severity (implemented):** `medium`
+* **Meaning:** The SharePoint tenant-level setting `isLegacyAuthProtocolsEnabled` is `true`. Legacy authentication (pre-modern-auth clients using basic auth or forms-based auth to SharePoint) bypasses Conditional Access policies entirely, including any policy that enforces MFA.
+* **Guards (to avoid false signals):**
+  * Only emit when `SPO_ADMIN_OBS_001.isComplete === true`. The collector sets `isComplete: false` on any API failure (403 or unexpected error); in those cases `isLegacyAuthProtocolsEnabled` will be `null` and must not produce a finding.
+  * Only emit when `isLegacyAuthProtocolsEnabled === true` (explicit boolean, not null or false).
+* **Relationship to `ENTRA_CA_003`:**
+  * `ENTRA_CA_003` fires when no Conditional Access policy blocks legacy auth at the Azure AD identity broker level.
+  * `SPO_LEGACY_AUTH_001` fires when the SharePoint service layer still accepts legacy auth, regardless of any CA policy.
+  * Both findings can co-emit and both are independently valid. They operate at different control layers. Disabling legacy auth at the SharePoint service level is recommended even when CA-level blocking is in place (defence in depth).
+* **Notes:**
+  * Some legacy integrations (on-premises connectors, third-party line-of-business tools) may genuinely require legacy auth. The recommendation text acknowledges this; the finding is the prompt to verify.
+  * `medium` severity reflects that legacy auth enablement is a concrete bypass vector for MFA, but its impact depends on whether legacy clients are actually in use in the tenant.
+
+---
+
 ## SharePoint — Sites (`SPO_SITES_*`)
 
 ### `SPO_SITES_COVERAGE_001` — SharePoint site inventory incomplete
