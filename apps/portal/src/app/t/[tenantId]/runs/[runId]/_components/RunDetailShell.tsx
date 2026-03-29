@@ -254,6 +254,9 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   // Findings kind filter is shell-owned so Summary tab can pre-select it.
   const [findingsKindFilter, setFindingsKindFilter] = useState<FindingsKindFilter>("all");
 
+  // Selected finding ID is shell-owned so Summary "Top findings" can pre-select.
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+
   // ── Auto-refresh while run is in progress ─────────────────────────────────
   // router.refresh() re-runs the server component and patches the RSC tree in
   // place — the active tab and all other client state are preserved.
