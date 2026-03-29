@@ -417,21 +417,51 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
         ))}
       </div>
 
-      {tab === "summary" ? (
-        <SummaryTab
-          vm={vm}
-          onGoHeadlineSizing={goToHeadlineSizing}
-          onGoEvidence={() => goToEvidenceObservedChecks("")}
-          onGoEvidenceQuery={(q) => goToEvidenceObservedChecks(q)}
-          onGoReports={goToReports}
-          onGoJobs={goToJobs}
-          onGoFindings={goToFindings}
-          onAction={onAction}
-        />
-      ) : null}
-      {tab === "findings" ? <FindingsTab vm={vm} onGoEvidence={(q) => goToEvidenceObservedChecks(q)} kindFilter={findingsKindFilter} onKindFilterChange={setFindingsKindFilter} /> : null}
-      {tab === "evidence" ? <EvidenceTab vm={vm} query={evidenceQuery} onQueryChange={setEvidenceQuery} /> : null}
-      {tab === "jobs" ? <JobsTab vm={vm} /> : null}
+{tab === "summary" ? (
+  <SummaryTab
+    vm={vm}
+    onGoHeadlineSizing={goToHeadlineSizing}
+    onGoEvidence={() => goToEvidenceObservedChecks("")}
+    onGoEvidenceQuery={(q) => goToEvidenceObservedChecks(q)}
+    onGoReports={goToReports}
+    onGoJobs={goToJobs}
+    onGoFindings={goToFindings}
+    onAction={onAction}
+  />
+) : null}
+
+{tab === "findings" ? (
+  <FindingsTab
+    vm={vm}
+    onGoEvidence={(q) => goToEvidenceObservedChecks(q)}
+    kindFilter={findingsKindFilter}
+    onKindFilterChange={setFindingsKindFilter}
+    onRefreshFindings={async () => {
+      const res = await fetch(
+        `/api/tenants/${vm.tenantId}/runs/${vm.runId}/findings/derive`,
+        { method: "POST" }
+      );
+
+      if (!res.ok) {
+        console.error("Failed to re-derive findings", res.status);
+        alert("Failed to refresh findings. Please try again.");
+        return;
+      }
+
+      router.refresh();
+    }}
+  />
+) : null}
+
+{tab === "evidence" ? (
+  <EvidenceTab
+    vm={vm}
+    query={evidenceQuery}
+    onQueryChange={setEvidenceQuery}
+  />
+) : null}
+
+{tab === "jobs" ? <JobsTab vm={vm} /> : null}
     </main>
   );
 }
@@ -1113,15 +1143,18 @@ function FindingsTab({
   vm,
   onGoEvidence,
   kindFilter,
-  onKindFilterChange
+  onKindFilterChange,
+  onRefreshFindings
 }: {
   vm: RunDetailViewModel;
   onGoEvidence: (q?: string) => void;
   kindFilter: FindingsKindFilter;
   onKindFilterChange: (f: FindingsKindFilter) => void;
+  onRefreshFindings: () => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const kindCounts = useMemo(() => {
     const coverage = vm.findings.filter(isCoverageFinding).length;
@@ -1266,6 +1299,19 @@ function FindingsTab({
               Clear
             </button>
           ) : null}
+
+          <button
+            type="button"
+            className="link subtle"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              try { await onRefreshFindings(); } finally { setRefreshing(false); }
+            }}
+            style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            {refreshing ? "Refreshing…" : "Re-derive findings"}
+          </button>
         </div>
       </div>
 

@@ -3,6 +3,9 @@
     "private":  true,
     "type":  "module",
     "version":  "0.0.1",
+    "exports":  {
+                    "./findings":  "./src/findings/index.ts"
+                },
     "scripts":  {
                     "dev":  "tsx watch src/index.ts",
                     "test": "vitest run",

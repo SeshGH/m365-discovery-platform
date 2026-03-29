@@ -19,6 +19,7 @@ import { prisma } from "@acme/db";
 
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { deriveAndPersistFindingsForRun } from "@acme/worker/findings";
 
 const app = Fastify({ logger: true });
 
@@ -1081,6 +1082,29 @@ app.get("/runs/:runId/findings", async (req, reply) => {
   });
 
   return findings;
+});
+
+// --------------------
+// POST /runs/:runId/findings/derive — re-derive findings for a completed run
+// --------------------
+// Safe to call any time — the derivation function is idempotent (delete owned + re-insert).
+// This allows the portal to refresh findings after new finding logic is deployed,
+// without requiring a full re-run.
+app.post("/runs/:runId/findings/derive", async (req, reply) => {
+  const auth = requirePortalAuth(req);
+  const { runId } = req.params as { runId: string };
+
+  const run = await assertRunInOrg({ runId, orgId: auth.orgId });
+  if (!run) return reply.code(404).send({ error: "Run not found" });
+
+  const result = await deriveAndPersistFindingsForRun({ prisma, runId });
+
+  return {
+    ok: true,
+    runId,
+    deletedOwned: result.deletedOwned,
+    inserted: result.inserted
+  };
 });
 
 // --------------------

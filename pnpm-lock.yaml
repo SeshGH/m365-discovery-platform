@@ -32,6 +32,9 @@ importers:
       '@acme/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@acme/worker':
+        specifier: workspace:*
+        version: link:../worker
       '@aws-sdk/client-s3':
         specifier: ^3.964.0
         version: 3.964.0
