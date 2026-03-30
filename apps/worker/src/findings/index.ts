@@ -12,6 +12,7 @@ import { spoSitesCoverageFinding } from "./spoSitesCoverageFinding";
 import { exoMailboxesCoverageFinding } from "./exoMailboxesCoverageFinding";
 import { exchangeTransportRulesFinding } from "./exchangeTransportRulesFinding";
 import { exchangeConnectorsFinding } from "./exchangeConnectorsFinding";
+import { entraPrivilegedAccessCorrelation } from "./entraPrivilegedAccessCorrelation";
 
 // Registry (single source of truth)
 const DERIVATIONS: FindingDerivation[] = [
@@ -24,6 +25,7 @@ const DERIVATIONS: FindingDerivation[] = [
   mdmComplianceGapFinding,
   eapHighPrivFinding,
   entraDirectoryRolesFinding,
+  entraPrivilegedAccessCorrelation,
   entraConditionalAccessFinding,
   exchangeTransportRulesFinding,
   exchangeConnectorsFinding
