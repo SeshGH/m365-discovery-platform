@@ -1,11 +1,13 @@
 # docker-compose.yml — dev/demo stack for m365-discovery-platform
 #
 # Usage:
-#   cp .env.docker.example .env.docker       # fill in secrets
+#   cp docker.env.example .env.docker       # fill in secrets
 #   docker compose --env-file .env.docker up --build
 #
 # Portal: http://localhost:3000
-# MinIO console: http://localhost:9001  (minioadmin / minioadmin)
+# MinIO console: http://localhost:9001
+#   Credentials come from MINIO_ROOT_USER / MINIO_ROOT_PASSWORD in .env.docker
+#   (defaults when no --env-file: dev-minio-user / dev-minio-password)
 #
 # NOTE: this file does NOT read the repo-root .env.
 # All secrets are supplied via --env-file .env.docker on the CLI.
@@ -39,8 +41,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dev-minio-user}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dev-minio-password}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -54,7 +56,7 @@ services:
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-dev-minio-user} ${MINIO_ROOT_PASSWORD:-dev-minio-password} &&
         mc mb --ignore-existing local/artefacts &&
         echo 'Bucket ready.'
       "
@@ -74,8 +76,8 @@ services:
       # Presigned download URLs use this host so the browser can resolve them.
       # In Docker dev, MinIO port 9000 is mapped to the host, so localhost:9000 works.
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-dev-minio-user}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dev-minio-password}
       S3_BUCKET: artefacts
       S3_FORCE_PATH_STYLE: "true"
       S3_REGION: us-east-1
@@ -96,8 +98,8 @@ services:
     environment:
       DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
       S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-dev-minio-user}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dev-minio-password}
       S3_BUCKET: artefacts
       S3_FORCE_PATH_STYLE: "true"
       S3_REGION: us-east-1

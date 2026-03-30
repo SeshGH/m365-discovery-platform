@@ -26,10 +26,59 @@ The platform is a monorepo with:
 
 ## Environment files
 
-The API and worker load environment variables from their own `.env` files using **absolute path resolution**:
+### Docker Compose env file
+
+`docker-compose.yml` reads secrets from an `.env.docker` file supplied on the CLI:
+
+```powershell
+copy docker.env.example .env.docker
+# edit .env.docker — set MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, and other secrets
+docker compose --env-file .env.docker up --build
+```
+
+`.env.docker` is gitignored. `docker.env.example` is the committed template — copy it and fill in real values.
+
+If you run `docker compose up -d` without `--env-file`, compose falls back to the in-file defaults (suitable for throwaway local testing only — MinIO will start with `dev-minio-user` / `dev-minio-password`).
+
+### API and worker local env files
+
+When running the API and worker **outside Docker** (i.e. `pnpm dev:api` / `pnpm dev:worker`),
+each service loads its own `.env` file:
 
 - API: `apps/api/.env`
 - Worker: `apps/worker/.env`
+
+These files are gitignored. Minimum required content for local dev:
+
+**`apps/api/.env`**
+```
+DATABASE_URL=postgresql://app:app@localhost:5432/m365discovery
+PORTAL_INTERNAL_JWT_SECRET=dev-secret-change-me-in-production
+PORTAL_DEV_ORG_ID=dev-org
+S3_ENDPOINT=http://localhost:9000
+S3_PUBLIC_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=dev-minio-user
+S3_SECRET_KEY=dev-minio-password-change-me
+S3_BUCKET=artefacts
+S3_FORCE_PATH_STYLE=true
+S3_REGION=us-east-1
+```
+
+**`apps/worker/.env`**
+```
+DATABASE_URL=postgresql://app:app@localhost:5432/m365discovery
+GRAPH_CLIENT_ID=<your-graph-client-id>
+GRAPH_CLIENT_SECRET=<your-graph-client-secret>
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=dev-minio-user
+S3_SECRET_KEY=dev-minio-password-change-me
+S3_BUCKET=artefacts
+S3_FORCE_PATH_STYLE=true
+S3_REGION=us-east-1
+```
+
+The `S3_ACCESS_KEY` / `S3_SECRET_KEY` values must match `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+from your `.env.docker` (or the compose defaults if running without `--env-file`).
 
 Keep secrets out of git.
 
@@ -40,8 +89,14 @@ Keep secrets out of git.
 From repo root:
 
 ```powershell
-docker compose up -d
+docker compose --env-file .env.docker up -d
 docker compose ps
+```
+
+Or without an env file (uses compose defaults — throwaway local only):
+
+```powershell
+docker compose up -d
 ```
 
 Expected:
@@ -84,7 +139,7 @@ This page lets you:
 - view run + jobs live (polls `GET /runs/:runId` + `GET /runs/:runId/jobs`)
 - jump to findings + artefacts endpoints
 
-**Note:** long-term UI will live in a dedicated portal app. The `/demo` page is intentionally “demo-only”.
+**Note:** long-term UI will live in a dedicated portal app. The `/demo` page is intentionally "demo-only".
 
 ---
 
@@ -172,6 +227,9 @@ If you use a fixed filename like `downloaded-artefact`, it is safe to ignore loc
 
 MinIO Console:
 - `http://localhost:9001`
+
+Log in with the credentials from your `.env.docker` (`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`).
+If running without `--env-file`, the compose defaults are `dev-minio-user` / `dev-minio-password`.
 
 Bucket (default):
 - `artefacts`
