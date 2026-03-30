@@ -309,9 +309,14 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   };
 
   const goToFindings = (filter?: FindingsKindFilter) => {
-    if (filter) setFindingsKindFilter(filter);
-    setTab("findings");
+  if (filter) setFindingsKindFilter(filter);
+  setTab("findings");
   };
+
+const goToFinding = (findingId: string) => {
+  setSelectedFindingId(findingId);
+  setTab("findings");
+};
 
   const onAction = (a: RunDetailViewModel["nextActions"][number]) => {
     if (a.cta.goToTab === "findings") return goToFindings();
@@ -429,6 +434,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     onGoReports={goToReports}
     onGoJobs={goToJobs}
     onGoFindings={goToFindings}
+    onGoToFinding={goToFinding}
     onAction={onAction}
   />
 ) : null}
@@ -439,6 +445,7 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
     onGoEvidence={(q) => goToEvidenceObservedChecks(q)}
     kindFilter={findingsKindFilter}
     onKindFilterChange={setFindingsKindFilter}
+    initialSelectedId={selectedFindingId}
     onRefreshFindings={async () => {
       const res = await fetch(
         `/api/tenants/${vm.tenantId}/runs/${vm.runId}/findings/derive`,
@@ -469,6 +476,78 @@ export function RunDetailShell({ vm }: { vm: RunDetailViewModel }) {
   );
 }
 
+function TopFindings({
+  findings,
+  onGoToFinding
+}: {
+  findings: RunDetailViewModel["findings"];
+  onGoToFinding: (findingId: string) => void;
+}) {
+  const topFindings = useMemo(() => {
+    const xs = findings.slice();
+    xs.sort((a, b) => {
+      const ra = severityRank(a.severity);
+      const rb = severityRank(b.severity);
+      if (ra !== rb) return ra - rb;
+      return String(a.title ?? "").localeCompare(String(b.title ?? ""));
+    });
+    return xs.slice(0, 5);
+  }, [findings]);
+
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 900, fontSize: 15 }}>Top findings</div>
+        <div className="subtle">Highest-severity findings surfaced first</div>
+      </div>
+
+      {topFindings.length === 0 ? (
+        <div className="subtle" style={{ marginTop: 8 }}>
+          No findings for this run.
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          {topFindings.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => onGoToFinding(f.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--fg)",
+                cursor: "pointer"
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <Badge badge={{ label: f.severity, tone: severityTone(f.severity) }} />
+                  <span style={{ fontWeight: 800 }}>{f.title}</span>
+                </div>
+                <div className="subtle" style={{ marginTop: 4 }}>
+                  {f.checkId}
+                </div>
+              </div>
+
+              <span className="subtle" style={{ whiteSpace: "nowrap" }}>
+                View →
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SummaryTab({
   vm,
   onGoHeadlineSizing,
@@ -477,6 +556,7 @@ function SummaryTab({
   onGoReports,
   onGoJobs,
   onGoFindings,
+  onGoToFinding,
   onAction
 }: {
   vm: RunDetailViewModel;
@@ -486,6 +566,7 @@ function SummaryTab({
   onGoReports: () => void;
   onGoJobs: () => void;
   onGoFindings: (filter?: FindingsKindFilter) => void;
+  onGoToFinding: (findingId: string) => void;
   onAction: (a: RunDetailViewModel["nextActions"][number]) => void;
 }) {
   const headlineMetrics = useMemo(() => vm.environmentOverview.filter((m) => m.key !== "signals"), [vm.environmentOverview]);
@@ -707,6 +788,10 @@ function SummaryTab({
           )}
         </div>
       ) : null}
+
+      <div style={{ marginBottom: 12, marginTop: 0 }}>
+        <TopFindings findings={vm.findings} onGoToFinding={onGoToFinding} />
+      </div>
 
       <div className="grid-2" style={{ marginBottom: 12, marginTop: 12 }}>
         <div className="card card-pad">
@@ -1147,16 +1232,18 @@ function FindingsTab({
   onGoEvidence,
   kindFilter,
   onKindFilterChange,
+  initialSelectedId = null,
   onRefreshFindings
 }: {
   vm: RunDetailViewModel;
   onGoEvidence: (q?: string) => void;
   kindFilter: FindingsKindFilter;
   onKindFilterChange: (f: FindingsKindFilter) => void;
+  initialSelectedId?: string | null;
   onRefreshFindings: () => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [refreshing, setRefreshing] = useState(false);
 
   const kindCounts = useMemo(() => {
