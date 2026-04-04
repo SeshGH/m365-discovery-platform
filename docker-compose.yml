@@ -16,6 +16,17 @@
 # No bind mounts are used: this avoids Windows symlink issues with
 # pnpm's node_modules layout overwriting container-installed deps.
 # Re-run with --build to pick up source changes.
+#
+# Multi-worker support
+# --------------------
+# Two worker services (worker-1 and worker-2) are defined below.
+# Both share identical configuration and the same image build.
+# Concurrency safety is enforced by the DB-level atomic claim in the worker:
+# each job's status is updated from "queued" → "running" in a single
+# updateMany with a precise WHERE guard; only the worker that wins the DB
+# update proceeds — the other sees locked.count=0 and skips the job.
+# It is safe to run both, either, or neither worker at any time.
+# To run only one worker: docker compose --env-file .env.docker up --build worker-1 api postgres minio portal
 
 services:
 
@@ -89,7 +100,7 @@ services:
       minio:
         condition: service_started
 
-  worker:
+  worker-1:
     build:
       context: .
       dockerfile: Dockerfile
@@ -106,6 +117,31 @@ services:
       GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
       GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET}
       POLL_MS: 2000
+      WORKER_NAME: worker-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: pnpm --filter @acme/worker dev
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/m365discovery
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-dev-minio-user}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dev-minio-password}
+      S3_BUCKET: artefacts
+      S3_FORCE_PATH_STYLE: "true"
+      S3_REGION: us-east-1
+      GRAPH_CLIENT_ID: ${GRAPH_CLIENT_ID}
+      GRAPH_CLIENT_SECRET: ${GRAPH_CLIENT_SECRET}
+      POLL_MS: 2000
+      WORKER_NAME: worker-2
     depends_on:
       postgres:
         condition: service_healthy
