@@ -750,9 +750,9 @@ describe("derived findings include references.observedChecks", () => {
     });
   });
 
-  // ── ENTRA_PIM_001 ─────────────────────────────────────────────────────────
+  // ── ENTRA_PIM_GAP_001 ─────────────────────────────────────────────────────────
 
-  describe("entraDirectoryRolesFinding — ENTRA_PIM_001 (no PIM-eligible assignments)", () => {
+  describe("entraDirectoryRolesFinding — ENTRA_PIM_GAP_001 (standing privileged access not governed by PIM)", () => {
     // Helper OBS builders
     function dirRolesObs001(activeAssignmentsCount: number): ObservedCheckLike {
       return obs("ENTRA_DIRROLES_OBS_001", { activeAssignmentsCount });
@@ -777,7 +777,7 @@ describe("derived findings include references.observedChecks", () => {
       const findings = entraDirectoryRolesFinding.derive({
         observedChecks: [dirRolesObs001(5), dirRolesObs005(true, false)]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when OBS_004.succeeded is false (P2 not licensed or API error)", () => {
@@ -788,7 +788,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when eligibleAssignmentsCount is undefined (API failure path)", () => {
@@ -799,7 +799,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when eligibleAssignmentsCount > 0 (PIM assignments exist)", () => {
@@ -810,7 +810,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when ENTRA_DIRROLES_OBS_005 is absent (core completeness unknown)", () => {
@@ -820,7 +820,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs004({ succeeded: true, eligibleAssignmentsCount: 0 })
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when OBS_005.isComplete is false (truncated or permission-denied core slice)", () => {
@@ -831,7 +831,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(false, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when OBS_005.truncated is true (counts unreliable)", () => {
@@ -842,7 +842,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, true) // isComplete true but truncated
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when ENTRA_DIRROLES_OBS_001 is absent", () => {
@@ -852,7 +852,7 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
     it("does not emit when activeAssignmentsCount is 0 (no standing assignments to protect)", () => {
@@ -863,24 +863,24 @@ describe("derived findings include references.observedChecks", () => {
           dirRolesObs005(true, false)
         ]
       });
-      expect(findings.some((f) => f.checkId === "ENTRA_PIM_001")).toBe(false);
+      expect(findings.some((f) => f.checkId === "ENTRA_PIM_GAP_001")).toBe(false);
     });
 
-    it("emits ENTRA_PIM_001 when all guards pass", () => {
+    it("emits ENTRA_PIM_GAP_001 when all guards pass", () => {
       const findings = entraDirectoryRolesFinding.derive({ observedChecks: passingChecks });
-      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_001");
+      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_GAP_001");
       expect(finding).toBeDefined();
     });
 
-    it("emits ENTRA_PIM_001 at medium severity", () => {
+    it("emits ENTRA_PIM_GAP_001 at medium severity", () => {
       const findings = entraDirectoryRolesFinding.derive({ observedChecks: passingChecks });
-      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_001");
+      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_GAP_001");
       expect(finding?.severity).toBe("medium");
     });
 
     it("includes references with activeAssignmentsCount, eligibleAssignmentsCount, and all three OBS IDs", () => {
       const findings = entraDirectoryRolesFinding.derive({ observedChecks: passingChecks });
-      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_001");
+      const finding = findings.find((f) => f.checkId === "ENTRA_PIM_GAP_001");
       assertReferences(finding?.references);
       const refs = finding?.references as any;
       expect(refs.activeAssignmentsCount).toBe(5);

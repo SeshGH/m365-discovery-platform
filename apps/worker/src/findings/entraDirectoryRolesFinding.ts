@@ -26,7 +26,7 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
     "ENTRA_DIRROLES_010",
     "ENTRA_DIRROLES_011",
     "ENTRA_DIRROLES_012",
-    "ENTRA_PIM_001"
+    "ENTRA_PIM_GAP_001"
   ],
 
   derive({ observedChecks }): DerivedFinding[] {
@@ -135,7 +135,7 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
       }
     }
 
-    // ── ENTRA_PIM_001: no PIM eligible assignments while standing assignments exist ──
+    // ── ENTRA_PIM_GAP_001: no PIM eligible assignments while standing assignments exist ──
     //
     // Source OBS:
     //   ENTRA_DIRROLES_OBS_004 — PIM eligibility schedule count (best-effort slice)
@@ -163,7 +163,7 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
     //   PIM for Groups (where group membership is eligible, and that group holds a
     //   directory role) creates equivalent JIT coverage that is NOT visible here.
     //   A tenant using PIM for Groups would still show eligibleAssignmentsCount === 0
-    //   and ENTRA_PIM_001 would fire — a false positive.  The recommendation text
+    //   and ENTRA_PIM_GAP_001 would fire — a false positive.  The recommendation text
     //   must acknowledge this so reviewers can dismiss the finding when applicable.
     if (obs004) {
       const d004 = obs004.data as any;
@@ -178,10 +178,9 @@ export const entraDirectoryRolesFinding: FindingDerivation = {
 
         if (activeCount !== null && activeCount > 0) {
           findings.push({
-            checkId: "ENTRA_PIM_001",
+            checkId: "ENTRA_PIM_GAP_001",
             severity: "medium",
-            title:
-              "No PIM-eligible role assignments detected — privileged access appears to be standing",
+            title: "Standing privileged access not governed by PIM",
             recommendation:
               "Based on available evidence, the Privileged Identity Management (PIM) eligibility " +
               "schedules API was successfully queried but returned zero eligible role assignments, " +
